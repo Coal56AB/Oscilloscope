@@ -60,11 +60,8 @@ HAL_StatusTypeDef HAL_UART_AbortTransmit(UART_HandleTypeDef *uart)
  */
 static void prepare(Stm32Controls *controls)
 {
-  uint8_t buttons[CONTROL_ID_COUNT] = {0};
-  uint8_t encoders[STM32_ENCODER_COUNT] = {0};
-
-  assert(stm32_controls_init(controls, buttons, encoders, 4U, 5U));
-  stm32_controls_scan(controls, buttons, encoders, 1000U);
+  assert(stm32_controls_init(controls));
+  stm32_controls_poll(controls, 1000U);
   assert(controls->count == 1U);
   controls_uart_init(&panel_uart);
   next_status = HAL_OK;
@@ -83,8 +80,6 @@ static void test_busy_and_completion(void)
 {
   Stm32Controls controls;
   uint8_t first_packet[CONTROL_PACKET_SIZE];
-  uint8_t buttons[CONTROL_ID_COUNT] = {0};
-  uint8_t encoders[STM32_ENCODER_COUNT] = {0};
 
   prepare(&controls);
   next_status = HAL_BUSY;
@@ -98,9 +93,7 @@ static void test_busy_and_completion(void)
   controls_uart_poll(&controls, 1010U);
   assert(starts == 2U && controls.count == 1U);
   memcpy(first_packet, active_data, sizeof(first_packet));
-  buttons[5] = 1U;
-  stm32_controls_scan(&controls, buttons, encoders, 1011U);
-  stm32_controls_scan(&controls, buttons, encoders, 1016U);
+  stm32_controls_input(&controls, CONTROL_DOWN, 5U, 0, 1011U);
   assert(controls.count == 2U);
   controls_uart_tx_complete(&other_uart);
   controls_uart_error(&other_uart);

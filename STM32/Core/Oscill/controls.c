@@ -27,97 +27,48 @@ static void enqueue(Stm32Controls *controls, ControlEventType type, unsigned id,
 }
 
 /**
- * @brief   Подготовить обработчик к опросу фактической панели.
- * @details Начальные уровни принимаются за установившиеся: включение питания
- *          не создаёт ложных вращений и нажатий. Порог детента согласуется
- *          с механическим энкодером, debounce — с дребезгом кнопок.
- * @param   buttons  1 означает нажатую кнопку, 0 — отпущенную.
- * @param   encoders Двухбитные состояния фаз A/B, по одному на энкодер.
- * @return  1 при допустимых параметрах; 0, если начать опрос невозможно.
+ * @brief   Подготовить очередь событий панели без аппаратных зависимостей.
+ * @details Дребезг и фазы энкодеров обрабатываются общей библиотекой до этого API.
  */
-int stm32_controls_init(Stm32Controls *controls, const uint8_t buttons[CONTROL_ID_COUNT],
-                        const uint8_t encoders[STM32_ENCODER_COUNT], unsigned steps,
-                        unsigned debounce)
+int stm32_controls_init(Stm32Controls *controls)
 {
-  unsigned i;
-  if (!controls || !buttons || !encoders || !steps || steps > 4 || debounce > 1000)
+  if (!controls)
   {
     return 0;
   }
   memset(controls, 0, sizeof(*controls));
-  controls->steps_per_detent = steps;
-  controls->debounce_ms = debounce;
-  for (i = 0; i < CONTROL_ID_COUNT; ++i)
-  {
-    controls->buttons[i].stable = controls->buttons[i].candidate = !!buttons[i];
-  }
-  for (i = 0; i < STM32_ENCODER_COUNT; ++i)
-  {
-    controls->encoder_state[i] = encoders[i] & 3;
-  }
   return 1;
 }
 
 /**
- * @brief   Превратить снимок входов в события для GUI.
- * @details Полные детенты дают ROTATE; устойчивые изменения кнопок — DOWN/UP
- *          с временем начала перехода. Длительность удержания определяет GUI.
- *          Heartbeat позволяет отличить неподвижную панель от потери связи.
- * @note    Вызывать регулярно из главного цикла. now — счётчик миллисекунд;
- *          переполнение uint32_t учитывается при сравнении времени.
+ * @brief   Сохранить готовое событие кнопки или энкодера.
+ * @details Принимает время фактического изменения входа, до задержки фильтра.
+ *          Неверные идентификаторы и типы не должны попадать в общий протокол.
  */
-void stm32_controls_scan(Stm32Controls *controls, const uint8_t buttons[CONTROL_ID_COUNT],
-                         const uint8_t encoders[STM32_ENCODER_COUNT], uint32_t now)
+void stm32_controls_input(Stm32Controls *controls, ControlEventType type, unsigned id,
+                          int value, uint32_t timestamp_ms)
 {
-  static const int8_t direction[16] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
-  unsigned i;
-  for (i = 0; i < STM32_ENCODER_COUNT; ++i)
+  if (!controls)
   {
-    uint8_t previous = controls->encoder_state[i], next = encoders[i] & 3;
-    if ((previous ^ next) == 3)
-    {
-      /* Обе фазы изменились сразу: направление потеряно.
-         Не превращать незавершённый детент в ложный шаг
-         после пропуска опроса. */
-      ++controls->invalid_transitions;
-      controls->encoder_steps[i] = 0;
-    }
-    else
-    {
-      controls->encoder_steps[i] += direction[previous * 4 + next];
-    }
-    controls->encoder_state[i] = next;
-    if (controls->encoder_steps[i] >= (int)controls->steps_per_detent)
-    {
-      enqueue(controls, CONTROL_ROTATE, i, 1, now);
-      controls->encoder_steps[i] -= (int8_t)controls->steps_per_detent;
-    }
-    if (controls->encoder_steps[i] <= -(int)controls->steps_per_detent)
-    {
-      enqueue(controls, CONTROL_ROTATE, i, -1, now);
-      controls->encoder_steps[i] += (int8_t)controls->steps_per_detent;
-    }
+    return;
   }
-  for (i = 0; i < CONTROL_ID_COUNT; ++i)
+  if (((type == CONTROL_DOWN || type == CONTROL_UP) && id < CONTROL_ID_COUNT) ||
+      (type == CONTROL_ROTATE && id < STM32_ENCODER_COUNT && (value == -1 || value == 1)))
   {
-    ControlButton *button = &controls->buttons[i];
-    uint8_t value = !!buttons[i];
-    if (value != button->candidate)
-    {
-      button->candidate = value;
-      button->changed_ms = now;
-    }
-    if (button->stable != button->candidate &&
-        (uint32_t)(now - button->changed_ms) >= controls->debounce_ms)
-    {
-      button->stable = button->candidate;
-      enqueue(controls, button->stable ? CONTROL_DOWN : CONTROL_UP, i, 0, button->changed_ms);
-    }
+    enqueue(controls, type, id, value, timestamp_ms);
   }
-  if ((uint32_t)(now - controls->last_heartbeat_ms) >= 1000)
+}
+
+/**
+ * @brief   Периодически сообщать получателю, что неподвижная панель работает.
+ * @details Разность беззнаковых тиков сохраняет период при переполнении времени.
+ */
+void stm32_controls_poll(Stm32Controls *controls, uint32_t now_ms)
+{
+  if ((uint32_t)(now_ms - controls->last_heartbeat_ms) >= 1000U)
   {
-    enqueue(controls, CONTROL_HEARTBEAT, 255, 0, now);
-    controls->last_heartbeat_ms = now;
+    enqueue(controls, CONTROL_HEARTBEAT, 255U, 0, now_ms);
+    controls->last_heartbeat_ms = now_ms;
   }
 }
 

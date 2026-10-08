@@ -15,15 +15,27 @@ STM32/
 │   ├── Src/        генерируемая периферия и main.c
 │   └── Oscill/     прикладные модули, пары .c/.h
 ├── Drivers/        локальные HAL/CMSIS с лицензиями ST/Arm
+├── AllLibs/        субмодули PeriphGeneral и MyLibs
 ├── MDK-ARM/        проект Keil и startup
 └── tests/          переносимые проверки панели и UART
 ```
 
 Прикладной каталог `Core/Oscill` устроен по образцу `Core/UIPS`: пары `.c/.h`
 расположены рядом, `oscill_main` связывает модули через их API. Периферию
-настраивает CubeMX; `board_controls.c` читает плату, `controls.c` обрабатывает
-контакты, `controls_uart.c` отправляет события, `oscill_main.c` связывает модули.
+настраивает CubeMX; `board_controls.c` связывает GPIO с библиотеками,
+`controls.c` хранит готовые события, `controls_uart.c` отправляет их,
+`oscill_main.c` связывает модули.
 Общий codec включён из `ZYNQ7020/gui/src/control_protocol.c`, без копирования.
+
+`AllLibs/PeriphGeneral` подключён из [STM32_General](https://git.rd12.ru/Templates/STM32_General.git),
+`AllLibs/MyLibs` — из [ExtendedLibs](https://git.rd12.ru/Templates/ExtendedLibs.git).
+Версии закреплены gitlink; подготовка рабочей копии — `git submodule update --init --recursive`.
+Конфигурация HAL и времени находится в `Core/Oscill/mylibs_config.h`.
+`GPIO_Read_Switch` подтверждает устойчивый уровень в течение `Sw_FilterDelay`,
+включая отпускание. `Encoder_Init` принимает порты и пины A/B и число переходов
+на детент. `Encoder_Update(&encoder)` сама читает GPIO, обрабатывает фазы
+и возвращает −1, 0 или +1. Библиотека не зависит от номеров каналов, очереди
+или UART; каждая кнопка и энкодер имеют собственное состояние.
 
 ## Настройки CubeMX
 
@@ -63,7 +75,10 @@ STM32/
 Контакты замыкаются на GND; драйвер нормализует LOW в «нажато». Настройки первого
 запуска: debounce 5 мс, четыре перехода фаз на детент, опрос при смене SysTick.
 Направление вращения, переходы на детент и дребезг проверить на реальных энкодерах.
-Реле, измерение питания и LED_RUN этим приложением пока не управляются.
+LED_RUN подключён к PC7, активный уровень — HIGH. При старте он выключен;
+`board_controls_set_run_led` управляет им через библиотеку GPIO. Синхронизация
+индикатора с состоянием RUN GUI требует приёма команд и пока не реализована.
+Реле и измерение питания этим приложением пока не управляются.
 
 ## UART и запуск
 
@@ -83,7 +98,8 @@ PA10 можно оставить неподключённым: приложен�
 `.uvprojx` в Keil и выполнить Rebuild. Результаты Keil направлены в `STM32/output/`
 в корне репозитория: `oscill_controls.axf`, `oscill_controls.hex` и map/listing.
 
-Прикладные файлы находятся в группах `Oscill` и `Shared/Control protocol`.
+Прикладные файлы находятся в группах `Oscill` и `Shared/Control protocol`,
+GPIO и энкодеры — в `Libraries/PeriphGeneral`.
 Сгенерированный `main.c` подключает `oscill_main.h` в `USER CODE Includes`,
 вызывает `Oscill_Init()` в `USER CODE 2`, `Oscill_Process()` в `USER CODE 3`.
 Изменения приложения не требуют правки генерируемого кода вне этих секций.

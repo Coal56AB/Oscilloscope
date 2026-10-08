@@ -10,9 +10,6 @@
 #include "controls_uart.h"
 #include "usart.h"
 
-#define PANEL_DEBOUNCE_MS 5U
-#define ENCODER_STEPS_PER_DETENT 4U
-
 static Stm32Controls controls;
 static uint32_t last_scan_ms;
 
@@ -25,16 +22,12 @@ static uint32_t last_scan_ms;
  */
 void Oscill_Init(void)
 {
-  uint8_t buttons[CONTROL_ID_COUNT];
-  uint8_t encoders[STM32_ENCODER_COUNT];
-
-  board_controls_read(buttons, encoders);
-  if (!stm32_controls_init(&controls, buttons, encoders, ENCODER_STEPS_PER_DETENT,
-                           PANEL_DEBOUNCE_MS))
+  if (!stm32_controls_init(&controls))
   {
     Error_Handler();
   }
 
+  board_controls_init();
   controls_uart_init(&huart1);
   last_scan_ms = HAL_GetTick();
 }
@@ -52,12 +45,9 @@ void Oscill_Process(void)
 
   if (now_ms != last_scan_ms)
   {
-    uint8_t buttons[CONTROL_ID_COUNT];
-    uint8_t encoders[STM32_ENCODER_COUNT];
-
     last_scan_ms = now_ms;
-    board_controls_read(buttons, encoders);
-    stm32_controls_scan(&controls, buttons, encoders, now_ms);
+    board_controls_poll(&controls, now_ms);
+    stm32_controls_poll(&controls, now_ms);
   }
 
   controls_uart_poll(&controls, now_ms);

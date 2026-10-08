@@ -20,4 +20,18 @@ if(BUILD_TESTING)
     target_include_directories(stm32_controls_uart_test PRIVATE tests/fakes)
     target_link_libraries(stm32_controls_uart_test PRIVATE stm32_controls)
     add_test(NAME stm32_controls_uart COMMAND stm32_controls_uart_test)
+
+    add_executable(stm32_panel_test tests/test_panel.c tests/fakes/gpio_hal.c
+        Core/Oscill/board_controls.c AllLibs/PeriphGeneral/Src/general_gpio.c
+        AllLibs/PeriphGeneral/Src/general_encoder.c)
+    target_include_directories(stm32_panel_test PRIVATE tests/fakes Core/Inc
+        AllLibs/PeriphGeneral/Inc AllLibs/MyLibs/MyLibs/Inc)
+    target_link_libraries(stm32_panel_test PRIVATE stm32_controls)
+    add_test(NAME stm32_panel COMMAND stm32_panel_test)
+
+    add_executable(stm32_encoder_test AllLibs/PeriphGeneral/tests/test_encoder.c
+        AllLibs/PeriphGeneral/Src/general_encoder.c)
+    target_include_directories(stm32_encoder_test PRIVATE AllLibs/PeriphGeneral/Inc
+        AllLibs/PeriphGeneral/tests)
+    add_test(NAME stm32_encoder COMMAND stm32_encoder_test)
 endif()
