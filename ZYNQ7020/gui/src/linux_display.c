@@ -2,6 +2,8 @@
 #include "linux_display.h"
 #include <fcntl.h>
 #include <linux/fb.h>
+#include <linux/kd.h>
+#include <linux/vt.h>
 #include <poll.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +21,7 @@ typedef struct {
     uint8_t *map;
 } DumbBuffer;
 struct LinuxDisplay {
-    int fd, width, height, front, pending, framebuffer;
+    int fd, width, height, front, pending, framebuffer, tty, previous_vt;
     uint32_t connector, crtc;
 #ifdef SCOPE_ENABLE_DRM
     drmModeCrtc *previous;
@@ -31,10 +33,12 @@ LinuxDisplay *linux_display_open_framebuffer(const char *device, int width, int 
     LinuxDisplay *d = calloc(1, sizeof(*d));
     struct fb_fix_screeninfo fix;
     struct fb_var_screeninfo var;
+    struct vt_stat vt;
     if (!d || width <= 0 || height <= 0) {
         free(d);
         return NULL;
     }
+    d->tty = -1;
     d->fd = open(device, O_RDWR | O_CLOEXEC);
     d->framebuffer = 1;
     d->width = width;
@@ -56,6 +60,13 @@ LinuxDisplay *linux_display_open_framebuffer(const char *device, int width, int 
         d->buffer[0].map = NULL;
         goto fail;
     }
+    d->tty = open("/dev/tty2", O_RDWR | O_CLOEXEC);
+    if (d->tty < 0 || ioctl(d->tty, VT_GETSTATE, &vt) < 0)
+        goto fail;
+    d->previous_vt = vt.v_active;
+    if (ioctl(d->tty, KDSETMODE, KD_GRAPHICS) < 0 || ioctl(d->tty, VT_ACTIVATE, 2) < 0 ||
+        ioctl(d->tty, VT_WAITACTIVE, 2) < 0)
+        goto fail;
     return d;
 fail:
     linux_display_close(d);
@@ -98,6 +109,7 @@ LinuxDisplay *linux_display_open(const char *device, int width, int height)
     if (!d)
         return NULL;
     d->fd = -1;
+    d->tty = -1;
     d->pending = -1;
     d->width = width;
     d->height = height;
@@ -180,6 +192,11 @@ int linux_display_present(LinuxDisplay *d, const uint32_t *pixels)
 {
     int y;
     if (d->framebuffer) {
+        struct vt_stat vt;
+        if (ioctl(d->tty, VT_GETSTATE, &vt) < 0)
+            return -1;
+        if (vt.v_active != 2)
+            return 0;
         for (y = 0; y < d->height; ++y)
             memcpy(d->buffer[0].map + (size_t)y * d->buffer[0].pitch, pixels + (size_t)y * d->width,
                    (size_t)d->width * 4);
@@ -215,6 +232,14 @@ void linux_display_close(LinuxDisplay *d)
     int i;
     if (!d)
         return;
+    if (d->tty >= 0) {
+        ioctl(d->tty, KDSETMODE, KD_TEXT);
+        if (d->previous_vt > 0) {
+            ioctl(d->tty, VT_ACTIVATE, d->previous_vt);
+            ioctl(d->tty, VT_WAITACTIVE, d->previous_vt);
+        }
+        close(d->tty);
+    }
 #ifdef SCOPE_ENABLE_DRM
     if (d->previous && d->previous->mode_valid)
         drmModeSetCrtc(d->fd, d->previous->crtc_id, d->previous->buffer_id, d->previous->x,

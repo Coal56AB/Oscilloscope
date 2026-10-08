@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 HERE = Path(__file__).resolve().parent
-CHARS = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.:-+/*x_uskzm%"
+CHARS = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.:-+/*x_uskzm%nd"
 SIZES = ((2, 18), (3, 27), (4, 36))
 SUPERSAMPLE = 8
 FONTS = (("inter", "Inter-Medium.ttf"),)
@@ -77,5 +77,5 @@ def main():
 
 
 if __name__ == "__main__":
-    assert len(CHARS) == 51
+    assert len(CHARS) == 53
     main()

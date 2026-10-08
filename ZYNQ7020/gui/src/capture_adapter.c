@@ -31,10 +31,9 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
     d->screen.ch2_max_samples = f->y_max[1];
     memcpy(d->fft_ch1, f->fft[0], sizeof(d->fft_ch1));
     memcpy(d->fft_ch2, f->fft[1], sizeof(d->fft_ch2));
-    snprintf(d->fft_span_text, sizeof(d->fft_span_text), "%.1f MHz", f->sample_rate_hz / 2e6);
+    demo_signal_set_fft_range(d, f->sample_rate_hz / 2.0);
     d->screen.fft_ch1_bins = d->fft_ch1;
     d->screen.fft_ch2_bins = d->fft_ch2;
-    d->screen.fft_span = d->fft_span_text;
     for (i = 0; i < d->measurement_count; ++i) {
         int id = d->measurement_ids[i], ch = id <= DEMO_MEAS_CH1_MAX    ? 0
                                              : id <= DEMO_MEAS_CH2_MAX  ? 1

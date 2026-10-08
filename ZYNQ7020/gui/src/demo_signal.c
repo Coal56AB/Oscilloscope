@@ -1,4 +1,5 @@
 #include "demo_signal.h"
+#include "spectrum_bins.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -15,14 +16,18 @@
 #endif
 
 static const int scale_mv[] = {100, 200, 500, 1000, 2000, 5000};
-static const int time_us[] = {10, 20, 50, 100, 200, 500, 1000};
+static const double time_us[] = {
+    0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000,
+    10000, 20000, 50000, 100000, 200000, 500000, 1000000
+};
+#define TIME_SCALE_COUNT ((int)(sizeof(time_us) / sizeof(time_us[0])))
+#define DEFAULT_TIME_INDEX 7
 static const char *coupling_names[] = {"DC", "AC"};
 static const char *probe_names[] = {"x1", "x10"};
 static const char *channel_names[] = {"CH1", "CH2"};
 static const char *on_off_names[] = {"OFF", "ON"};
-static const char *cursor_mode_names[] = {"OFF", "TIME", "VOLTAGE"};
+static const char *cursor_mode_names[] = {"OFF", "TIME", "VERTICAL"};
 static const char *font_names[] = {"PIXEL", "INTER"};
-static const char *rounding_names[] = {"OFF", "2 PX", "5 PX", "8 PX"};
 static const char *mode_names[] = {"AUTO", "NORMAL", "SINGLE"};
 static const char *edge_names[] = {"RISING", "FALLING", "BOTH"};
 static const char *holdoff_names[] = {"OFF", "10 us", "50 us", "100 us"};
@@ -30,9 +35,12 @@ static const char *generator_wave_names[] = {
     "SQUARE", "SINE", "TRIANGLE", "SAW", "SINC", "NOISE"
 };
 static const char *generator_frequency_names[] = {
-    "1 kHz", "2 kHz", "5 kHz", "10 kHz", "20 kHz"
+    "1 kHz", "2 kHz", "5 kHz", "10 kHz", "20 kHz", "50 kHz",
+    "100 kHz", "200 kHz", "500 kHz", "1 MHz"
 };
-static const double generator_period_us[] = {1000.0, 500.0, 200.0, 100.0, 50.0};
+static const double generator_period_us[] = {
+    1000.0, 500.0, 200.0, 100.0, 50.0, 20.0, 10.0, 5.0, 2.0, 1.0
+};
 static const struct {
     const char *label;
     DemoMenu target;
@@ -46,14 +54,14 @@ static const struct {
     {"DEBUG", DEMO_MENU_DEBUG}
 #endif
 };
-static const char *debug_labels[] = {"GENERATOR", "FONT", "ROUNDING"};
+static const char *debug_labels[] = {"GENERATOR", "FONT"};
 static const char *generator_labels[] = {"CH1 WAVE", "CH2 WAVE", "FREQUENCY"};
 static const char *browse_type_labels[] = {"BMP IMAGES", "CSV WAVES"};
 static const char *channel_labels[] = {"CHANNEL", "COUPLING", "PROBE", "V / DIV", "CALIBRATE"};
 static const char *trigger_labels[] = {
     "MODE", "SOURCE", "EDGE", "HOLDOFF", "FORCE", "RESET LEVEL", "LEVEL"
 };
-static const char *cursor_labels[] = {"MODE", "CHANNEL"};
+static const char *cursor_labels[] = {"MODE"};
 static const char *pc_labels[] = {"MODE", "STATUS"};
 static const char *pc_mode_names[] = {"OFF", "USB", "NETWORK"};
 static const char *time_labels[] = {"TIME / DIV", "RESET POSITION"};
@@ -110,12 +118,93 @@ static void format_scale(char *buffer, size_t size, int scale_index, int probe_t
     else snprintf(buffer, size, "%d V", mv / 1000);
 }
 
+static const char *time_unit(double microseconds, double *divisor)
+{
+    double magnitude = fabs(microseconds);
+    if (magnitude > 0.0 && magnitude < 1.0) { *divisor = 0.001; return "ns"; }
+    if (magnitude < 1000.0) { *divisor = 1.0; return "us"; }
+    if (magnitude < 1000000.0) { *divisor = 1000.0; return "ms"; }
+    *divisor = 1000000.0; return "s";
+}
+
+static void format_time_value(char *buffer, size_t size, double microseconds)
+{
+    double divisor;
+    const char *unit = time_unit(microseconds, &divisor);
+    snprintf(buffer, size, "%.3g %s", microseconds / divisor, unit);
+}
+
 static void format_time_scale(char *buffer, size_t size, int index)
 {
-    if (time_us[index] < 1000)
-        snprintf(buffer, size, "%d us", time_us[index]);
-    else
-        snprintf(buffer, size, "%d ms", time_us[index] / 1000);
+    format_time_value(buffer, size, time_us[index]);
+}
+
+static void format_cursor_number(char *buffer, size_t size, double value,
+                                  const char *unit, int sign)
+{
+    int decimals = value == 0.0 ? 3 : 3 - (int)floor(log10(fabs(value)));
+    decimals = clamp(decimals, 0, 3);
+    if (decimals > 0 && fabs(value) + 0.5 * pow(10.0, -decimals) >= pow(10.0, 4 - decimals))
+        --decimals;
+    snprintf(buffer, size, sign ? "%+.*f %s" : "%.*f %s", decimals, value, unit);
+}
+
+static void format_cursor_time(char *buffer, size_t size, double microseconds, int sign)
+{
+    double divisor;
+    const char *unit = time_unit(microseconds, &divisor);
+    format_cursor_number(buffer, size, microseconds / divisor, unit, sign);
+}
+
+static void format_frequency(char *text, size_t size, double hz)
+{
+    const char *unit = hz >= 1000000.0 ? "M" : hz >= 1000.0 ? "k" : "";
+    double divisor = hz >= 1000000.0 ? 1000000.0 : hz >= 1000.0 ? 1000.0 : 1.0;
+    snprintf(text, size, "%.4g%s", hz / divisor, unit);
+}
+
+static void update_fft_cursor(DemoSignal *demo)
+{
+    double hz = spectrum_frequency_at((double)demo->screen.fft_cursor_x / (SCOPE_PLOT_WIDTH - 1),
+                                      demo->fft_span_hz, SCOPE_PLOT_WIDTH);
+    double divisor = hz >= 1000000.0 ? 1000000.0 : hz >= 1000.0 ? 1000.0 : 1.0;
+    const char *unit = hz >= 1000000.0 ? "MHz" : hz >= 1000.0 ? "kHz" : "Hz";
+    if (demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE)
+        format_cursor_number(demo->fft_cursor_text, sizeof(demo->fft_cursor_text),
+                             spectrum_db_at_level(demo->screen.fft_cursor_level), "dB", 0);
+    else if (hz == 0.0) snprintf(demo->fft_cursor_text, sizeof(demo->fft_cursor_text), "0 Hz");
+    else format_cursor_number(demo->fft_cursor_text, sizeof(demo->fft_cursor_text), hz / divisor, unit, 0);
+    demo->screen.fft_cursor_value = demo->fft_cursor_text;
+}
+
+void demo_signal_ui_move_fft_cursor(DemoSignal *demo, int coordinate)
+{
+    if (!demo->fft_enabled || demo->screen.cursor_mode == SCOPE_CURSOR_OFF) return;
+    if (demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE)
+        demo->screen.fft_cursor_level = clamp(coordinate, 0, 255);
+    else demo->screen.fft_cursor_x = clamp(coordinate, 0, SCOPE_PLOT_WIDTH - 1);
+    demo->screen.cursor_selected = SCOPE_CURSOR_SELECT_FFT;
+    update_fft_cursor(demo);
+}
+
+void demo_signal_set_fft_range(DemoSignal *demo, double span_hz)
+{
+    char sampling[24], step[24];
+    int tick;
+    demo->fft_span_hz = span_hz;
+    update_fft_cursor(demo);
+    format_frequency(sampling, sizeof(sampling), span_hz * 2.0);
+    format_frequency(step, sizeof(step), span_hz * 2.0 / SCOPE_PLOT_WIDTH);
+    snprintf(demo->fft_info_text, sizeof(demo->fft_info_text), "FS %s / DF %s", sampling, step);
+    demo->screen.fft_sampling_info = demo->fft_info_text;
+    for (tick = 0; tick < SCOPE_FFT_TICKS; ++tick) {
+        double hz = spectrum_frequency_at((double)tick / (SCOPE_FFT_TICKS - 1), span_hz, SCOPE_PLOT_WIDTH);
+        const char *unit = hz >= 1000000.0 ? "M" : hz >= 1000.0 ? "k" : "";
+        double divisor = hz >= 1000000.0 ? 1000000.0 : hz >= 1000.0 ? 1000.0 : 1.0;
+        snprintf(demo->fft_frequency_text[tick], sizeof(demo->fft_frequency_text[tick]),
+                      "%.3g%s", hz / divisor, unit);
+        demo->screen.fft_frequency_labels[tick] = demo->fft_frequency_text[tick];
+    }
 }
 
 static double current_time_us_per_div(const DemoSignal *demo)
@@ -141,12 +230,6 @@ static int loaded_pan_limit(const DemoSignal *demo)
     return (int)ceil(SCOPE_PLOT_WIDTH * (1.0 - step) / (2.0 * step));
 }
 
-static void format_time_value(char *buffer, size_t size, double microseconds)
-{
-    if (microseconds < 1000.0)
-        snprintf(buffer, size, "%.3g us", microseconds);
-    else snprintf(buffer, size, "%.3g ms", microseconds / 1000.0);
-}
 
 static int channel_zero(const DemoSignal *demo, int channel)
 {
@@ -213,6 +296,47 @@ static double generator_value(DemoWaveShape shape, double t, double period,
         default:
             return 0.0;
     }
+}
+
+/* Extrema over one display column, including edges hidden between its ends.
+   Periodic signals need only their turning points, even at very slow sweeps. */
+static void generator_range(DemoWaveShape shape, double t, double duration, double period,
+                            uint32_t sequence, int x, int channel, double *low, double *high)
+{
+    static const double turning_points[DEMO_WAVE_COUNT][7] = {
+        {0.0, 0.02, 0.50, 0.52}, {0.25, 0.75}, {0.0, 0.5}, {0.0},
+        {0.5, 0.5 - 4.493409457909064 / (8 * PI), 0.5 + 4.493409457909064 / (8 * PI),
+         0.5 - 7.725251836937707 / (8 * PI), 0.5 + 7.725251836937707 / (8 * PI),
+         0.5 - 10.9041216594289 / (8 * PI), 0.5 + 10.9041216594289 / (8 * PI)}, {0.0}
+    };
+    static const int counts[DEMO_WAVE_COUNT] = {4, 2, 2, 1, 7, 0};
+    double phase = fmod(t, period) / period;
+    double span = duration / period;
+    double a = generator_value(shape, t, period, sequence, x, channel);
+    double b = generator_value(shape, t + duration, period, sequence, x, channel);
+    int point;
+    if (phase < 0.0) phase += 1.0;
+    *low = fmin(a, b);
+    *high = fmax(a, b);
+    for (point = 0; point < counts[shape]; ++point) {
+        double p = turning_points[shape][point];
+        double distance = p - phase;
+        double value;
+        if (distance < 0.0) distance += 1.0;
+        if (distance > span) continue;
+        value = generator_value(shape, p * period, period, sequence, x, channel);
+        if (value < *low) *low = value;
+        if (value > *high) *high = value;
+        if (shape == DEMO_WAVE_SAW) *high = 1.0;
+    }
+}
+
+static void bind_envelopes(DemoSignal *demo)
+{
+    demo->screen.ch1_min_samples = demo->minimum[0];
+    demo->screen.ch1_max_samples = demo->maximum[0];
+    demo->screen.ch2_min_samples = demo->minimum[1];
+    demo->screen.ch2_max_samples = demo->maximum[1];
 }
 
 static int trigger_fraction(const DemoSignal *demo, double *fraction)
@@ -323,15 +447,21 @@ static void spectrum(const int16_t *samples, uint8_t *bins)
                 imag[i + j] += ti;
             }
     }
-    for (i = 1; i < SCOPE_FFT_BINS; ++i) {
+    for (i = 1; i <= SCOPE_PLOT_WIDTH / 2; ++i) {
         double magnitude = hypot(real[i], imag[i]);
         if (magnitude > peak) peak = magnitude;
     }
-    bins[0] = 0;
-    for (i = 1; i < SCOPE_FFT_BINS; ++i) {
-        double magnitude = hypot(real[i], imag[i]);
-        double ratio = peak > 0.0 ? log1p(magnitude) / log1p(peak) : 0.0;
-        bins[i] = (uint8_t)clamp((int)lround(ratio * 255.0), 0, 255);
+    for (i = 0; i < SCOPE_FFT_BINS; ++i) {
+        unsigned first, end, k;
+        double magnitude = 0.0, ratio;
+        spectrum_bin_range((unsigned)i, SCOPE_FFT_BINS, SCOPE_PLOT_WIDTH, &first, &end);
+        if (first == 0) first = 1; /* Mean/DC is removed in the demo. */
+        for (k = first; k < end; ++k) {
+            double value = hypot(real[k], imag[k]);
+            if (value > magnitude) magnitude = value;
+        }
+        ratio = peak > 0.0 ? spectrum_level_at_db(20.0 * log10(magnitude / peak + 1e-12)) : 0.0;
+        bins[i] = (uint8_t)clamp((int)lround(ratio), 0, 255);
     }
 }
 
@@ -382,20 +512,59 @@ static void generate(DemoSignal *demo, int free_run)
         y2 += sample_noise(demo->capture_sequence, x, 1);
         demo->ch1[x] = (int16_t)y1;
         demo->ch2[x] = (int16_t)y2;
+        {
+            int channel;
+            for (channel = 0; channel < 2; ++channel) {
+                double low, high;
+                double height = channel ? height2 : height1;
+                double base = (channel ? zero2 : zero1) +
+                              (demo->coupling[channel] ? height * 0.5 : 0.0) +
+                              sample_noise(demo->capture_sequence, x, channel);
+                generator_range((DemoWaveShape)demo->generator_wave[channel],
+                                t + (channel ? period * 0.2 : 0.0), us_per_pixel, period,
+                                demo->capture_sequence, x, channel, &low, &high);
+                demo->minimum[channel][x] = (int16_t)(base - height * high);
+                demo->maximum[channel][x] = (int16_t)(base - height * low);
+            }
+        }
     }
     filter_samples(demo->ch1, demo->filter_level[0]);
     filter_samples(demo->ch2, demo->filter_level[1]);
+    for (x = 0; x < 2; ++x) {
+        filter_samples(demo->minimum[x], demo->filter_level[x]);
+        filter_samples(demo->maximum[x], demo->filter_level[x]);
+    }
+    bind_envelopes(demo);
+}
+
+static void save_capture(DemoSignal *demo)
+{
+    memcpy(demo->saved_ch1, demo->ch1, sizeof(demo->ch1));
+    memcpy(demo->saved_ch2, demo->ch2, sizeof(demo->ch2));
+    memcpy(demo->saved_minimum, demo->minimum, sizeof(demo->minimum));
+    memcpy(demo->saved_maximum, demo->maximum, sizeof(demo->maximum));
+    demo->saved_trigger_marker_x = demo->screen.trigger_marker_x;
 }
 
 static void record_history(DemoSignal *demo)
 {
-    int i;
+    int i, channel;
     for (i = 7; i > 0; --i) {
         memcpy(demo->history_ch1[i], demo->history_ch1[i - 1], sizeof(demo->ch1));
         memcpy(demo->history_ch2[i], demo->history_ch2[i - 1], sizeof(demo->ch2));
+        for (channel = 0; channel < 2; ++channel) {
+            memcpy(demo->history_minimum[channel][i], demo->history_minimum[channel][i - 1],
+                   sizeof(demo->minimum[channel]));
+            memcpy(demo->history_maximum[channel][i], demo->history_maximum[channel][i - 1],
+                   sizeof(demo->maximum[channel]));
+        }
     }
     memcpy(demo->history_ch1[0], demo->ch1, sizeof(demo->ch1));
     memcpy(demo->history_ch2[0], demo->ch2, sizeof(demo->ch2));
+    for (channel = 0; channel < 2; ++channel) {
+        memcpy(demo->history_minimum[channel][0], demo->minimum[channel], sizeof(demo->minimum[channel]));
+        memcpy(demo->history_maximum[channel][0], demo->maximum[channel], sizeof(demo->maximum[channel]));
+    }
     if (demo->history_count < 8) ++demo->history_count;
     demo->screen.history_count = demo->history_count <
         persistence_depth[demo->persistence_index] ? demo->history_count :
@@ -415,10 +584,18 @@ static void apply_zoom_view(DemoSignal *demo)
         source = clamp(source, 0, SCOPE_PLOT_WIDTH - 1);
         demo->ch1[x] = demo->saved_ch1[source];
         demo->ch2[x] = demo->saved_ch2[source];
+        {
+            int channel;
+            for (channel = 0; channel < 2; ++channel) {
+                demo->minimum[channel][x] = demo->saved_minimum[channel][source];
+                demo->maximum[channel][x] = demo->saved_maximum[channel][source];
+            }
+        }
     }
     demo->screen.trigger_marker_x = clamp(SCOPE_PLOT_WIDTH / 2 +
         (demo->saved_trigger_marker_x - SCOPE_PLOT_WIDTH / 2 - demo->zoom_offset) *
         demo->zoom_factor, 0, SCOPE_PLOT_WIDTH - 1);
+    bind_envelopes(demo);
 }
 
 static void apply_loaded_view(DemoSignal *demo)
@@ -448,6 +625,7 @@ static void apply_loaded_view(DemoSignal *demo)
         for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
             int source = clamp((int)(start + x * step), 0, SCOPE_PLOT_WIDTH - 1);
             visible[x] = full[source];
+            demo->minimum[channel][x] = demo->maximum[channel][x] = visible[x];
         }
     }
     demo->screen.zoom_window_start = (int)start;
@@ -455,6 +633,7 @@ static void apply_loaded_view(DemoSignal *demo)
     demo->screen.trigger_marker_x = clamp((int)lround(
         (wave->trigger_marker_x - start) / step), 0, SCOPE_PLOT_WIDTH - 1);
     demo->screen.trigger_locked = 1;
+    bind_envelopes(demo);
 }
 
 static void analyze_loaded_timing(DemoSignal *demo, int channel)
@@ -560,7 +739,13 @@ static void format_measurement(const DemoSignal *demo, int id,
         else if (demo->generator_wave[channel] == DEMO_WAVE_SQUARE)
             snprintf(value, size, "50.0 %%");
         else snprintf(value, size, "--");
-    } else if (id == DEMO_MEAS_CURSOR_DT || id == DEMO_MEAS_CURSOR_INV_DT) {
+    }
+}
+
+static void format_cursor_measurement(const DemoSignal *demo, int id, int channel,
+                                      char *value, size_t size)
+{
+    if (id == DEMO_MEAS_CURSOR_DT || id == DEMO_MEAS_CURSOR_INV_DT) {
         double us_per_pixel = current_time_us_per_div(demo) * 10.0 / SCOPE_PLOT_WIDTH;
         double delta;
         if (demo->screen.cursor_mode != SCOPE_CURSOR_TIME) {
@@ -569,32 +754,32 @@ static void format_measurement(const DemoSignal *demo, int id,
         }
         if (demo->screen.zoom_enabled) us_per_pixel /= demo->zoom_factor;
         delta = abs(demo->screen.cursor_b - demo->screen.cursor_a) * us_per_pixel;
-        if (id == DEMO_MEAS_CURSOR_DT) snprintf(value, size, "%.1f us", delta);
+        if (id == DEMO_MEAS_CURSOR_DT) format_cursor_time(value, size, delta, 0);
         else if (delta <= 0.0) snprintf(value, size, "--");
-        else if (delta <= 1.0) snprintf(value, size, "%.2f MHz", 1.0 / delta);
-        else if (delta <= 1000.0) snprintf(value, size, "%.2f kHz", 1000.0 / delta);
-        else snprintf(value, size, "%.2f Hz", 1000000.0 / delta);
+        else if (delta <= 1.0) format_cursor_number(value, size, 1.0 / delta, "MHz", 0);
+        else if (delta <= 1000.0) format_cursor_number(value, size, 1000.0 / delta, "kHz", 0);
+        else format_cursor_number(value, size, 1000000.0 / delta, "Hz", 0);
     } else if (id == DEMO_MEAS_CURSOR_DV) {
         double scale;
         if (demo->screen.cursor_mode != SCOPE_CURSOR_VOLTAGE) {
             snprintf(value, size, "--");
             return;
         }
-        scale = volts_per_div(demo, demo->cursor_source_index) / PIXELS_PER_DIV;
-        snprintf(value, size, "%.2f V",
-                 abs(demo->screen.cursor_b - demo->screen.cursor_a) * scale);
+        scale = volts_per_div(demo, channel) / PIXELS_PER_DIV;
+        format_cursor_number(value, size,
+                 abs(demo->screen.cursor_b - demo->screen.cursor_a) * scale, "V", 0);
     } else if (id == DEMO_MEAS_CURSOR_A || id == DEMO_MEAS_CURSOR_B) {
         int position = id == DEMO_MEAS_CURSOR_A ?
                        demo->screen.cursor_a : demo->screen.cursor_b;
         if (demo->screen.cursor_mode == SCOPE_CURSOR_TIME) {
             double us_per_pixel = current_time_us_per_div(demo) * 10.0 / SCOPE_PLOT_WIDTH;
             if (demo->screen.zoom_enabled) us_per_pixel /= demo->zoom_factor;
-            snprintf(value, size, "%+.1f us",
-                     (position - demo->screen.trigger_marker_x) * us_per_pixel);
+            format_cursor_time(value, size,
+                               (position - demo->screen.trigger_marker_x) * us_per_pixel, 1);
         } else if (demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE) {
-            double scale = volts_per_div(demo, demo->cursor_source_index) / PIXELS_PER_DIV;
-            snprintf(value, size, "%+.2f V",
-                     (channel_zero(demo, demo->cursor_source_index) - position) * scale);
+            double scale = volts_per_div(demo, channel) / PIXELS_PER_DIV;
+            format_cursor_number(value, size,
+                     (channel_zero(demo, channel) - position) * scale, "V", 1);
         } else snprintf(value, size, "--");
     }
 }
@@ -602,7 +787,7 @@ static void format_measurement(const DemoSignal *demo, int id,
 static void update_measurements(DemoSignal *demo)
 {
     ChannelStats stats[2] = {channel_stats(demo, 0), channel_stats(demo, 1)};
-    int i, x, y;
+    int i, row, x, y;
     demo->screen.measurement_count = demo->measurement_count;
     for (i = 0; i < demo->measurement_count; ++i) {
         int id = demo->measurement_ids[i];
@@ -614,18 +799,20 @@ static void update_measurements(DemoSignal *demo)
     demo->screen.cursor_measurement_count = demo->screen.cursor_mode == SCOPE_CURSOR_TIME ?
                                             SCOPE_CURSOR_READOUTS :
                                             demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE ? 3 : 0;
-    for (i = 0; i < demo->screen.cursor_measurement_count; ++i) {
-        int id = i == 0 ? DEMO_MEAS_CURSOR_A :
-                 i == 1 ? DEMO_MEAS_CURSOR_B :
-                 i == 3 ? DEMO_MEAS_CURSOR_INV_DT :
-                 demo->screen.cursor_mode == SCOPE_CURSOR_TIME ?
-                 DEMO_MEAS_CURSOR_DT : DEMO_MEAS_CURSOR_DV;
-        demo->screen.cursor_measurement_labels[i] =
-            id == DEMO_MEAS_CURSOR_INV_DT ? "FREQ" : measurement_labels[id] + 7;
-        format_measurement(demo, id, stats, demo->cursor_measurement_value_text[i],
-                           sizeof(demo->cursor_measurement_value_text[i]));
-        demo->screen.cursor_measurement_values[i] = demo->cursor_measurement_value_text[i];
-    }
+    demo->screen.cursor_measurement_rows = demo->screen.cursor_mode == SCOPE_CURSOR_TIME ? 1 :
+                                          demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE ? 2 : 0;
+    for (row = 0; row < demo->screen.cursor_measurement_rows; ++row)
+        for (i = 0; i < demo->screen.cursor_measurement_count; ++i) {
+            int id = i == 0 ? DEMO_MEAS_CURSOR_A :
+                     i == 1 ? DEMO_MEAS_CURSOR_B :
+                     i == 3 ? DEMO_MEAS_CURSOR_INV_DT :
+                     demo->screen.cursor_mode == SCOPE_CURSOR_TIME ? DEMO_MEAS_CURSOR_DT : DEMO_MEAS_CURSOR_DV;
+            demo->screen.cursor_measurement_labels[i] =
+                id == DEMO_MEAS_CURSOR_INV_DT ? "FREQ" : measurement_labels[id] + 7;
+            format_cursor_measurement(demo, id, row, demo->cursor_measurement_value_text[row][i],
+                                      sizeof(demo->cursor_measurement_value_text[row][i]));
+            demo->screen.cursor_measurement_values[row][i] = demo->cursor_measurement_value_text[row][i];
+        }
     if (!demo->screen.measurement_hidden) {
         scope_screen_measurement_bounds(&demo->screen, &x, &y, NULL, NULL);
         demo->screen.measurement_x = x;
@@ -655,7 +842,7 @@ static int menu_item_count(DemoMenu kind)
     if (kind == DEMO_MENU_BROWSE) return DEMO_BROWSE_PAGE;
     if (kind == DEMO_MENU_PC) return 2;
     if (kind == DEMO_MENU_PROCESSING) return 5;
-    if (kind == DEMO_MENU_DEBUG) return 3;
+    if (kind == DEMO_MENU_DEBUG) return 2;
     if (kind == DEMO_MENU_GENERATOR) return 3;
     if (kind == DEMO_MENU_FONT) return SCOPE_FONT_COUNT;
     return 0;
@@ -693,7 +880,7 @@ static int current_menu_value(const DemoSignal *demo)
         return demo->trigger_holdoff_index;
     }
     if (demo->menu_kind == DEMO_MENU_CURSOR)
-        return item == 0 ? demo->screen.cursor_mode : demo->cursor_source_index;
+        return demo->screen.cursor_mode;
     if (demo->menu_kind == DEMO_MENU_DISPLAY)
         return demo->screen.grid_enabled;
     if (demo->menu_kind == DEMO_MENU_PC) return demo->pc_mode;
@@ -706,8 +893,6 @@ static int current_menu_value(const DemoSignal *demo)
     if (demo->menu_kind == DEMO_MENU_GENERATOR)
         return item < 2 ? demo->generator_wave[item] :
                           demo->generator_frequency_index;
-    if (demo->menu_kind == DEMO_MENU_DEBUG && item == 2)
-        return demo->screen.ui_rounding;
     return 0;
 }
 
@@ -719,15 +904,15 @@ static int menu_value_count(const DemoSignal *demo)
     if (demo->menu_kind == DEMO_MENU_TRIGGER)
         return item == 0 || item == 2 ? 3 : item == 3 ? 4 :
                item == 6 ? SCOPE_PLOT_HEIGHT : 2;
-    if (demo->menu_kind == DEMO_MENU_CURSOR) return item == 0 ? 3 : 2;
-    if (demo->menu_kind == DEMO_MENU_TIME) return item == 0 ? 7 : 1;
+    if (demo->menu_kind == DEMO_MENU_CURSOR) return 3;
+    if (demo->menu_kind == DEMO_MENU_TIME) return item == 0 ?
+        (demo->screen.zoom_enabled ? 15 : TIME_SCALE_COUNT) : 1;
     if (demo->menu_kind == DEMO_MENU_PROCESSING)
         return item < 2 ? 4 : item == 3 ? 3 : 2;
     if (demo->menu_kind == DEMO_MENU_GENERATOR)
         return item < 2 ? DEMO_WAVE_COUNT :
                           (int)(sizeof(generator_period_us) /
                                 sizeof(generator_period_us[0]));
-    if (demo->menu_kind == DEMO_MENU_DEBUG && item == 2) return 4;
     if (demo->menu_kind == DEMO_MENU_PC) return 3;
     return 2;
 }
@@ -835,13 +1020,7 @@ static void refresh_menu(DemoSignal *demo)
         screen->menu_title = "CURSOR SETTINGS";
         screen->menu_labels[0] = cursor_labels[0];
         screen->menu_values[0] = screen->cursor_mode == SCOPE_CURSOR_TIME ? "TIME" :
-                                 screen->cursor_mode == SCOPE_CURSOR_VOLTAGE ? "VOLTAGE" : "OFF";
-        screen->menu_count = screen->cursor_mode == SCOPE_CURSOR_VOLTAGE ? 2 : 1;
-        if (screen->menu_count == 2) {
-            screen->menu_labels[1] = cursor_labels[1];
-            screen->menu_values[1] = demo->cursor_source_index ? "CH2" : "CH1";
-            set_menu_options(screen, 1, channel_names, 2, demo->cursor_source_index);
-        }
+                                 screen->cursor_mode == SCOPE_CURSOR_VOLTAGE ? "VERTICAL" : "OFF";
         set_menu_options(screen, 0, cursor_mode_names, 3, screen->cursor_mode);
     } else if (demo->menu_kind == DEMO_MENU_MEASURE) {
         screen->menu_title = "MEASUREMENTS";
@@ -880,15 +1059,11 @@ static void refresh_menu(DemoSignal *demo)
     } else if (demo->menu_kind == DEMO_MENU_DEBUG) {
         int font_index = screen->font_index < SCOPE_FONT_COUNT ?
                          screen->font_index : SCOPE_FONT_PIXEL;
-        int rounding = screen->ui_rounding < 4 ? screen->ui_rounding : 0;
         screen->menu_title = "DEBUG";
         screen->menu_labels[0] = debug_labels[0];
         screen->menu_values[0] = "OPEN";
         screen->menu_labels[1] = debug_labels[1];
         screen->menu_values[1] = font_names[font_index];
-        screen->menu_labels[2] = debug_labels[2];
-        screen->menu_values[2] = rounding_names[rounding];
-        set_menu_options(screen, 2, rounding_names, 4, rounding);
     } else if (demo->menu_kind == DEMO_MENU_GENERATOR) {
         screen->menu_title = "DEMO GENERATOR";
         for (i = 0; i < 3; ++i) {
@@ -927,7 +1102,7 @@ static void refresh_menu(DemoSignal *demo)
         else if (demo->menu_kind == DEMO_MENU_CURSOR)
             screen->menu_values[i] = i == 0 ?
                 (demo->edit_value == SCOPE_CURSOR_TIME ? "TIME" :
-                 demo->edit_value == SCOPE_CURSOR_VOLTAGE ? "VOLTAGE" : "OFF") :
+                 demo->edit_value == SCOPE_CURSOR_VOLTAGE ? "VERTICAL" : "OFF") :
                 demo->edit_value ? "CH2" : "CH1";
         else if (demo->menu_kind == DEMO_MENU_DISPLAY)
             screen->menu_values[i] = demo->edit_value ? "ON" : "OFF";
@@ -957,6 +1132,10 @@ static void refresh_menu(DemoSignal *demo)
 static void update_text(DemoSignal *demo, int regenerate)
 {
     int channel;
+    demo->screen.fft_cursor_visible = demo->fft_enabled &&
+                                      demo->screen.cursor_mode != SCOPE_CURSOR_OFF;
+    if (!demo->screen.fft_cursor_visible && demo->screen.cursor_selected == SCOPE_CURSOR_SELECT_FFT)
+        demo->screen.cursor_selected = SCOPE_CURSOR_SELECT_A;
     update_trigger_positions(demo);
     for (channel = 0; channel < 2; ++channel) {
         format_scale(demo->ch_scale_text[channel], sizeof(demo->ch_scale_text[channel]),
@@ -996,11 +1175,14 @@ static void update_text(DemoSignal *demo, int regenerate)
     demo->screen.trigger_source_channel = (uint8_t)demo->trigger_source_index;
     demo->screen.trigger_edge_falling = (uint8_t)(demo->trigger_edge_index == 1);
     demo->screen.trigger_edge_both = (uint8_t)(demo->trigger_edge_index == 2);
-    demo->screen.cursor_source_channel = (uint8_t)demo->cursor_source_index;
     demo->screen.capture_ch1_samples = demo->saved_ch1;
     demo->screen.capture_ch2_samples = demo->saved_ch2;
     demo->screen.history_ch1_samples = demo->history_ch1[0];
     demo->screen.history_ch2_samples = demo->history_ch2[0];
+    demo->screen.history_ch1_min_samples = demo->history_minimum[0][0];
+    demo->screen.history_ch1_max_samples = demo->history_maximum[0][0];
+    demo->screen.history_ch2_min_samples = demo->history_minimum[1][0];
+    demo->screen.history_ch2_max_samples = demo->history_maximum[1][0];
     demo->screen.intensity_coloring = (uint8_t)demo->intensity_coloring;
     demo->screen.history_count = demo->waveform_loaded ? 0 : demo->history_count <
         persistence_depth[demo->persistence_index] ? demo->history_count :
@@ -1013,15 +1195,16 @@ static void update_text(DemoSignal *demo, int regenerate)
     demo->screen.split_height = demo->fft_enabled ?
                                 demo->fft_split_height : demo->zoom_split_height;
     {
-        double span_khz = 100.0 * SCOPE_FFT_BINS /
-                          current_time_us_per_div(demo);
-        if (span_khz >= 1000.0)
-            snprintf(demo->fft_span_text, sizeof(demo->fft_span_text),
-                     "0-%.1f MHz", span_khz / 1000.0);
-        else
-            snprintf(demo->fft_span_text, sizeof(demo->fft_span_text),
-                     "0-%.0f kHz", span_khz);
-        demo->screen.fft_span = demo->fft_span_text;
+        double span = 50000.0 * SCOPE_PLOT_WIDTH / current_time_us_per_div(demo);
+        demo_signal_set_fft_range(demo, span);
+        int periodic_enabled =
+            (demo->screen.ch1_enabled && demo->generator_wave[0] != DEMO_WAVE_NOISE) ||
+            (demo->screen.ch2_enabled && demo->generator_wave[1] != DEMO_WAVE_NOISE);
+        if (!demo->waveform_loaded && periodic_enabled &&
+            1000000.0 / generator_period_us[demo->generator_frequency_index] >= span) {
+            size_t used = strlen(demo->fft_info_text);
+            snprintf(demo->fft_info_text + used, sizeof(demo->fft_info_text) - used, " / ALIAS");
+        }
     }
     refresh_menu(demo);
     if (regenerate) {
@@ -1044,6 +1227,7 @@ static void update_text(DemoSignal *demo, int regenerate)
 
 static void open_menu(DemoSignal *demo, DemoMenu kind, DemoMenu parent)
 {
+    int height;
     demo->menu_kind = kind;
     demo->menu_parent = parent;
     demo->screen.menu_selected = 0;
@@ -1057,6 +1241,10 @@ static void open_menu(DemoSignal *demo, DemoMenu kind, DemoMenu parent)
     if (kind == DEMO_MENU_FONT)
         demo->screen.menu_selected = demo->screen.font_index;
     update_text(demo, 0);
+    height = SCOPE_MENU_ROW_Y - SCOPE_MENU_Y + demo->screen.menu_count * SCOPE_MENU_ROW_HEIGHT + 6;
+    demo->menu_position_x = (SCOPE_WIDTH - SCOPE_MENU_WIDTH) / 2;
+    demo->menu_position_y = (SCOPE_HEIGHT - height) / 2;
+    refresh_menu(demo);
 }
 
 static void close_menu(DemoSignal *demo)
@@ -1118,7 +1306,7 @@ void demo_signal_zoom_time(DemoSignal *demo, int steps)
                  SCOPE_PLOT_WIDTH / 2 - SCOPE_PLOT_WIDTH / (2 * demo->zoom_factor));
     } else {
         demo->time_index = clamp(demo->time_index - steps, 0,
-            demo->waveform_loaded ? demo->loaded_wave.time_index : 6);
+            demo->waveform_loaded ? demo->loaded_wave.time_index : TIME_SCALE_COUNT - 1);
         if (demo->waveform_loaded) {
             int limit = loaded_pan_limit(demo);
             demo->time_position = clamp(demo->time_position, -limit, limit);
@@ -1170,7 +1358,7 @@ void demo_signal_notify(DemoSignal *demo, const char *message)
 {
     static const char *events[] = {
         "SCREENSHOT SAVED", "WAVEFORM SAVED", "SCREEN AND WAVE SAVED",
-        "SAVE FAILED", "OPEN FAILED", "FILE DELETED", "DELETE FAILED",
+        "SAVE FAILED", "NO DATA CARD", "OPEN FAILED", "FILE DELETED", "DELETE FAILED",
         "TRIGGER FORCED", "SINGLE CAPTURE COMPLETE",
         "MEASUREMENT LIST FULL / REMOVE ONE",
         "DEMO CALIBRATION / POSITION CENTERED"
@@ -1185,6 +1373,7 @@ void demo_signal_notify(DemoSignal *demo, const char *message)
     demo->screen.status_alpha = 255;
     demo->screen.status_warning = (uint8_t)(
         strcmp(message, "SAVE FAILED") == 0 ||
+        strcmp(message, "NO DATA CARD") == 0 ||
         strcmp(message, "OPEN FAILED") == 0 ||
         strcmp(message, "DELETE FAILED") == 0 ||
         strcmp(message, "MEASUREMENT LIST FULL / REMOVE ONE") == 0);
@@ -1198,10 +1387,12 @@ void demo_signal_init(DemoSignal *demo)
     demo->screen.status_message = demo->status_text;
     demo->scale_index[0] = 2;
     demo->scale_index[1] = 3;
-    demo->time_index = 3;
+    demo->time_index = DEFAULT_TIME_INDEX;
     demo->generator_wave[0] = DEMO_WAVE_SQUARE;
     demo->generator_wave[1] = DEMO_WAVE_SQUARE;
     demo->generator_frequency_index = 3;
+    demo->screen.fft_cursor_x = SCOPE_PLOT_WIDTH / 2;
+    demo->screen.fft_cursor_level = 128;
     demo->screen.cursor_a = 240;
     demo->screen.cursor_b = 720;
     demo->screen.trigger_marker_x = SCOPE_PLOT_WIDTH / 2;
@@ -1220,7 +1411,7 @@ void demo_signal_init(DemoSignal *demo)
     demo->measurement_ids[1] = DEMO_MEAS_CH2_VPP;
     demo->measurement_ids[2] = DEMO_MEAS_CH1_FREQ;
     demo->measurement_count = 3;
-    demo->screen.measurement_x = 8;
+    demo->screen.measurement_x = 0;
     demo->screen.measurement_y = SCOPE_BOTTOM_Y;
     demo->screen.measurement_horizontal = 1;
     demo->trigger_voltage = 0.60;
@@ -1252,9 +1443,7 @@ void demo_signal_advance(DemoSignal *demo)
     ++demo->capture_sequence;
     generate(demo, 0);
     if (demo->screen.zoom_enabled) {
-        memcpy(demo->saved_ch1, demo->ch1, sizeof(demo->ch1));
-        memcpy(demo->saved_ch2, demo->ch2, sizeof(demo->ch2));
-        demo->saved_trigger_marker_x = demo->screen.trigger_marker_x;
+        save_capture(demo);
         apply_zoom_view(demo);
     }
     update_spectrum(demo);
@@ -1329,7 +1518,7 @@ static void apply_edit(DemoSignal *demo)
             demo->screen.cursor_selected = 0;
             demo->screen.cursor_a = demo->edit_value == SCOPE_CURSOR_VOLTAGE ? 125 : 240;
             demo->screen.cursor_b = demo->edit_value == SCOPE_CURSOR_VOLTAGE ? 305 : 720;
-        } else demo->cursor_source_index = demo->edit_value;
+        }
     } else if (demo->menu_kind == DEMO_MENU_DISPLAY) {
         demo->screen.grid_enabled = (uint8_t)demo->edit_value;
     } else if (demo->menu_kind == DEMO_MENU_TIME) {
@@ -1356,8 +1545,6 @@ static void apply_edit(DemoSignal *demo)
     } else if (demo->menu_kind == DEMO_MENU_GENERATOR) {
         if (item < 2) demo->generator_wave[item] = demo->edit_value;
         else demo->generator_frequency_index = demo->edit_value;
-    } else if (demo->menu_kind == DEMO_MENU_DEBUG && item == 2) {
-        demo->screen.ui_rounding = (uint8_t)demo->edit_value;
     }
     demo->screen.menu_editing = 0;
     if (!calibrated) demo_signal_notify(demo, "SETTING APPLIED");
@@ -1497,9 +1684,7 @@ static void force_trigger(DemoSignal *demo)
     ++demo->capture_sequence;
     generate(demo, 1);
     if (demo->screen.zoom_enabled) {
-        memcpy(demo->saved_ch1, demo->ch1, sizeof(demo->ch1));
-        memcpy(demo->saved_ch2, demo->ch2, sizeof(demo->ch2));
-        demo->saved_trigger_marker_x = demo->screen.trigger_marker_x;
+        save_capture(demo);
         apply_zoom_view(demo);
     }
     update_spectrum(demo);
@@ -1523,11 +1708,9 @@ static void reset_trigger_level(DemoSignal *demo)
 
 static int measurements_docked_at_bottom(const DemoSignal *demo)
 {
-    int y, height;
-    int available_bottom = demo->screen.cursor_measurement_count > 0 ?
-                           SCOPE_CURSOR_STRIP_Y : SCOPE_MEASURE_BOTTOM_Y;
-    scope_screen_measurement_bounds(&demo->screen, NULL, &y, NULL, &height);
-    return y + height == available_bottom;
+    int x, y, width, height;
+    scope_screen_measurement_bounds(&demo->screen, &x, &y, &width, &height);
+    return y + height == scope_screen_measurement_bottom(&demo->screen, x, width);
 }
 
 static void redock_measurements(DemoSignal *demo)
@@ -1569,10 +1752,7 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
         if (item < 2)
             open_menu(demo, item == 0 ? DEMO_MENU_GENERATOR : DEMO_MENU_FONT,
                       DEMO_MENU_DEBUG);
-        else {
-            demo->edit_value = (demo->screen.ui_rounding + 1) % 4;
-            apply_edit(demo);
-        }
+
     } else if (demo->menu_kind == DEMO_MENU_FONT) {
         demo->screen.font_index = (uint8_t)item;
         demo_signal_notify(demo, "SETTING APPLIED");
@@ -1662,13 +1842,6 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
         demo->screen.font_index = (uint8_t)index;
         update_text(demo, 0);
         return DEMO_ACTION_NONE;
-    } else if (demo->menu_kind == DEMO_MENU_DEBUG && index == 2) {
-        demo->edit_value = current_menu_value(demo) + (direction < 0 ? -1 : 1);
-        count = menu_value_count(demo);
-        demo->edit_value %= count;
-        if (demo->edit_value < 0) demo->edit_value += count;
-        apply_edit(demo);
-        return DEMO_ACTION_NONE;
     } else if (demo->menu_kind == DEMO_MENU_PROCESSING) {
         small_choice = 1;
     } else if (demo->menu_kind == DEMO_MENU_GENERATOR) {
@@ -1704,9 +1877,7 @@ void demo_signal_ui_toggle_zoom(DemoSignal *demo)
 {
     if (!demo->screen.zoom_enabled) {
         demo->fft_enabled = 0;
-        memcpy(demo->saved_ch1, demo->ch1, sizeof(demo->ch1));
-        memcpy(demo->saved_ch2, demo->ch2, sizeof(demo->ch2));
-        demo->saved_trigger_marker_x = demo->screen.trigger_marker_x;
+        save_capture(demo);
         demo->zoom_factor = 2;
         demo->zoom_offset = 0;
         demo->screen.zoom_enabled = 1;
@@ -1778,7 +1949,7 @@ void demo_signal_ui_cycle_cursor_mode(DemoSignal *demo)
     demo->screen.cursor_b = demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE ? 305 : 720;
     demo_signal_notify(demo, demo->screen.cursor_mode == SCOPE_CURSOR_OFF ? "CURSORS OFF" :
                        demo->screen.cursor_mode == SCOPE_CURSOR_TIME ?
-                       "TIME CURSORS" : "VOLTAGE CURSORS");
+                       "TIME CURSORS" : "VERTICAL CURSORS");
     update_text(demo, 0);
     if (measurement_docked) redock_measurements(demo);
 }
@@ -1921,12 +2092,17 @@ void demo_signal_ui_show_wave(DemoSignal *demo, const char *name,
 {
     int channel;
     demo->loaded_wave = *wave;
-    if (demo->loaded_wave.time_index < 0 || demo->loaded_wave.time_index > 6)
-        demo->loaded_wave.time_index = 3;
     if (!isfinite(demo->loaded_wave.time_us_per_div) ||
         demo->loaded_wave.time_us_per_div <= 0.0 ||
-        demo->loaded_wave.time_us_per_div > 1000000.0)
-        demo->loaded_wave.time_us_per_div = time_us[demo->loaded_wave.time_index];
+        demo->loaded_wave.time_us_per_div > 1000000.0) {
+        int legacy = wave->time_index >= 0 && wave->time_index <= 6 ? wave->time_index + 4 : DEFAULT_TIME_INDEX;
+        demo->loaded_wave.time_us_per_div = time_us[legacy];
+    }
+    demo->loaded_wave.time_index = 0;
+    for (channel = 1; channel < TIME_SCALE_COUNT; ++channel)
+        if (fabs(log(time_us[channel] / demo->loaded_wave.time_us_per_div)) <
+            fabs(log(time_us[demo->loaded_wave.time_index] / demo->loaded_wave.time_us_per_div)))
+            demo->loaded_wave.time_index = channel;
     for (channel = 0; channel < 2; ++channel) {
         demo->loaded_wave.zero_y[channel] = clamp(wave->zero_y[channel], 0,
                                                   SCOPE_PLOT_HEIGHT - 1);
@@ -2026,7 +2202,7 @@ void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps)
             demo_signal_notify(demo, "HORIZONTAL POSITION");
         } else {
             demo->time_index = clamp(demo->time_index + steps, 0,
-                demo->waveform_loaded ? demo->loaded_wave.time_index : 6);
+                demo->waveform_loaded ? demo->loaded_wave.time_index : TIME_SCALE_COUNT - 1);
             if (demo->waveform_loaded) {
                 int limit = loaded_pan_limit(demo);
                 demo->time_position = clamp(demo->time_position, -limit, limit);
@@ -2039,6 +2215,11 @@ void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps)
     } else if (control == DEMO_ENC_FUNCTION) {
         if (demo->screen.menu_open) {
             demo_signal_ui_menu_adjust(demo, steps);
+            return;
+        } else if (demo->fft_enabled && demo->screen.cursor_selected == SCOPE_CURSOR_SELECT_FFT) {
+            int value = demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE ?
+                        demo->screen.fft_cursor_level : demo->screen.fft_cursor_x;
+            demo_signal_ui_move_fft_cursor(demo, value + steps * (demo->screen.fine_mode ? 1 : 8));
             return;
         } else if (demo->screen.cursor_mode != SCOPE_CURSOR_OFF) {
             int *selected = demo->screen.cursor_selected ? &demo->screen.cursor_b : &demo->screen.cursor_a;
@@ -2086,9 +2267,7 @@ DemoAction demo_signal_press_at(DemoSignal *demo, DemoControl control,
         } else if (demo->screen.menu_open) {
             action = demo_signal_ui_menu_activate(demo);
         } else if (demo->screen.cursor_mode != SCOPE_CURSOR_OFF) {
-            demo->screen.cursor_selected = !demo->screen.cursor_selected;
-            demo_signal_notify(demo, demo->screen.cursor_selected ?
-                               "CURSOR 2 SELECTED" : "CURSOR 1 SELECTED");
+            demo->screen.cursor_selected = (demo->screen.cursor_selected + 1) % (demo->fft_enabled ? 3 : 2);
         }
     } else if (control == DEMO_BTN_CH1 || control == DEMO_BTN_CH2) {
         int channel = control == DEMO_BTN_CH2;

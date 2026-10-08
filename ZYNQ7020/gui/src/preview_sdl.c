@@ -1,5 +1,6 @@
 #include "panel_sdl.h"
 #include "wave_file.h"
+#include "linux_storage.h"
 #include "capture_adapter.h"
 #include "control_transport.h"
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
@@ -11,6 +12,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +26,8 @@
 #endif
 
 static DemoSignal demo;
+static volatile sig_atomic_t stop_requested;
+static void request_stop(int signal_number) { (void)signal_number; stop_requested=1; }
 static uint32_t *screen_pixels;
 static uint32_t *panel_pixels;
 static uint32_t browse_pixels[SCOPE_WIDTH * SCOPE_HEIGHT];
@@ -32,6 +36,7 @@ static DemoSignal live_before_browse;
 static int live_snapshot_valid;
 static char browse_names[DEMO_BROWSE_FILES][DEMO_BROWSE_NAME];
 static char application_dir[PATH_MAX];
+static int require_data_device;
 static int dirty = 1;
 static int panel_enabled = 1;
 static ControlQueue controls;
@@ -68,7 +73,7 @@ typedef enum {
     TOUCH_MEASURE_DRAG, TOUCH_MEASURE_LAYOUT, TOUCH_CURSOR_STRIP,
     TOUCH_ZOOM_OVERVIEW, TOUCH_PLOT_CH1, TOUCH_PLOT_CH2,
     TOUCH_TIME_IN, TOUCH_TIME_OUT, TOUCH_BROWSER_PREV, TOUCH_BROWSER_NEXT,
-    TOUCH_BROWSER_BACK, TOUCH_SPLIT
+    TOUCH_BROWSER_BACK, TOUCH_SPLIT, TOUCH_FFT_CURSOR
 } TouchZone;
 
 typedef struct {
@@ -125,8 +130,10 @@ static void draw_all(void)
     if(capture_pipeline&&capture_frame_valid&&!demo.waveform_loaded&&!demo.screen.browser_visible)
         capture_display_apply(&demo,&capture_frame);
     else {
-        demo.screen.ch1_min_samples=demo.screen.ch1_max_samples=NULL;
-        demo.screen.ch2_min_samples=demo.screen.ch2_max_samples=NULL;
+        demo.screen.ch1_min_samples=demo.minimum[0];
+        demo.screen.ch1_max_samples=demo.maximum[0];
+        demo.screen.ch2_min_samples=demo.minimum[1];
+        demo.screen.ch2_max_samples=demo.maximum[1];
     }
     scope_screen_render(screen_pixels, SCOPE_WIDTH, &demo.screen);
     if(panel_enabled)
@@ -272,23 +279,27 @@ static int open_browse_capture(void)
 
 static int capture(DemoAction action)
 {
-    char image_path[PATH_MAX],wave_path[PATH_MAX],name[64]; int index;
+    char image_path[PATH_MAX],wave_path[PATH_MAX]; int index, ok=0;
     struct stat information;
+    int directory=linux_storage_open(application_dir,require_data_device);
+    if(directory<0) return require_data_device?-1:0;
+    /* Resolve all files through this fd: an unmount cannot redirect them into RAM. */
     for(index=1;index<=9999;++index) {
-        snprintf(name,sizeof(name),"capture_%04d.bmp",index);
-        if(!make_path(image_path,sizeof(image_path),name)) return 0;
-        snprintf(name,sizeof(name),"capture_%04d.csv",index);
-        if(!make_path(wave_path,sizeof(wave_path),name)) return 0;
+        snprintf(image_path,sizeof(image_path),"/proc/self/fd/%d/capture_%04d.bmp",directory,index);
+        snprintf(wave_path,sizeof(wave_path),"/proc/self/fd/%d/capture_%04d.csv",directory,index);
         if(stat(image_path,&information)!=0 && stat(wave_path,&information)!=0) break;
     }
-    if(index>9999) return 0;
-    if(action!=DEMO_ACTION_WAVEFORM) {
-        scope_screen_render(screen_pixels,SCOPE_WIDTH,&demo.screen);
-        if(!save_bmp(image_path,screen_pixels,SCOPE_WIDTH,SCOPE_HEIGHT)) return 0;
+    if(index<=9999) {
+        ok=1;
+        if(action!=DEMO_ACTION_WAVEFORM) {
+            scope_screen_render(screen_pixels,SCOPE_WIDTH,&demo.screen);
+            ok=save_bmp(image_path,screen_pixels,SCOPE_WIDTH,SCOPE_HEIGHT);
+        }
+        if(ok && action!=DEMO_ACTION_SCREENSHOT) ok=save_wave(wave_path);
     }
-    if(action==DEMO_ACTION_WAVEFORM) return save_wave(wave_path);
-    if(action==DEMO_ACTION_SCREEN_AND_WAVE && !save_wave(wave_path)) return 0;
-    return 1;
+    if(ok) return linux_storage_sync_close(directory);
+    close(directory);
+    return 0;
 }
 
 static void act(DemoAction action)
@@ -314,8 +325,8 @@ static void act(DemoAction action)
         }
     } else if(action!=DEMO_ACTION_NONE) {
         int ok=capture(action);
-        demo_signal_notify(&demo,ok?(action==DEMO_ACTION_SCREENSHOT?"SCREENSHOT SAVED":
-            action==DEMO_ACTION_WAVEFORM?"WAVEFORM SAVED":"SCREEN AND WAVE SAVED"):"SAVE FAILED");
+        demo_signal_notify(&demo,ok==1?(action==DEMO_ACTION_SCREENSHOT?"SCREENSHOT SAVED":
+            action==DEMO_ACTION_WAVEFORM?"WAVEFORM SAVED":"SCREEN AND WAVE SAVED"):ok<0?"NO DATA CARD":"SAVE FAILED");
     }
     invalidate();
 }
@@ -422,10 +433,10 @@ static TouchZone touch_zone_at(int x, int y, int *row)
         if(y>=top+88&&y<top+132&&x>=left+216&&x<left+404) return TOUCH_MEASURE_CONFIRM;
         return TOUCH_MEASURE_CANCEL;
     }
-    if(demo.screen.measurement_menu&&x>=20&&x<1004&&y>=84&&y<SCOPE_BOTTOM_Y) {
+    if(demo.screen.measurement_menu&&x>=20&&x<1004&&y>=74&&y<SCOPE_BOTTOM_Y-10) {
         if(y<SCOPE_MEASURE_MENU_ROW_Y)
-            return x>=902?TOUCH_MENU_BACK:x>=588&&x<728&&y>=93&&y<120?TOUCH_MEASURE_HIDE:
-                   x>=744&&x<884&&y>=93&&y<120?TOUCH_MEASURE_CLEAR:TOUCH_NONE;
+            return x>=902?TOUCH_MENU_BACK:x>=588&&x<728&&y>=83&&y<110?TOUCH_MEASURE_HIDE:
+                   x>=744&&x<884&&y>=83&&y<110?TOUCH_MEASURE_CLEAR:TOUCH_NONE;
         *row=(x>=512?8:0)+(y-SCOPE_MEASURE_MENU_ROW_Y)/SCOPE_MEASURE_MENU_ROW_HEIGHT;
         return (y-SCOPE_MEASURE_MENU_ROW_Y)/SCOPE_MEASURE_MENU_ROW_HEIGHT<8&&
                *row<SCOPE_MEASURE_CATALOG_ITEMS?TOUCH_MENU_ROW:TOUCH_NONE;
@@ -463,9 +474,10 @@ static TouchZone touch_zone_at(int x, int y, int *row)
     if(demo.screen.menu_open) return y>=SCOPE_PLOT_Y&&y<SCOPE_BOTTOM_Y?TOUCH_MENU_OUTSIDE:TOUCH_NONE;
     if(x>=SCOPE_PLOT_X&&x<SCOPE_PLOT_X+SCOPE_PLOT_WIDTH&&y>=SCOPE_PLOT_Y&&y<SCOPE_PLOT_Y+SCOPE_PLOT_HEIGHT) {
         int mx,my,mw,mh;
-        int cursor_y=SCOPE_CURSOR_STRIP_Y;
-        if(demo.screen.cursor_measurement_count>0&&y>=cursor_y&&y<cursor_y+31&&
-           x>=8&&x<8+scope_screen_cursor_measurement_width(&demo.screen)) return TOUCH_CURSOR_STRIP;
+        int cursor_y,cursor_height;
+        scope_screen_cursor_measurement_bounds(&demo.screen,NULL,&cursor_y,NULL,&cursor_height);
+        if(demo.screen.cursor_measurement_count>0&&y>=cursor_y&&y<cursor_y+cursor_height&&
+           x>=0&&x<scope_screen_cursor_measurement_width(&demo.screen)) return TOUCH_CURSOR_STRIP;
         scope_screen_measurement_bounds(&demo.screen,&mx,&my,&mw,&mh);
         if(x>=mx&&x<mx+mw&&y>=my&&y<my+mh)
             return y<my+30&&x>=mx+mw-(!demo.screen.measurement_hidden&&demo.screen.measurement_count>0&&
@@ -473,7 +485,8 @@ static TouchZone touch_zone_at(int x, int y, int *row)
         if((demo.screen.zoom_enabled||demo.screen.fft_enabled)&&
            abs(y-(SCOPE_PLOT_Y+demo.screen.split_height))<=15)return TOUCH_SPLIT;
         if(demo.screen.zoom_enabled&&y<SCOPE_PLOT_Y+demo.screen.split_height-26)return TOUCH_ZOOM_OVERVIEW;
-        if((demo.screen.zoom_enabled||demo.screen.fft_enabled)&&y<SCOPE_PLOT_Y+demo.screen.split_height)return TOUCH_NONE;
+        if((demo.screen.zoom_enabled||demo.screen.fft_enabled)&&y<SCOPE_PLOT_Y+demo.screen.split_height)
+            return demo.screen.fft_cursor_visible?TOUCH_FFT_CURSOR:TOUCH_NONE;
         if(x>=SCOPE_WIDTH-36&&(abs(y-touch_screen_y(demo.screen.trigger_y))<=23||
            (demo.screen.trigger_preview&&abs(y-touch_screen_y(demo.screen.trigger_preview_y))<=23)))return TOUCH_PLOT_TRIGGER;
         if(x<40&&((demo.screen.ch1_enabled&&abs(y-touch_screen_y(demo.screen.channel_zero_y[0]))<44)||
@@ -586,6 +599,12 @@ static void touch_move(int x, int y)
         touch.zone==TOUCH_PLOT_CURSOR||touch.zone==TOUCH_MEASURE_DRAG||touch.zone==TOUCH_MEASURE_LAYOUT?3:12;
     if(touch.zone==TOUCH_MENU_DRAG)motion_threshold=3;
     if(!touch.active)return;
+    if(touch.zone==TOUCH_FFT_CURSOR){
+        if(x!=touch.last_x||y!=touch.last_y){demo_signal_ui_move_fft_cursor(&demo,
+            demo.screen.cursor_mode==SCOPE_CURSOR_VOLTAGE?scope_screen_fft_level_at(&demo.screen,y):x-SCOPE_PLOT_X);
+            touch.last_x=x;touch.last_y=y;touch.moved=1;invalidate();}
+        return;
+    }
     if(abs(x-touch.x)>motion_threshold||abs(y-touch.y)>motion_threshold)touch.moved=1;
     if(!touch.moved)return;
     movement=x-touch.last_x;
@@ -689,6 +708,8 @@ static void lcd_touch_begin(int x, int y)
     touch.x=touch.last_x=x;touch.y=touch.last_y=y;touch.remainder=0;
     touch.fine_x_remainder=touch.fine_y_remainder=touch.zoom_pan_remainder=0;
     touch.axis=touch.moved=touch.long_done=0;touch.since=now_ms();touch.active=1;
+    if(touch.zone==TOUCH_FFT_CURSOR){demo_signal_ui_move_fft_cursor(&demo,
+        demo.screen.cursor_mode==SCOPE_CURSOR_VOLTAGE?scope_screen_fft_level_at(&demo.screen,y):x-SCOPE_PLOT_X);invalidate();}
     if(touch.zone==TOUCH_PLOT_CURSOR){int c=demo.screen.cursor_mode==SCOPE_CURSOR_TIME?x-SCOPE_PLOT_X:touch_plot_y(y);
         demo_signal_ui_select_cursor(&demo,abs(c-demo.screen.cursor_b)<abs(c-demo.screen.cursor_a));}
 }
@@ -819,6 +840,7 @@ static int unsigned_option(const char *text, unsigned *value)
 
 int main(int argc, char **argv)
 {
+    struct sigaction stop_action={0};
     SDL_Window *lcd_window=NULL,*panel_window=NULL;SDL_Renderer *lcd_renderer=NULL,*panel_renderer=NULL;
     SDL_Texture *lcd_texture=NULL,*panel_texture=NULL;uint32_t lcd_id,panel_id;
     const char *snapshot_path=NULL,*serial_device=NULL,*raw_file=NULL;unsigned serial_baud=115200;
@@ -826,7 +848,7 @@ int main(int argc, char **argv)
     int running=1,windowed=0,kiosk=0,i,exit_status=0;
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
     const char *drm_device=NULL,*fb_device=NULL,*touch_device=NULL;unsigned touch_rotation=0;
-    LinuxDisplay *drm_display=NULL;LinuxTouch *usb_touch=NULL;uint64_t touch_retry=0;
+    LinuxDisplay *drm_display=NULL;LinuxTouch *usb_touch=NULL;uint64_t touch_retry=0,touch_connections=0;
 #endif
     screen_pixels=malloc((size_t)SCOPE_WIDTH*SCOPE_HEIGHT*4);
     panel_pixels=malloc((size_t)PANEL_WIDTH*PANEL_HEIGHT*4);
@@ -838,6 +860,7 @@ int main(int argc, char **argv)
         else if(strcmp(argv[i],"--serial")==0&&i+1<argc)serial_device=argv[++i];
         else if(strcmp(argv[i],"--baud")==0&&i+1<argc){if(!unsigned_option(argv[++i],&serial_baud)||!serial_baud)goto invalid_options;}
         else if(strcmp(argv[i],"--data-dir")==0&&i+1<argc){if(strlen(argv[++i])>=sizeof(application_dir)||!argv[i][0])goto invalid_options;strcpy(application_dir,argv[i]);}
+        else if(strcmp(argv[i],"--require-data-device")==0)require_data_device=1;
         else if(strcmp(argv[i],"--raw-demo")==0)raw_demo=1;
         else if(strcmp(argv[i],"--capture")==0&&i+1<argc)raw_file=argv[++i];
         else if(strcmp(argv[i],"--diagnostics")==0)diagnostics=1;
@@ -855,6 +878,8 @@ int main(int argc, char **argv)
         else goto invalid_options;
     }
     if(raw_demo&&raw_file)goto invalid_options;
+    stop_action.sa_handler=request_stop;sigemptyset(&stop_action.sa_mask);
+    sigaction(SIGINT,&stop_action,NULL);sigaction(SIGTERM,&stop_action,NULL);
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
     if(drm_device&&fb_device)goto invalid_options;
     if(touch_device&&!drm_device&&!fb_device)goto invalid_options;
@@ -916,10 +941,10 @@ int main(int argc, char **argv)
 #endif
        (!lcd_renderer||!lcd_texture||(!kiosk&&(!panel_renderer||!panel_texture)))){fprintf(stderr,"Cannot create renderers: %s\n",SDL_GetError());running=0;exit_status=1;}
     lcd_id=lcd_window?SDL_GetWindowID(lcd_window):0;panel_id=panel_window?SDL_GetWindowID(panel_window):0;
-    while(running){SDL_Event event;uint64_t now;
+    while(running&&!stop_requested){SDL_Event event;uint64_t now;
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
         if((drm_device||fb_device)&&touch_device){uint64_t input_now=now_ms();
-            if(!usb_touch&&input_now>=touch_retry){usb_touch=linux_touch_open(touch_device,touch_rotation);touch_retry=input_now+500;}
+            if(!usb_touch&&input_now>=touch_retry){usb_touch=linux_touch_open(touch_device,touch_rotation);touch_retry=input_now+500;if(usb_touch)++touch_connections;}
             if(usb_touch&&linux_touch_pump(usb_touch)<0){linux_touch_close(usb_touch);usb_touch=NULL;
                 memset(contacts,0,sizeof(contacts));touch.active=pinch_block=0;}}
 #endif
@@ -969,6 +994,12 @@ int main(int argc, char **argv)
             if(serial_device)fprintf(stderr,"uart_link=%d packets=%llu crc_errors=%llu format_errors=%llu gaps=%llu duplicates=%llu read_errors=%llu reconnects=%llu\n",
                 uart.connected,(unsigned long long)uart.packets,(unsigned long long)uart.crc_errors,(unsigned long long)uart.format_errors,
                 (unsigned long long)uart.sequence_gaps,(unsigned long long)uart.duplicates,(unsigned long long)uart.read_errors,(unsigned long long)uart.reconnects);
+#ifdef SCOPE_ENABLE_LINUX_DISPLAY
+            if(touch_device){LinuxTouchStats stats;linux_touch_stats(usb_touch,&stats);
+                fprintf(stderr,"touch_connected=%d connections=%llu reports=%llu events=%llu overflows=%llu\n",
+                    usb_touch!=NULL,(unsigned long long)touch_connections,(unsigned long long)stats.reports,
+                    (unsigned long long)stats.events,(unsigned long long)stats.overflows);}
+#endif
             diagnostic_time=now;}
     }
 cleanup:
@@ -985,6 +1016,6 @@ cleanup:
     SDL_Quit();
     free(panel_pixels);free(screen_pixels);return exit_status;
 invalid_options:
-    fprintf(stderr,"Invalid option or argument. Use --windowed, --kiosk, --serial DEVICE, --baud RATE, --data-dir DIR, --raw-demo, --capture FILE, --diagnostics, --snapshot BMP or --panel-snapshot BMP.\n");
+    fprintf(stderr,"Invalid option or argument. Use --windowed, --kiosk, --serial DEVICE, --baud RATE, --data-dir DIR, --require-data-device, --raw-demo, --capture FILE, --diagnostics, --snapshot BMP or --panel-snapshot BMP.\n");
     free(panel_pixels);free(screen_pixels);return 2;
 }

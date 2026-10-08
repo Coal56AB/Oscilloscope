@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include "demo_signal.h"
 #include "wave_file.h"
 
@@ -14,6 +17,261 @@ static int first_falling_edge(const int16_t *samples, int threshold)
     return -1;
 }
 
+static void test_time_range_and_csv_scale(void)
+{
+    static DemoSignal demo;
+    DemoWaveCapture wave, restored;
+    FILE *file;
+    demo_signal_init(&demo);
+    demo_signal_export_wave(&demo, &wave);
+    /* A previous CSV used index 3 for 100 us/div. Its physical scale wins. */
+    wave.time_index = 3;
+    file = tmpfile();
+    assert(file && wave_file_write(file, &wave));
+    rewind(file);
+    memset(&restored, 0, sizeof(restored));
+    assert(wave_file_read(file, &restored));
+    fclose(file);
+    demo_signal_ui_show_wave(&demo, "legacy.csv", &restored);
+    assert(strcmp(demo.screen.time_scale, "100 us") == 0);
+    demo_signal_export_wave(&demo, &restored);
+    assert(restored.time_us_per_div == 100.0);
+    assert(memcmp(restored.ch1, wave.ch1, sizeof(wave.ch1)) == 0);
+
+    demo_signal_init(&demo);
+    demo_signal_zoom_time(&demo, 100);
+    assert(strcmp(demo.screen.time_scale, "500 ns") == 0);
+    demo_signal_export_wave(&demo, &wave);
+    assert(wave.time_us_per_div == 0.5);
+    demo_signal_zoom_time(&demo, 1);
+    assert(strcmp(demo.screen.time_scale, "500 ns") == 0);
+    demo_signal_zoom_time(&demo, -1);
+    assert(strcmp(demo.screen.time_scale, "1 us") == 0);
+    demo_signal_zoom_time(&demo, -1);
+    assert(strcmp(demo.screen.time_scale, "2 us") == 0);
+    demo_signal_zoom_time(&demo, -1);
+    assert(strcmp(demo.screen.time_scale, "5 us") == 0);
+    demo_signal_zoom_time(&demo, -100);
+    assert(strcmp(demo.screen.time_scale, "1 s") == 0);
+    demo_signal_export_wave(&demo, &wave);
+    assert(wave.time_us_per_div == 1000000.0);
+    demo_signal_zoom_time(&demo, -1);
+    assert(strcmp(demo.screen.time_scale, "1 s") == 0);
+}
+
+static void test_measurements_beside_cursors(void)
+{
+    static DemoSignal demo;
+    int x, y, width, height, cursor_width, cursor_y;
+    demo_signal_init(&demo);
+    demo_signal_ui_cycle_cursor_mode(&demo);
+    demo_signal_ui_toggle_measurement_layout(&demo);
+    demo_signal_ui_move_measurements(&demo, 3000, 3000);
+    scope_screen_measurement_bounds(&demo.screen, &x, &y, &width, &height);
+    scope_screen_cursor_measurement_bounds(&demo.screen, NULL, &cursor_y, &cursor_width, NULL);
+    assert(x >= cursor_width && y + height == SCOPE_MEASURE_BOTTOM_Y);
+    demo_signal_ui_toggle_measurement_layout(&demo);
+    scope_screen_measurement_bounds(&demo.screen, &x, &y, &width, &height);
+    assert(x < cursor_width && y + height == cursor_y);
+
+    demo_signal_ui_cycle_cursor_mode(&demo);
+    assert(demo.screen.cursor_measurement_rows == 2);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][2], "1.500 V") == 0);
+    assert(strcmp(demo.screen.cursor_measurement_values[1][2], "3.000 V") == 0);
+    demo_signal_zoom_channel(&demo, 0, 1);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][2], "3.000 V") == 0);
+    assert(strcmp(demo.screen.cursor_measurement_values[1][2], "3.000 V") == 0);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_CURSOR);
+    assert(demo.screen.menu_count == 1);
+}
+
+static void test_cursor_precision(void)
+{
+    static DemoSignal demo;
+    char before[24];
+    demo_signal_init(&demo);
+    demo_signal_ui_cycle_cursor_mode(&demo);
+    demo_signal_zoom_time(&demo, 100);
+    demo_signal_ui_select_cursor(&demo, 0);
+    demo_signal_ui_move_cursor(&demo, 300);
+    demo_signal_ui_select_cursor(&demo, 1);
+    demo_signal_ui_move_cursor(&demo, 710);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][1], "+966.8 ns") == 0);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][2], "2.002 us") == 0);
+    strcpy(before, demo.screen.cursor_measurement_values[0][2]);
+    demo_signal_ui_move_cursor(&demo, 711);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][2], "2.007 us") == 0);
+    assert(strcmp(before, demo.screen.cursor_measurement_values[0][2]) != 0);
+    demo_signal_zoom_time(&demo, -9); /* 500 us/div */
+    assert(strcmp(demo.screen.cursor_measurement_values[0][2], "2.007 ms") == 0);
+    demo_signal_ui_move_cursor(&demo, 710);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][2], "2.002 ms") == 0);
+    demo_signal_ui_move_cursor(&demo, 300);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][2], "0.000 us") == 0);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][3], "--") == 0);
+}
+
+static void test_compressed_generator(void)
+{
+    static DemoSignal demo;
+    int shape, x;
+    demo_signal_init(&demo);
+    demo_signal_zoom_time(&demo, -100);
+    for (shape = DEMO_WAVE_SQUARE; shape <= DEMO_WAVE_SINC; ++shape) {
+        demo_signal_ui_open_menu(&demo, DEMO_MENU_GENERATOR);
+        while (demo.generator_wave[0] != shape)
+            demo_signal_ui_menu_tap(&demo, 0, 1);
+        for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
+            int span = demo.maximum[0][x] - demo.minimum[0][x];
+            assert(span >= (shape == DEMO_WAVE_SINC ? 86 : 143));
+            assert(demo.minimum[0][x] <= demo.ch1[x]);
+            assert(demo.maximum[0][x] >= demo.ch1[x]);
+        }
+        demo_signal_ui_dismiss_menu(&demo);
+    }
+}
+
+static void test_generator_megahertz_and_fft(void)
+{
+    static DemoSignal demo;
+    static const char *frequencies[] = {
+        "1 kHz", "2 kHz", "5 kHz", "10 kHz", "20 kHz", "50 kHz",
+        "100 kHz", "200 kHz", "500 kHz", "1 MHz"
+    };
+    int i, peak;
+    demo_signal_init(&demo);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_GENERATOR);
+    demo_signal_ui_menu_tap(&demo, 0, 1); /* Sine, without square harmonics. */
+    for (i = 4; i < 10; ++i) {
+        demo_signal_ui_menu_tap(&demo, 2, 1);
+        assert(demo.generator_frequency_index == i);
+        assert(strcmp(demo.screen.menu_values[2], frequencies[i]) == 0);
+    }
+    demo_signal_ui_dismiss_menu(&demo);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
+    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_dismiss_menu(&demo);
+    assert(strstr(demo.screen.fft_sampling_info, "ALIAS") != NULL);
+    demo_signal_zoom_time(&demo, 2); /* 20 us/div: Fs 5.12 MHz. */
+    assert(strcmp(demo.screen.fft_frequency_labels[8], "2.56M") == 0);
+    assert(strcmp(demo.screen.fft_sampling_info, "FS 5.12M / DF 5k") == 0);
+    peak = 0;
+    for (i = 1; i < SCOPE_FFT_BINS; ++i)
+        if (demo.fft_ch1[i] > demo.fft_ch1[peak]) peak = i;
+    assert(peak >= 107 && peak <= 109); /* 1 MHz in the 0..2.56 MHz spectrum. */
+    demo_signal_ui_cycle_cursor_mode(&demo);
+    demo_signal_ui_cycle_cursor_mode(&demo);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_CURSOR);
+    assert(strcmp(demo.screen.menu_values[0], "VERTICAL") == 0);
+    demo_signal_ui_dismiss_menu(&demo);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_GENERATOR);
+    demo_signal_ui_menu_tap(&demo, 2, 1); /* Wrap at 1 MHz. */
+    assert(demo.generator_frequency_index == 0);
+    for (i = 0; i < 10; ++i) {
+        assert(strcmp(demo.screen.menu_values[2], frequencies[i]) == 0);
+        demo_signal_ui_menu_tap(&demo, 2, 1);
+    }
+    assert(demo.generator_frequency_index == 0);
+    demo_signal_ui_menu_tap(&demo, 2, -1);
+    assert(demo.generator_frequency_index == 9);
+}
+
+static void test_fft_cursor(void)
+{
+    static DemoSignal demo;
+    demo_signal_init(&demo);
+    demo_signal_ui_move_fft_cursor(&demo, 512);
+    assert(!demo.screen.fft_cursor_visible);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
+    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_dismiss_menu(&demo);
+    assert(!demo.screen.fft_cursor_visible);
+    demo_signal_ui_move_fft_cursor(&demo, 600);
+    demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
+    assert(!demo.screen.fft_cursor_visible);
+    assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_A);
+    assert(demo.screen.fft_cursor_x == 512);
+    demo_signal_ui_cycle_cursor_mode(&demo);
+    assert(demo.screen.fft_cursor_visible); /* Appears without touching FFT. */
+    demo_signal_ui_move_fft_cursor(&demo, 512);
+    assert(demo.screen.fft_cursor_visible && demo.screen.fft_cursor_x == 512);
+    assert(strcmp(demo.screen.fft_cursor_value, "22.70 kHz") == 0);
+    demo_signal_ui_move_fft_cursor(&demo, 513);
+    assert(strcmp(demo.screen.fft_cursor_value, "22.84 kHz") == 0);
+    demo_signal_set_fft_range(&demo, 100000000.0); /* Raw adapter changes Fs. */
+    assert(strcmp(demo.screen.fft_cursor_value, "4.460 MHz") == 0);
+    demo_signal_ui_move_fft_cursor(&demo, -100);
+    assert(demo.screen.fft_cursor_x == 0);
+    assert(strcmp(demo.screen.fft_cursor_value, "195.3 kHz") == 0);
+    demo_signal_ui_move_fft_cursor(&demo, 3000);
+    assert(demo.screen.fft_cursor_x == 1023);
+    assert(strcmp(demo.screen.fft_cursor_value, "100.0 MHz") == 0);
+    demo_signal_zoom_time(&demo, 2);
+    assert(strcmp(demo.screen.fft_cursor_value, "2.560 MHz") == 0);
+    assert(demo.screen.cursor_mode == SCOPE_CURSOR_TIME);
+    demo_signal_ui_cycle_cursor_mode(&demo);
+    assert(demo.screen.fft_cursor_visible);
+    demo_signal_ui_cycle_cursor_mode(&demo);
+    assert(!demo.screen.fft_cursor_visible);
+    assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_A);
+    demo_signal_ui_move_fft_cursor(&demo, 600);
+    assert(!demo.screen.fft_cursor_visible && demo.screen.fft_cursor_x == 1023);
+}
+
+static void test_fft_encoder_cycle(void)
+{
+    static DemoSignal demo;
+    int mode, a, b;
+    demo_signal_init(&demo);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
+    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_dismiss_menu(&demo);
+    for (mode = SCOPE_CURSOR_TIME; mode <= SCOPE_CURSOR_VOLTAGE; ++mode) {
+        demo_signal_ui_cycle_cursor_mode(&demo);
+        assert(demo.screen.cursor_mode == mode);
+        assert(demo.screen.fft_cursor_visible);
+        assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_A);
+        demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
+        assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_B);
+        demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
+        assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_FFT);
+        assert(demo.screen.fft_cursor_visible);
+        a = demo.screen.cursor_a;
+        b = demo.screen.cursor_b;
+        demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
+        assert(demo.screen.cursor_a == a && demo.screen.cursor_b == b);
+        if (mode == SCOPE_CURSOR_TIME) assert(demo.screen.fft_cursor_x == 520);
+        else {
+            assert(demo.screen.fft_cursor_level == 136);
+            assert(strcmp(demo.screen.fft_cursor_value, "-37.33 dB") == 0);
+            demo_signal_ui_move_fft_cursor(&demo, -30);
+            assert(strcmp(demo.screen.fft_cursor_value, "-80.00 dB") == 0);
+            demo_signal_ui_move_fft_cursor(&demo, 300);
+            assert(strcmp(demo.screen.fft_cursor_value, "0.000 dB") == 0);
+            demo_signal_ui_toggle_fine(&demo);
+            demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -1);
+            assert(demo.screen.fft_cursor_level == 254);
+        }
+        demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
+        assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_A);
+    }
+    demo_signal_ui_move_fft_cursor(&demo, 128);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
+    demo_signal_ui_menu_choose(&demo, 4, 0);
+    demo_signal_ui_dismiss_menu(&demo);
+    assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_A);
+    assert(!demo.screen.fft_cursor_visible);
+    demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
+    assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_B);
+    demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
+    assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_A);
+    /* Enabling FFT after cursors also shows its cursor immediately. */
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
+    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_dismiss_menu(&demo);
+    assert(demo.screen.fft_cursor_visible);
+}
+
 int main(void)
 {
     DemoSignal demo;
@@ -23,6 +281,14 @@ int main(void)
     int previous;
     int edge;
     int i;
+
+    test_time_range_and_csv_scale();
+    test_measurements_beside_cursors();
+    test_cursor_precision();
+    test_compressed_generator();
+    test_generator_megahertz_and_fft();
+    test_fft_cursor();
+    test_fft_encoder_cycle();
 
     demo_signal_init(&demo);
     assert(SCOPE_PLOT_WIDTH == 1024 && SCOPE_PLOT_HEIGHT == 480);
@@ -167,19 +433,20 @@ int main(void)
     assert(scope_screen_cursor_measurement_width(&demo.screen) < SCOPE_WIDTH - 16);
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
     assert(demo.screen.cursor_a == 248);
-    assert(strcmp(demo.screen.cursor_measurement_values[2], "460.9 us") == 0);
-    assert(strcmp(demo.screen.cursor_measurement_values[3], "2.17 kHz") == 0);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][2], "460.9 us") == 0);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][3], "2.169 kHz") == 0);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.screen.cursor_selected);
     demo_signal_ui_move_cursor(&demo, demo.screen.cursor_a);
-    assert(strcmp(demo.screen.cursor_measurement_values[3], "--") == 0);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][3], "--") == 0);
     demo_signal_press(&demo, DEMO_BTN_CURSOR, 1);
     assert(demo.menu_kind == DEMO_MENU_CURSOR && demo.screen.menu_count == 1);
     demo_signal_ui_menu_tap(&demo, 0, 0);
     assert(demo.screen.cursor_mode == SCOPE_CURSOR_VOLTAGE);
-    assert(demo.screen.menu_count == 2);
-    demo_signal_ui_menu_tap(&demo, 1, 0);
-    assert(demo.cursor_source_index == 1 && demo.screen.cursor_source_channel == 1);
+    assert(demo.screen.menu_count == 1);
+    assert(demo.screen.cursor_measurement_rows == 2);
+    assert(strcmp(demo.screen.cursor_measurement_values[0][2],
+                  demo.screen.cursor_measurement_values[1][2]) != 0);
     assert(strcmp(demo.screen.cursor_measurement_labels[2], "DV") == 0);
     assert(demo.measurement_count == 3);
     demo_signal_press(&demo, DEMO_BTN_MENU, 0);
@@ -259,7 +526,7 @@ int main(void)
     demo_signal_press(&demo, DEMO_ENC_TRIGGER, 0);
     assert(!demo.screen.trigger_preview && demo.screen.trigger_y == 120);
     demo_signal_zoom_time(&demo, 1);
-    assert(demo.time_index == 2);
+    assert(demo.time_index == 6);
     demo_signal_press(&demo, DEMO_BTN_MENU, 1);
     demo_signal_zoom_time(&demo, 2);
     assert(demo.zoom_factor == 4);
@@ -333,7 +600,7 @@ int main(void)
     assert(demo.screen.menu_editing);
     demo_signal_ui_menu_adjust(&demo, -1);
     demo_signal_ui_menu_activate(&demo);
-    assert(demo.time_index == 2 && !demo.screen.menu_editing);
+    assert(demo.time_index == 6 && !demo.screen.menu_editing);
     demo_signal_ui_pan_time(&demo, 35);
     assert(demo.time_position == -35);
     demo_signal_ui_menu_select(&demo, 1);
@@ -347,9 +614,8 @@ int main(void)
     demo_signal_ui_menu_tap(&demo, 0, 0);
     assert(demo.screen.cursor_mode == SCOPE_CURSOR_TIME && demo.screen.menu_count == 1);
     demo_signal_ui_menu_tap(&demo, 0, 0);
-    assert(demo.screen.cursor_mode == SCOPE_CURSOR_VOLTAGE && demo.screen.menu_count == 2);
-    demo_signal_ui_menu_tap(&demo, 1, 0);
-    assert(demo.cursor_source_index == 1);
+    assert(demo.screen.cursor_mode == SCOPE_CURSOR_VOLTAGE && demo.screen.menu_count == 1);
+    assert(demo.screen.cursor_measurement_rows == 2);
     demo_signal_ui_menu_back(&demo);
     assert(!demo.screen.menu_open);
 
@@ -376,9 +642,9 @@ int main(void)
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_TIME);
     demo_signal_ui_menu_tap(&demo, 0, 1);
-    assert(demo.time_index == 4 && !demo.screen.menu_editing);
+    assert(demo.time_index == 8 && !demo.screen.menu_editing);
     demo_signal_ui_menu_tap(&demo, 0, -1);
-    assert(demo.time_index == 3);
+    assert(demo.time_index == 7);
 
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_TRIGGER);
@@ -511,30 +777,30 @@ int main(void)
     for (i = 0; i < 10; ++i) demo_signal_advance(&demo);
     assert(!demo.screen.status_visible);
     assert(demo.screen.measurement_horizontal);
-    assert(demo.screen.measurement_x == 8 &&
+    assert(demo.screen.measurement_x == 0 &&
            demo.screen.measurement_y == SCOPE_MEASURE_BOTTOM_Y - 62);
     demo_signal_ui_move_measurements(&demo, 100, -80);
-    assert(demo.screen.measurement_x == 108 &&
+    assert(demo.screen.measurement_x == 100 &&
            demo.screen.measurement_y == SCOPE_MEASURE_BOTTOM_Y - 142);
     demo_signal_ui_toggle_measurement_layout(&demo);
     assert(!demo.screen.measurement_horizontal);
-    assert(demo.screen.measurement_x == 108);
+    assert(demo.screen.measurement_x == 100);
     scope_screen_measurement_bounds(&demo.screen, NULL, NULL, &previous, NULL);
     assert(previous < 984);
     demo_signal_ui_toggle_measurements_visible(&demo);
     assert(demo.screen.measurement_hidden && demo.measurement_count == 3);
     scope_screen_measurement_bounds(&demo.screen, &i, &edge, NULL, NULL);
     assert(i == 0 && edge == SCOPE_MEASURE_BOTTOM_Y - 30);
-    assert(demo.screen.measurement_x == 108 &&
+    assert(demo.screen.measurement_x == 100 &&
            demo.screen.measurement_y == SCOPE_MEASURE_BOTTOM_Y - 142);
     demo_signal_ui_move_measurements(&demo, 300, 100);
-    assert(demo.screen.measurement_x == 108 &&
+    assert(demo.screen.measurement_x == 100 &&
            demo.screen.measurement_y == SCOPE_MEASURE_BOTTOM_Y - 142);
     demo_signal_advance(&demo);
     assert(demo.screen.measurement_hidden && demo.measurement_count == 3);
     demo_signal_ui_toggle_measurements_visible(&demo);
     assert(!demo.screen.measurement_hidden && demo.measurement_count == 3);
-    assert(demo.screen.measurement_x == 108 &&
+    assert(demo.screen.measurement_x == 100 &&
            demo.screen.measurement_y == SCOPE_MEASURE_BOTTOM_Y - 142);
     scope_screen_measurement_bounds(&demo.screen, NULL, NULL, &edge, NULL);
     assert(edge == previous);
@@ -549,6 +815,7 @@ int main(void)
     scope_screen_measurement_bounds(&demo.screen, NULL, &i, NULL, &edge);
     assert(!demo.screen.measurement_horizontal &&
            i + edge == SCOPE_MEASURE_BOTTOM_Y);
+    demo_signal_ui_move_measurements(&demo, -3000, 3000);
     demo_signal_ui_cycle_cursor_mode(&demo);
     assert(demo.screen.cursor_mode == SCOPE_CURSOR_TIME);
     assert(demo.screen.cursor_measurement_count == 4);
@@ -560,7 +827,7 @@ int main(void)
     assert(demo.screen.cursor_measurement_count == 3);
     assert(strcmp(demo.screen.cursor_measurement_labels[2], "DV") == 0);
     scope_screen_measurement_bounds(&demo.screen, NULL, &i, NULL, &edge);
-    assert(i + edge == SCOPE_CURSOR_STRIP_Y);
+    assert(i + edge == SCOPE_MEASURE_BOTTOM_Y - 66);
     demo_signal_ui_cycle_cursor_mode(&demo);
     assert(demo.screen.cursor_mode == SCOPE_CURSOR_OFF);
     assert(demo.screen.cursor_measurement_count == 0);
@@ -636,7 +903,7 @@ int main(void)
     demo_signal_ui_menu_select(&demo, 4);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.screen.fft_enabled && !demo.screen.menu_editing);
-    assert(demo.screen.fft_ch1_bins[10] > demo.screen.fft_ch1_bins[9]);
+    assert(demo.screen.fft_ch1_bins[47] > demo.screen.fft_ch1_bins[40]);
     demo_signal_ui_set_split_height(&demo, 170);
     assert(demo.screen.split_height == 170);
     demo_signal_ui_toggle_zoom(&demo);
@@ -646,7 +913,7 @@ int main(void)
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DISPLAY);
     assert(demo.screen.menu_count == 1);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DEBUG);
-    assert(demo.screen.menu_count == 3);
+    assert(demo.screen.menu_count == 2);
     demo_signal_ui_menu_select(&demo, 1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.menu_kind == DEMO_MENU_FONT);
@@ -660,21 +927,15 @@ int main(void)
     }
     demo_signal_ui_menu_back(&demo);
     assert(demo.menu_kind == DEMO_MENU_DEBUG);
-    assert(demo.screen.menu_option_count[2] == 4);
-    demo_signal_ui_menu_choose(&demo, 2, 3);
-    assert(demo.screen.ui_rounding == 3);
-    assert(strcmp(demo.screen.menu_values[2], "8 PX") == 0);
     demo_signal_ui_dismiss_menu(&demo);
-    scope_screen_render(pixels, SCOPE_WIDTH, &demo.screen);
-    previous = (int)pixels[SCOPE_BOTTOM_Y * SCOPE_WIDTH + 6];
-    demo.screen.ui_rounding = 0;
-    scope_screen_render(pixels, SCOPE_WIDTH, &demo.screen);
-    assert(previous != (int)pixels[SCOPE_BOTTOM_Y * SCOPE_WIDTH + 6]);
 
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_MAIN);
     assert(demo.screen.menu_count == 6);
-    assert(demo.screen.menu_x == SCOPE_MENU_X && demo.screen.menu_y == SCOPE_MENU_Y);
+    previous = (SCOPE_WIDTH - SCOPE_MENU_WIDTH) / 2;
+    edge = (SCOPE_HEIGHT - (SCOPE_MENU_ROW_Y - SCOPE_MENU_Y +
+            demo.screen.menu_count * SCOPE_MENU_ROW_HEIGHT + 6)) / 2;
+    assert(demo.screen.menu_x == previous && demo.screen.menu_y == edge);
     demo_signal_ui_move_menu(&demo, -1000, -1000);
     assert(demo.screen.menu_x == 0 && demo.screen.menu_y == 0);
     demo_signal_ui_move_menu(&demo, 1000, 1000);
@@ -682,8 +943,6 @@ int main(void)
     assert(demo.screen.menu_y == SCOPE_HEIGHT -
            (SCOPE_MENU_ROW_Y - SCOPE_MENU_Y +
             demo.screen.menu_count * SCOPE_MENU_ROW_HEIGHT + 6));
-    previous = demo.screen.menu_x;
-    edge = demo.screen.menu_y;
     demo_signal_ui_dismiss_menu(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_MAIN);
     assert(demo.screen.menu_x == previous && demo.screen.menu_y == edge);
@@ -750,7 +1009,7 @@ int main(void)
            !demo.screen.browser_delete_choice);
     scope_screen_render(pixels, SCOPE_WIDTH, &demo.screen);
     assert(pixels[SCOPE_BROWSE_CONFIRM_Y * SCOPE_WIDTH +
-                  SCOPE_BROWSE_CONFIRM_X] == 0xf55d6d);
+                  SCOPE_BROWSE_CONFIRM_X + 20] == 0xf55d6d);
     assert(demo_signal_ui_menu_activate(&demo) == DEMO_ACTION_NONE);
     assert(!demo.screen.browser_delete_confirm);
     demo_signal_ui_request_browse_delete(&demo, demo.screen.menu_selected);
@@ -805,10 +1064,10 @@ int main(void)
     }
     for (i = 0; i < 8; ++i)
         assert(pixels[545 * SCOPE_WIDTH + 784 + i] == 0xffc44d);
-    assert(pixels[548 * SCOPE_WIDTH + 782] == 0xffc44d);
-    assert(pixels[551 * SCOPE_WIDTH + 779] == 0xffc44d);
-    assert(pixels[548 * SCOPE_WIDTH + 788] == 0xffc44d);
-    assert(pixels[551 * SCOPE_WIDTH + 791] == 0xffc44d);
+    /* Rising and falling edges have vertically mirrored geometry. */
+    for (i = 0; i < 10 * 12; ++i)
+        assert((pixels[(545 + i / 10) * SCOPE_WIDTH + 778 + i % 10] == 0xffc44d) ==
+               (pixels[(556 - i / 10) * SCOPE_WIDTH + 788 + i % 10] == 0xffc44d));
     assert(demo.ch1[demo.screen.trigger_marker_x - 3] >
            demo.ch1[demo.screen.trigger_marker_x + 3]);
     demo_signal_advance(&demo);
@@ -856,9 +1115,9 @@ int main(void)
         assert(!demo.screen.running && !demo.screen.browser_visible);
         scope_screen_render(pixels, SCOPE_WIDTH, &demo.screen);
         assert(pixels[3 * SCOPE_WIDTH + 900] == 0xffc44d);
-        assert(pixels[(SCOPE_BOTTOM_Y + 1) * SCOPE_WIDTH + 307] == 0xffc44d);
-        assert(pixels[(SCOPE_BOTTOM_Y + 1) * SCOPE_WIDTH + 841] == 0xb696f1);
-        assert(pixels[546 * SCOPE_WIDTH + 12] == 0x6977ad);
+        assert(pixels[(SCOPE_BOTTOM_Y + 1) * SCOPE_WIDTH + 320] == 0xffc44d);
+        assert(pixels[(SCOPE_BOTTOM_Y + 1) * SCOPE_WIDTH + 860] == 0xb696f1);
+        assert(pixels[546 * SCOPE_WIDTH + 82] == 0x6977ad);
         demo_signal_ui_open_menu(&demo, DEMO_MENU_MAIN);
         assert(demo.screen.menu_count == 5);
         assert(strcmp(demo.screen.menu_labels[0], "PC CONNECTION") == 0);
@@ -869,7 +1128,7 @@ int main(void)
         demo_signal_ui_dismiss_menu(&demo);
         assert(memcmp(demo.ch1, original, sizeof(original)) == 0);
         demo_signal_zoom_time(&demo, 1);
-        assert(demo.time_index == 2 &&
+        assert(demo.time_index == 6 &&
                memcmp(demo.ch1, original, sizeof(original)) != 0);
         memcpy(original, demo.ch1, sizeof(original));
         previous = demo.screen.zoom_window_start;

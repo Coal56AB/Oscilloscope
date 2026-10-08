@@ -32,7 +32,12 @@ if(SCOPE_ENABLE_ZYNQ)
     target_compile_definitions(scope_runtime PUBLIC SCOPE_ENABLE_ZYNQ=1)
 endif()
 
-add_library(scope_screen STATIC src/scope_screen.c)
+set(SCOPE_DISPLAY_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../display" CACHE PATH "Shared display sources")
+add_library(boot_splash STATIC "${SCOPE_DISPLAY_SOURCE_DIR}/boot_splash.c")
+target_include_directories(boot_splash PUBLIC "${SCOPE_DISPLAY_SOURCE_DIR}")
+
+add_library(scope_screen STATIC src/scope_screen.c src/rounded_box.c)
+target_link_libraries(scope_screen PUBLIC boot_splash)
 target_include_directories(scope_screen PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 include(CTest)
@@ -47,6 +52,12 @@ if(BUILD_TESTING)
         target_link_libraries(scope_sim_test PRIVATE m)
     endif()
     add_test(NAME scope_simulator COMMAND scope_sim_test)
+    add_executable(scope_rendering_test src/tests/test_rendering.c src/demo_signal.c)
+    target_link_libraries(scope_rendering_test PRIVATE scope_screen)
+    if(NOT MSVC)
+        target_link_libraries(scope_rendering_test PRIVATE m)
+    endif()
+    add_test(NAME scope_rendering COMMAND scope_rendering_test)
     add_executable(scope_runtime_test src/tests/test_runtime.c)
     target_link_libraries(scope_runtime_test PRIVATE scope_runtime)
     add_test(NAME scope_runtime COMMAND scope_runtime_test)
@@ -81,15 +92,29 @@ elseif(SCOPE_BUILD_PREVIEW AND UNIX AND NOT APPLE)
     endif()
     add_executable(scope_preview
         src/preview_sdl.c
+        src/linux_storage.c
         src/panel_sdl.c
         src/demo_signal.c
         src/wave_file.c
         src/capture_adapter.c
     )
     target_link_libraries(scope_preview PRIVATE scope_screen scope_runtime ${SCOPE_SDL_TARGET} m)
+    if(BUILD_TESTING)
+        add_executable(scope_frontend_test src/tests/test_sdl_frontend.c src/linux_storage.c
+            src/panel_sdl.c src/demo_signal.c src/wave_file.c src/capture_adapter.c)
+        target_link_libraries(scope_frontend_test PRIVATE scope_screen scope_runtime ${SCOPE_SDL_TARGET} m)
+        add_test(NAME scope_linux_frontend COMMAND scope_frontend_test)
+    endif()
     if(SCOPE_ENABLE_DRM OR SCOPE_ENABLE_FRAMEBUFFER)
         target_sources(scope_preview PRIVATE src/linux_display.c src/linux_touch.c)
         target_compile_definitions(scope_preview PRIVATE SCOPE_ENABLE_LINUX_DISPLAY=1)
+        if(BUILD_TESTING)
+            add_executable(scope_touch_test src/tests/test_linux_touch.c src/linux_touch.c)
+            target_link_libraries(scope_touch_test PRIVATE ${SCOPE_SDL_TARGET} m)
+            target_link_options(scope_touch_test PRIVATE
+                -Wl,--wrap=open -Wl,--wrap=read -Wl,--wrap=ioctl -Wl,--wrap=close)
+            add_test(NAME scope_linux_touch COMMAND scope_touch_test)
+        endif()
     endif()
     if(SCOPE_ENABLE_DRM)
         find_package(PkgConfig REQUIRED)

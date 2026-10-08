@@ -1,5 +1,6 @@
 #include "panel_win32.h"
 #include "wave_file.h"
+#include "boot_splash.h"
 
 #include <shellapi.h>
 #include <windowsx.h>
@@ -10,6 +11,15 @@
 #include <wchar.h>
 
 static DemoSignal demo;
+static ULONGLONG splash_until;
+
+static void render_lcd(uint32_t *pixels)
+{
+    if (GetTickCount64() < splash_until)
+        boot_splash_render(pixels, SCOPE_WIDTH, SCOPE_WIDTH, SCOPE_HEIGHT);
+    else
+        scope_screen_render(pixels, SCOPE_WIDTH, &demo.screen);
+}
 static HBITMAP screen_bitmap;
 static HBITMAP panel_bitmap;
 static HDC screen_dc;
@@ -54,7 +64,7 @@ typedef enum {
     TOUCH_MEASURE_DRAG, TOUCH_MEASURE_LAYOUT, TOUCH_CURSOR_STRIP,
     TOUCH_ZOOM_OVERVIEW, TOUCH_PLOT_CH1, TOUCH_PLOT_CH2,
     TOUCH_TIME_IN, TOUCH_TIME_OUT, TOUCH_BROWSER_PREV, TOUCH_BROWSER_NEXT,
-    TOUCH_BROWSER_BACK, TOUCH_SPLIT
+    TOUCH_BROWSER_BACK, TOUCH_SPLIT, TOUCH_FFT_CURSOR
 } TouchZone;
 typedef struct {
     TouchZone zone;
@@ -138,7 +148,7 @@ static void draw_all(void)
         progress = held->long_done || elapsed >= (ULONGLONG)hold_time_ms ? 100 :
                    (int)(elapsed * 100 / hold_time_ms);
     }
-    scope_screen_render(screen_pixels, SCOPE_WIDTH, &demo.screen);
+    render_lcd(screen_pixels);
     panel_draw(panel_dc, &demo, active, hovered, progress, hold_time_ms);
 }
 
@@ -329,7 +339,7 @@ static int capture(DemoAction action)
     }
     if (index > 9999) return 0;
     if (action != DEMO_ACTION_WAVEFORM) {
-        scope_screen_render(screen_pixels, SCOPE_WIDTH, &demo.screen);
+        render_lcd(screen_pixels);
         if (!save_bmp(image_path, screen_pixels, SCOPE_WIDTH, SCOPE_HEIGHT)) return 0;
     }
     if (action == DEMO_ACTION_WAVEFORM) return save_wave(wave_path);
@@ -516,12 +526,12 @@ static TouchZone touch_zone_at(int x, int y, int *row)
         return TOUCH_MEASURE_CANCEL;
     }
     if (demo.screen.measurement_menu && x >= 20 && x < 1004 &&
-        y >= 84 && y < SCOPE_BOTTOM_Y) {
+        y >= 74 && y < SCOPE_BOTTOM_Y - 10) {
         if (y < SCOPE_MEASURE_MENU_ROW_Y)
             return x >= 902 ? TOUCH_MENU_BACK :
-                   x >= 588 && x < 728 && y >= 93 && y < 120 ?
+                   x >= 588 && x < 728 && y >= 83 && y < 110 ?
                    TOUCH_MEASURE_HIDE :
-                   x >= 744 && x < 884 && y >= 93 && y < 120 ?
+                   x >= 744 && x < 884 && y >= 83 && y < 110 ?
                    TOUCH_MEASURE_CLEAR : TOUCH_NONE;
         *row = (x >= 512 ? 8 : 0) +
                (y - SCOPE_MEASURE_MENU_ROW_Y) / SCOPE_MEASURE_MENU_ROW_HEIGHT;
@@ -570,10 +580,11 @@ static TouchZone touch_zone_at(int x, int y, int *row)
     if (x >= SCOPE_PLOT_X && x < SCOPE_PLOT_X + SCOPE_PLOT_WIDTH &&
         y >= SCOPE_PLOT_Y && y < SCOPE_PLOT_Y + SCOPE_PLOT_HEIGHT) {
         int mx, my, mw, mh;
-        int cursor_strip_y = SCOPE_CURSOR_STRIP_Y;
+        int cursor_strip_y, cursor_height;
+        scope_screen_cursor_measurement_bounds(&demo.screen, NULL, &cursor_strip_y, NULL, &cursor_height);
         if (demo.screen.cursor_measurement_count > 0 &&
-            y >= cursor_strip_y && y < cursor_strip_y + 31) {
-            if (x >= 8 && x < 8 + scope_screen_cursor_measurement_width(&demo.screen))
+            y >= cursor_strip_y && y < cursor_strip_y + cursor_height) {
+            if (x >= 0 && x < scope_screen_cursor_measurement_width(&demo.screen))
                 return TOUCH_CURSOR_STRIP;
         }
         {
@@ -593,7 +604,7 @@ static TouchZone touch_zone_at(int x, int y, int *row)
             return TOUCH_ZOOM_OVERVIEW;
         if ((demo.screen.zoom_enabled || demo.screen.fft_enabled) &&
             y < SCOPE_PLOT_Y + demo.screen.split_height)
-            return TOUCH_NONE;
+            return demo.screen.fft_cursor_visible ? TOUCH_FFT_CURSOR : TOUCH_NONE;
         if (x >= SCOPE_WIDTH - 36 &&
             (abs(y - touch_screen_y(demo.screen.trigger_y)) <= 23 ||
             (demo.screen.trigger_preview &&
@@ -783,6 +794,17 @@ static void touch_move(int x, int y)
                            touch.zone == TOUCH_MEASURE_LAYOUT ? 3 : 12;
     if (touch.zone == TOUCH_MENU_DRAG) motion_threshold = 3;
     if (!touch.active) return;
+    if (touch.zone == TOUCH_FFT_CURSOR) {
+        if (x != touch.last_x || y != touch.last_y) {
+            demo_signal_ui_move_fft_cursor(&demo, demo.screen.cursor_mode == SCOPE_CURSOR_VOLTAGE ?
+                scope_screen_fft_level_at(&demo.screen, y) : x - SCOPE_PLOT_X);
+            touch.last_x = x;
+            touch.last_y = y;
+            touch.moved = 1;
+            invalidate_windows();
+        }
+        return;
+    }
     if (abs(x - touch.x) > motion_threshold ||
         abs(y - touch.y) > motion_threshold) touch.moved = 1;
     if (!touch.moved) return;
@@ -1012,6 +1034,10 @@ static LRESULT CALLBACK controls_window_proc(HWND window, UINT message, WPARAM w
             int refresh = demo.screen.running || demo.notice_ticks > 0;
             int i;
             ULONGLONG now = GetTickCount64();
+            if (splash_until) {
+                refresh = 1;
+                if (now >= splash_until) splash_until = 0;
+            }
             if (pending_chord != DEMO_CONTROL_COUNT &&
                 now - pending_time > CHORD_WINDOW_MS)
                 pending_chord = DEMO_CONTROL_COUNT;
@@ -1163,6 +1189,11 @@ static void lcd_touch_begin(int x, int y)
     touch.since = GetTickCount64();
     touch.long_done = 0;
     touch.active = 1;
+    if (touch.zone == TOUCH_FFT_CURSOR) {
+        demo_signal_ui_move_fft_cursor(&demo, demo.screen.cursor_mode == SCOPE_CURSOR_VOLTAGE ?
+            scope_screen_fft_level_at(&demo.screen, y) : x - SCOPE_PLOT_X);
+        invalidate_windows();
+    }
     if (touch.zone == TOUCH_PLOT_CURSOR) {
         int coord = demo.screen.cursor_mode == SCOPE_CURSOR_TIME ?
                     x - SCOPE_PLOT_X : touch_plot_y(y);
@@ -1303,7 +1334,7 @@ static LRESULT CALLBACK lcd_window_proc(HWND window, UINT message, WPARAM wparam
         case WM_PAINT: {
             PAINTSTRUCT paint;
             HDC dc = BeginPaint(window, &paint);
-            scope_screen_render(screen_pixels, SCOPE_WIDTH, &demo.screen);
+            render_lcd(screen_pixels);
             BitBlt(dc, 0, 0, SCOPE_WIDTH, SCOPE_HEIGHT, screen_dc, 0, 0, SRCCOPY);
             EndPaint(window, &paint);
             return 0;
@@ -1327,6 +1358,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     int argument_count = 0;
     LPWSTR *arguments;
     int snapshot_result = -1;
+    int windowed = 0, argument;
+    const wchar_t *snapshot_path = NULL;
+    int panel_snapshot = 0;
     (void)previous;
     (void)command_line;
 
@@ -1339,12 +1373,37 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         return 1;
     }
     arguments = CommandLineToArgvW(GetCommandLineW(), &argument_count);
-    if (arguments && argument_count == 3) {
+    for (argument = 1; arguments && argument < argument_count; ++argument) {
+        const wchar_t *option = arguments[argument];
+        if (lstrcmpW(option, L"--windowed") == 0) windowed = 1;
+        else if (lstrcmpW(option, L"--splash") == 0)
+            splash_until = GetTickCount64() + 3000;
+        else if (lstrcmpW(option, L"--cursors") == 0)
+            demo_signal_ui_cycle_cursor_mode(&demo);
+        else if (lstrcmpW(option, L"--fft") == 0) {
+            demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
+            demo_signal_ui_menu_choose(&demo, 4, 1);
+            demo_signal_ui_dismiss_menu(&demo);
+        } else if (lstrcmpW(option, L"--menu") == 0 && argument + 1 < argument_count) {
+            const wchar_t *name = arguments[++argument];
+            DemoMenu menu = lstrcmpW(name, L"main") == 0 ? DEMO_MENU_MAIN :
+                            lstrcmpW(name, L"debug") == 0 ? DEMO_MENU_DEBUG :
+                            lstrcmpW(name, L"measurements") == 0 ? DEMO_MENU_MEASURE :
+                            lstrcmpW(name, L"processing") == 0 ? DEMO_MENU_PROCESSING :
+                            lstrcmpW(name, L"ch1") == 0 ? DEMO_MENU_CH1 : DEMO_MENU_NONE;
+            if (menu == DEMO_MENU_NONE) { snapshot_result = 2; break; }
+            demo_signal_ui_open_menu(&demo, menu);
+        } else if ((lstrcmpW(option, L"--snapshot") == 0 ||
+                    lstrcmpW(option, L"--panel-snapshot") == 0) && argument + 1 < argument_count) {
+            panel_snapshot = lstrcmpW(option, L"--panel-snapshot") == 0;
+            snapshot_path = arguments[++argument];
+        } else { snapshot_result = 2; break; }
+    }
+    if (snapshot_result < 0 && snapshot_path) {
         draw_all();
-        if (lstrcmpW(arguments[1], L"--snapshot") == 0)
-            snapshot_result = save_bmp(arguments[2], screen_pixels, SCOPE_WIDTH, SCOPE_HEIGHT) ? 0 : 1;
-        else if (lstrcmpW(arguments[1], L"--panel-snapshot") == 0)
-            snapshot_result = save_bmp(arguments[2], panel_pixels, PANEL_WIDTH, PANEL_HEIGHT) ? 0 : 1;
+        snapshot_result = panel_snapshot ?
+            (save_bmp(snapshot_path, panel_pixels, PANEL_WIDTH, PANEL_HEIGHT) ? 0 : 1) :
+            (save_bmp(snapshot_path, screen_pixels, SCOPE_WIDTH, SCOPE_HEIGHT) ? 0 : 1);
     }
     if (arguments) LocalFree(arguments);
     if (snapshot_result >= 0) {
@@ -1353,7 +1412,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         return snapshot_result;
     }
     EnumDisplayMonitors(NULL, NULL, find_display, (LPARAM)&layout);
-    if (!layout.primary_found || !layout.lcd_found) {
+    if (!layout.primary_found || (!layout.lcd_found && !windowed)) {
         MessageBoxW(NULL, L"A separate 1024x600 display was not found. Set the LCD to Extend mode in Windows.",
                     L"Oscill LCD", MB_ICONERROR);
         release_buffers();
@@ -1392,11 +1451,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         panel_cleanup();
         return 1;
     }
-    lcd_window = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
-                                 lcd_class.lpszClassName, L"Oscill LCD",
-                                 WS_POPUP, layout.lcd_bounds.left, layout.lcd_bounds.top,
-                                 SCOPE_WIDTH, SCOPE_HEIGHT,
-                                 NULL, NULL, instance, NULL);
+    if (windowed) {
+        RECT lcd_rect = {0, 0, SCOPE_WIDTH, SCOPE_HEIGHT};
+        DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        AdjustWindowRectEx(&lcd_rect, style, FALSE, 0);
+        lcd_window = CreateWindowExW(0, lcd_class.lpszClassName, L"Oscill LCD preview",
+                                    style, layout.primary_work.left + 20,
+                                    layout.primary_work.top + 20,
+                                    lcd_rect.right - lcd_rect.left, lcd_rect.bottom - lcd_rect.top,
+                                    NULL, NULL, instance, NULL);
+    } else {
+        lcd_window = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                                     lcd_class.lpszClassName, L"Oscill LCD",
+                                     WS_POPUP, layout.lcd_bounds.left, layout.lcd_bounds.top,
+                                     SCOPE_WIDTH, SCOPE_HEIGHT,
+                                     NULL, NULL, instance, NULL);
+    }
     if (!lcd_window) {
         DestroyWindow(controls_window);
         release_buffers();

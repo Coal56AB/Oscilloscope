@@ -21,26 +21,31 @@
 #define SCOPE_MENU_CONTROL_X 450
 #define SCOPE_MENU_CONTROL_WIDTH 430
 #define SCOPE_MENU_CHOICES 4
+#define SCOPE_PANEL_RADIUS 5
+#define SCOPE_WINDOW_RADIUS 10
 #define SCOPE_MEASURE_SLOTS 10
 #define SCOPE_MEASURE_CATALOG_ITEMS 16
 #define SCOPE_MEASURE_CONFIRM_X 302
-#define SCOPE_MEASURE_CONFIRM_Y 228
+#define SCOPE_MEASURE_CONFIRM_Y 225
 #define SCOPE_MEASURE_CONFIRM_WIDTH 420
 #define SCOPE_MEASURE_CONFIRM_HEIGHT 150
 #define SCOPE_BROWSE_CONFIRM_X 302
-#define SCOPE_BROWSE_CONFIRM_Y 228
+#define SCOPE_BROWSE_CONFIRM_Y 225
 #define SCOPE_BROWSE_CONFIRM_WIDTH 420
 #define SCOPE_BROWSE_CONFIRM_HEIGHT 150
 #define SCOPE_CURSOR_READOUTS 4
 #define SCOPE_ZOOM_CURSOR_BAND 33
 #define SCOPE_CURSOR_STRIP_Y (SCOPE_MEASURE_BOTTOM_Y - SCOPE_ZOOM_CURSOR_BAND)
 #define SCOPE_FFT_BINS 128
+#define SCOPE_FFT_TICKS 9
+#define SCOPE_CURSOR_ROWS 2
 
 enum { SCOPE_CURSOR_OFF, SCOPE_CURSOR_TIME, SCOPE_CURSOR_VOLTAGE };
+enum { SCOPE_CURSOR_SELECT_A, SCOPE_CURSOR_SELECT_B, SCOPE_CURSOR_SELECT_FFT };
 enum { SCOPE_FONT_PIXEL, SCOPE_FONT_INTER, SCOPE_FONT_COUNT };
 
 #define SCOPE_MENU_ITEMS 21
-#define SCOPE_MEASURE_MENU_ROW_Y 150
+#define SCOPE_MEASURE_MENU_ROW_Y 140
 #define SCOPE_MEASURE_MENU_ROW_HEIGHT 44
 
 /* Each sample is a Y coordinate within the plot: 0 is the top edge. */
@@ -53,6 +58,8 @@ typedef struct {
     const int16_t *capture_ch2_samples;
     const int16_t *history_ch1_samples; /* history_count frames, each SCOPE_PLOT_WIDTH entries */
     const int16_t *history_ch2_samples;
+    const int16_t *history_ch1_min_samples, *history_ch1_max_samples;
+    const int16_t *history_ch2_min_samples, *history_ch2_max_samples;
     int history_count;
     const char *ch1_scale;
     const char *ch2_scale;
@@ -68,7 +75,8 @@ typedef struct {
     const char *measurement_values[SCOPE_MEASURE_SLOTS];
     int measurement_count;
     const char *cursor_measurement_labels[SCOPE_CURSOR_READOUTS];
-    const char *cursor_measurement_values[SCOPE_CURSOR_READOUTS];
+    const char *cursor_measurement_values[SCOPE_CURSOR_ROWS][SCOPE_CURSOR_READOUTS];
+    int cursor_measurement_rows;
     int cursor_measurement_count;
     uint8_t fine_mode;
     int measurement_x;
@@ -87,11 +95,15 @@ typedef struct {
     uint8_t waveform_loaded;
     const uint8_t *fft_ch1_bins;
     const uint8_t *fft_ch2_bins;
-    const char *fft_span;
+    const char *fft_frequency_labels[SCOPE_FFT_TICKS];
+    const char *fft_sampling_info;
+    const char *fft_cursor_value;
+    int fft_cursor_x;
+    int fft_cursor_level; /* 0..255 maps to -80..0 dB */
+    uint8_t fft_cursor_visible;
     int split_height; /* Upper overview or FFT, measured from SCOPE_PLOT_Y */
     uint8_t fft_enabled;
     uint8_t font_index;
-    uint8_t ui_rounding;
     const char *menu_title;
     const char *menu_page;
     const char *menu_labels[SCOPE_MENU_ITEMS];
@@ -115,7 +127,6 @@ typedef struct {
     uint8_t trigger_source_channel;
     uint8_t trigger_edge_falling;
     uint8_t trigger_edge_both;
-    uint8_t cursor_source_channel;
     uint8_t battery_known;
     uint8_t battery_percent;
     uint8_t battery_charging;
@@ -141,7 +152,11 @@ typedef struct {
 
 /* Pixels use 0x00RRGGBB, with stride measured in pixels. */
 void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen);
+int scope_screen_fft_level_at(const ScopeScreen *screen, int y);
 int scope_screen_cursor_measurement_width(const ScopeScreen *screen);
+void scope_screen_cursor_measurement_bounds(const ScopeScreen *screen, int *x, int *y,
+                                            int *width, int *height);
+int scope_screen_measurement_bottom(const ScopeScreen *screen, int x, int width);
 void scope_screen_measurement_bounds(const ScopeScreen *screen, int *x, int *y,
                                      int *width, int *height);
 

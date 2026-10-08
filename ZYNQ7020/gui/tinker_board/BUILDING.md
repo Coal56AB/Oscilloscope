@@ -3,7 +3,7 @@
 Скрипт `build.sh` создаёт именно готовый переносимый пакет для ASUS Tinker Board. Он кросс-компилирует приложение для `armv7l` и `aarch64`, собирает совместимую SDL2 2.0.8, добавляет лаунчер и лицензии, рассчитывает контрольные суммы и формирует один архив:
 
 ```text
-OscilGUI-TinkerBoard.zip
+output/tinker/OscilGUI-TinkerBoard.zip
 ```
 
 Промежуточные файлы создаются во временном каталоге и удаляются автоматически.
@@ -24,14 +24,14 @@ sudo apt install gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu make curl zip lib
 Перейдите из WSL в каталог проекта и запустите скрипт:
 
 ```sh
-cd /mnt/d/OtherStuff/Oscil/GUI
+cd /mnt/d/hobby/Oscill/ZYNQ7020/gui
 ./tinker_board/build.sh
 ```
 
 После успешной сборки готовый архив находится здесь:
 
 ```text
-D:\OtherStuff\Oscil\GUI\OscilGUI-TinkerBoard.zip
+D:\hobby\Oscill\ZYNQ7020\gui\output\tinker\OscilGUI-TinkerBoard.zip
 ```
 
 Если установлен `qemu-user`, скрипт дополнительно запускает обе ARM-версии без окна, создаёт контрольные снимки и проверяет, что ARM32 и ARM64 отрисовывают одинаковый экран.

@@ -3,6 +3,7 @@
 #endif
 #include "capture_file.h"
 #include "capture_pipeline.h"
+#include "spectrum_bins.h"
 #include "control_transport.h"
 #include <assert.h>
 #include <math.h>
@@ -161,6 +162,66 @@ static void processor_file_test(void)
     assert(source.read(&source, &read) == -1);
     fclose(file);
 }
+
+static void processor_short_pulse_test(void)
+{
+    static const size_t positions[] = {0, 1, 3, 4, 127, 128, 4091, 4092};
+    uint8_t data[8192];
+    CaptureBuffer buffer = {0};
+    CaptureView view = {1, 4093, {200, 330}, {100, 100}};
+    DisplayFrame frame;
+    size_t i, x;
+    buffer.data = data;
+    buffer.capacity = sizeof(data);
+    fill(&buffer, 1);
+    for (i = 0; i < sizeof(positions) / sizeof(positions[0]); ++i) {
+        size_t pulse = positions[i];
+        size_t column = ((pulse + 1) * SCOPE_PLOT_WIDTH - 1) / view.samples;
+        memset(data, 128, sizeof(data));
+        data[2 * (view.start + pulse)] = 255;
+        assert(capture_process(&buffer, &view, &frame));
+        for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
+            assert(frame.y_min[0][x] == (x == column ? 73 : 200));
+            assert(frame.y_max[0][x] == 200);
+        }
+    }
+}
+static void processor_fft_test(void)
+{
+    static const unsigned frequencies[] = {10, 201, 400, 511, 512};
+    uint8_t data[2048];
+    CaptureBuffer buffer = {0};
+    CaptureView view = {0, 1024, {200, 330}, {100, 100}};
+    DisplayFrame frame;
+    unsigned n, i, k;
+    unsigned coverage[513] = {0};
+    buffer.data = data;
+    buffer.capacity = sizeof(data);
+    fill(&buffer, 1);
+    for (i = 0; i < SCOPE_FFT_BINS; ++i) {
+        unsigned first, end;
+        spectrum_bin_range(i, SCOPE_FFT_BINS, 1024, &first, &end);
+        assert(first >= 1 && end > first && end <= 513);
+        for (k = first; k < end; ++k) coverage[k] = 1;
+    }
+    for (k = 1; k <= 512; ++k) assert(coverage[k]);
+    for (n = 0; n < sizeof(frequencies) / sizeof(frequencies[0]); ++n) {
+        unsigned peak = 0, expected = 0;
+        for (i = 0; i < 1024; ++i) {
+            data[2 * i] = (uint8_t)lround(192 + 50 * cos(6.283185307179586 * frequencies[n] * i / 1024));
+            data[2 * i + 1] = 128;
+        }
+        assert(capture_process(&buffer, &view, &frame));
+        for (k = 0; k < SCOPE_FFT_BINS; ++k) {
+            unsigned first, end;
+            spectrum_bin_range(k, SCOPE_FFT_BINS, 1024, &first, &end);
+            if (frequencies[n] >= first && frequencies[n] < end) expected = k;
+            if (frame.fft[0][k] > frame.fft[0][peak]) peak = k;
+        }
+        assert(abs((int)peak - (int)expected) <= 1 && frame.fft[0][peak] > 200);
+    }
+}
+
 static void pipeline_test(void)
 {
     CapturePipeline *p = capture_pipeline_create(NULL);
@@ -205,6 +266,8 @@ int main(void)
     queue_test();
     ring_test();
     processor_file_test();
+    processor_short_pulse_test();
+    processor_fft_test();
     pipeline_test();
     return 0;
 }

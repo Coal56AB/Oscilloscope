@@ -4,7 +4,7 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-OUTPUT="$PROJECT_DIR/OscilGUI-TinkerBoard.zip"
+OUTPUT="$PROJECT_DIR/output/tinker/OscilGUI-TinkerBoard.zip"
 SDL_VERSION=2.0.8
 SDL_SHA256=edc77c57308661d576e843344d8638e025a7818bff73f8fbfab09c3c5fd092ec
 SDL_URL="https://www.libsdl.org/release/SDL2-$SDL_VERSION.tar.gz"
@@ -38,7 +38,7 @@ fi
 
 mkdir -p "$PACKAGE_DIR/bin/armhf" "$PACKAGE_DIR/bin/arm64" \
          "$PACKAGE_DIR/lib/armhf" "$PACKAGE_DIR/lib/arm64" \
-         "$PACKAGE_DIR/licenses"
+         "$PACKAGE_DIR/licenses" "$PROJECT_DIR/output/tinker"
 
 SDL_ARCHIVE="$WORK_DIR/SDL2-$SDL_VERSION.tar.gz"
 echo "Downloading SDL2 $SDL_VERSION..."
@@ -93,8 +93,9 @@ build_target()
 
     "$compiler" -O2 -std=gnu11 -DDEMO_ENABLE_GENERATOR=1 \
         -I"$build_dir/include" -I"$SDL_SOURCE/include" \
-        -I"$PROJECT_DIR/src" \
-        "$PROJECT_DIR/src/scope_screen.c" "$PROJECT_DIR/src/demo_signal.c" \
+        -I"$PROJECT_DIR/src" -I"$PROJECT_DIR/../display" \
+        "$PROJECT_DIR/src/scope_screen.c" "$PROJECT_DIR/src/rounded_box.c" \
+        "$PROJECT_DIR/../display/boot_splash.c" "$PROJECT_DIR/src/demo_signal.c" \
         "$PROJECT_DIR/src/wave_file.c" "$PROJECT_DIR/src/panel_sdl.c" \
         "$PROJECT_DIR/src/preview_sdl.c" \
         "$PROJECT_DIR/src/capture_adapter.c" "$PROJECT_DIR/src/capture.c" \

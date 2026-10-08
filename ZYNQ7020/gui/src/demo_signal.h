@@ -66,12 +66,21 @@ typedef struct {
     int16_t ch2[SCOPE_PLOT_WIDTH];
     int16_t saved_ch1[SCOPE_PLOT_WIDTH];
     int16_t saved_ch2[SCOPE_PLOT_WIDTH];
+    int16_t minimum[2][SCOPE_PLOT_WIDTH];
+    int16_t maximum[2][SCOPE_PLOT_WIDTH];
+    int16_t saved_minimum[2][SCOPE_PLOT_WIDTH];
+    int16_t saved_maximum[2][SCOPE_PLOT_WIDTH];
     DemoWaveCapture loaded_wave;
     int16_t history_ch1[8][SCOPE_PLOT_WIDTH];
     int16_t history_ch2[8][SCOPE_PLOT_WIDTH];
+    int16_t history_minimum[2][8][SCOPE_PLOT_WIDTH];
+    int16_t history_maximum[2][8][SCOPE_PLOT_WIDTH];
     uint8_t fft_ch1[SCOPE_FFT_BINS];
     uint8_t fft_ch2[SCOPE_FFT_BINS];
-    char fft_span_text[24];
+    char fft_frequency_text[SCOPE_FFT_TICKS][24];
+    char fft_info_text[64];
+    char fft_cursor_text[24];
+    double fft_span_hz;
     char ch_scale_text[2][20];
     char edit_scale_text[20];
     char ch_input_text[2][20];
@@ -81,7 +90,7 @@ typedef struct {
     char trigger_preview_text[20];
     char trigger_source_text[20];
     char measurement_value_text[SCOPE_MEASURE_SLOTS][24];
-    char cursor_measurement_value_text[SCOPE_CURSOR_READOUTS][24];
+    char cursor_measurement_value_text[SCOPE_CURSOR_ROWS][SCOPE_CURSOR_READOUTS][24];
     char menu_page_text[20];
     char status_text[80];
     int scale_index[2];
@@ -105,7 +114,6 @@ typedef struct {
     int holdoff_ticks;
     int generator_wave[2];
     int generator_frequency_index;
-    int cursor_source_index;
     int measurement_ids[SCOPE_MEASURE_SLOTS];
     int measurement_count;
     int measurement_selected;
@@ -141,6 +149,7 @@ typedef struct {
 } DemoSignal;
 
 void demo_signal_init(DemoSignal *demo);
+void demo_signal_set_fft_range(DemoSignal *demo, double span_hz);
 void demo_signal_advance(DemoSignal *demo);
 void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps);
 DemoAction demo_signal_press(DemoSignal *demo, DemoControl control, int long_press);
@@ -166,6 +175,7 @@ void demo_signal_ui_toggle_fine(DemoSignal *demo);
 void demo_signal_ui_apply_trigger(DemoSignal *demo);
 void demo_signal_ui_pan_time(DemoSignal *demo, int delta);
 void demo_signal_ui_move_cursor(DemoSignal *demo, int coordinate);
+void demo_signal_ui_move_fft_cursor(DemoSignal *demo, int coordinate);
 void demo_signal_ui_select_cursor(DemoSignal *demo, int selected);
 void demo_signal_ui_cycle_cursor_mode(DemoSignal *demo);
 void demo_signal_ui_cycle_trigger_mode(DemoSignal *demo);

@@ -7,15 +7,24 @@ start)
     . /etc/default/oscill
     [ -e "$DISPLAY_DEVICE" ] || { echo 'Oscill: display is not ready' >&2; exit 1; }
     case "$DISPLAY_BACKEND" in fb|drm) ;; *) echo 'Oscill: invalid display backend' >&2; exit 1;; esac
-    set -- --kiosk "--$DISPLAY_BACKEND" "$DISPLAY_DEVICE" --data-dir "$DATA_DIR"
+    set -- --kiosk "--$DISPLAY_BACKEND" "$DISPLAY_DEVICE" --data-dir "$DATA_DIR" --require-data-device
+    [ "${DIAGNOSTICS:-0}" != 1 ] || set -- "$@" --diagnostics
     [ -z "$TOUCH_DEVICE" ] || set -- "$@" --touch "$TOUCH_DEVICE" --touch-rotate "$TOUCH_ROTATION"
     [ -z "$SERIAL_DEVICE" ] || set -- "$@" --serial "$SERIAL_DEVICE" --baud "$SERIAL_BAUD"
-    start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/scope_preview -- "$@"
+    sleep "${START_DELAY:-0}"
+    start-stop-daemon -S -b -m -p "$PIDFILE" -O /dev/console -x /usr/bin/scope_preview -- "$@"
     ;;
 stop)
-    start-stop-daemon -K -p "$PIDFILE" || true
+    [ -r "$PIDFILE" ] || exit 0
+    pid=$(cat "$PIDFILE")
+    start-stop-daemon -K -o -p "$PIDFILE" -x /usr/bin/scope_preview || exit 1
+    for attempt in 1 2 3 4 5; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+    done
+    if kill -0 "$pid" 2>/dev/null; then echo 'Oscill: still stopping' >&2; exit 1; fi
     rm -f "$PIDFILE"
     ;;
-restart) "$0" stop; "$0" start ;;
+restart) "$0" stop && "$0" start ;;
 *) echo 'Usage: S99oscill start|stop|restart' >&2; exit 2 ;;
 esac

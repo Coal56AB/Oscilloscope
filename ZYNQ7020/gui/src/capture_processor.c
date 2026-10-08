@@ -1,3 +1,4 @@
+#include "spectrum_bins.h"
 #include "capture_processor.h"
 #include <math.h>
 #include <string.h>
@@ -24,12 +25,15 @@ static void spectrum(const CaptureBuffer *b, const CaptureView *v, unsigned ch, 
     enum { N = 1024 };
     double re[N], im[N];
     unsigned i, j, length;
-    double gain = fabs(b->volts_per_code[ch]) * 128;
+    double gain = fabs(b->volts_per_code[ch]) * 128, mean = 0;
+    unsigned count = v->samples < N ? (unsigned)v->samples : N;
+    for (i = 0; i < count; ++i) mean += sample_voltage(b, v->start + i, ch);
+    if (count) mean /= count;
     for (i = 0; i < N; ++i) {
         size_t offset = i;
         double value = 0;
         if (offset < v->samples)
-            value = sample_voltage(b, v->start + offset, ch);
+            value = sample_voltage(b, v->start + offset, ch) - mean;
         re[i] = value * (0.5 - 0.5 * cos(6.283185307179586 * i / (N - 1)));
         im[i] = 0;
     }
@@ -59,10 +63,15 @@ static void spectrum(const CaptureBuffer *b, const CaptureView *v, unsigned ch, 
             }
     }
     for (i = 0; i < SCOPE_FFT_BINS; ++i) {
-        unsigned k = i * (N / 2) / SCOPE_FFT_BINS;
-        double magnitude = hypot(re[k], im[k]) * 4 / N;
+        unsigned first, end, k;
+        double magnitude = 0;
+        spectrum_bin_range(i, SCOPE_FFT_BINS, N, &first, &end);
+        for (k = first; k < end; ++k) {
+            double value = hypot(re[k], im[k]) * 4 / N;
+            if (value > magnitude) magnitude = value;
+        }
         double db = gain > 0 ? 20 * log10(magnitude / gain + 1e-12) : -120;
-        double y = (db + 80) * 255 / 80;
+        double y = spectrum_level_at_db(db);
         bins[i] = (uint8_t)(y < 0 ? 0 : y > 255 ? 255 : y);
     }
 }
