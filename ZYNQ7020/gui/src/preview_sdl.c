@@ -79,7 +79,7 @@ typedef enum {
 typedef struct {
     TouchZone zone;
     int row, x, y, last_x, last_y, remainder;
-    int fine_x_remainder, fine_y_remainder, zoom_pan_remainder;
+    int fine_x_remainder, fine_y_remainder;
     int axis, active, moved, long_done;
     uint64_t since;
 } TouchInput;
@@ -583,11 +583,6 @@ static int fine_touch_delta(int delta, int *remainder)
 static void pan_time_by_touch(int delta)
 {
     delta=fine_touch_delta(delta,&touch.fine_x_remainder);
-    if(demo.screen.zoom_enabled&&!demo.waveform_loaded) {
-        int total=touch.zoom_pan_remainder+delta;
-        int source_delta=total/demo.zoom_factor;
-        touch.zoom_pan_remainder=total%demo.zoom_factor;delta=source_delta*demo.zoom_factor;
-    }
     if(delta)demo_signal_ui_pan_time(&demo,delta);
 }
 
@@ -710,7 +705,7 @@ static void lcd_touch_begin(int x, int y)
     if(touch.active)return;
     touch.zone=touch_zone_at(x,y,&touch.row);if(touch.zone==TOUCH_NONE)return;
     touch.x=touch.last_x=x;touch.y=touch.last_y=y;touch.remainder=0;
-    touch.fine_x_remainder=touch.fine_y_remainder=touch.zoom_pan_remainder=0;
+    touch.fine_x_remainder=touch.fine_y_remainder=0;
     touch.axis=touch.moved=touch.long_done=0;touch.since=now_ms();touch.active=1;
     if(touch.zone==TOUCH_FFT_CURSOR){
         if(demo.screen.fine_mode)demo_signal_ui_select_cursor(&demo,SCOPE_CURSOR_SELECT_FFT);

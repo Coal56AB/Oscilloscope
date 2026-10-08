@@ -219,20 +219,29 @@ void demo_signal_set_fft_range(DemoSignal *demo, double span_hz)
     }
 }
 
+static double zoom_ratio(const DemoSignal *demo)
+{
+    return demo->screen.zoom_enabled ? time_us[demo->time_index] / time_us[demo->zoom_time_index] : 1.0;
+}
+
 static double current_time_us_per_div(const DemoSignal *demo)
 {
+    int index = demo->screen.zoom_enabled ? demo->zoom_time_index : demo->time_index;
     if (demo->waveform_loaded)
-        return demo->loaded_wave.time_us_per_div *
-               time_us[demo->time_index] /
+        return demo->loaded_wave.time_us_per_div * time_us[index] /
                time_us[demo->loaded_wave.time_index];
-    return time_us[demo->time_index];
+    return time_us[index];
+}
+
+static double clamp_position(double value, double limit)
+{
+    return fmax(-limit, fmin(value, limit));
 }
 
 static double loaded_view_step(const DemoSignal *demo)
 {
     double step = current_time_us_per_div(demo) /
                   demo->loaded_wave.time_us_per_div;
-    if (demo->screen.zoom_enabled) step /= demo->zoom_factor;
     return step < 1.0 ? step : 1.0;
 }
 
@@ -484,44 +493,30 @@ static void update_spectrum(DemoSignal *demo)
     spectrum(demo->ch2, demo->fft_ch2);
 }
 
-static void generate(DemoSignal *demo, int free_run)
+/* Evaluate the source again at the selected timestamps, before screen reduction. */
+static void render_generator_view(DemoSignal *demo, double start_us, double us_per_pixel)
 {
-    double us_per_pixel = time_us[demo->time_index] * 10.0 / SCOPE_PLOT_WIDTH;
     double height1 = 1.20 * PIXELS_PER_DIV / volts_per_div(demo, 0);
     double height2 = 1.60 * PIXELS_PER_DIV / volts_per_div(demo, 1);
-    int zero1 = channel_zero(demo, 0);
-    int zero2 = channel_zero(demo, 1);
-    int marker = clamp(SCOPE_PLOT_WIDTH / 2 - demo->time_position,
-                       0, SCOPE_PLOT_WIDTH - 1);
-    int falling_edge = demo->trigger_edge_index == 1 ||
-                       (demo->trigger_edge_index == 2 && (demo->capture_sequence & 1));
-    double crossing_us;
-    double period = generator_period_us[demo->generator_frequency_index];
-    double start_us;
+    int zero1 = channel_zero(demo, 0), zero2 = channel_zero(demo, 1);
+    double period = demo->capture_period_us;
     int x;
-    demo->screen.trigger_marker_x = marker;
-    demo->screen.trigger_locked =
-        (uint8_t)(!free_run && find_trigger_crossing(demo, falling_edge, &crossing_us));
-    if (demo->screen.trigger_locked) {
-        start_us = crossing_us - marker * us_per_pixel;
-    } else {
-        start_us = (demo->phase + demo->time_position) * us_per_pixel;
-    }
     for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
         double t = start_us + x * us_per_pixel;
-        double duty1 = generator_value((DemoWaveShape)demo->generator_wave[0],
-                                       t, period, demo->capture_sequence, x, 0);
-        double duty2 = generator_value((DemoWaveShape)demo->generator_wave[1],
+        int source_x = (int)floor((t - demo->capture_start_us) / demo->capture_step_us + 1e-7);
+        double duty1 = generator_value((DemoWaveShape)demo->capture_wave[0],
+                                       t, period, demo->source_sequence, source_x, 0);
+        double duty2 = generator_value((DemoWaveShape)demo->capture_wave[1],
                                        t + period * 0.2, period,
-                                       demo->capture_sequence, x, 1);
+                                       demo->source_sequence, source_x, 1);
         double y1 = zero1 - height1 * duty1;
         double y2 = zero2 - height2 * duty2;
         if (demo->coupling[0] == 1)
             y1 = zero1 + height1 * (0.5 - duty1);
         if (demo->coupling[1] == 1)
             y2 = zero2 + height2 * (0.5 - duty2);
-        y1 += sample_noise(demo->capture_sequence, x, 0);
-        y2 += sample_noise(demo->capture_sequence, x, 1);
+        y1 += sample_noise(demo->source_sequence, source_x, 0);
+        y2 += sample_noise(demo->source_sequence, source_x, 1);
         demo->ch1[x] = (int16_t)y1;
         demo->ch2[x] = (int16_t)y2;
         {
@@ -531,10 +526,10 @@ static void generate(DemoSignal *demo, int free_run)
                 double height = channel ? height2 : height1;
                 double base = (channel ? zero2 : zero1) +
                               (demo->coupling[channel] ? height * 0.5 : 0.0) +
-                              sample_noise(demo->capture_sequence, x, channel);
-                generator_range((DemoWaveShape)demo->generator_wave[channel],
+                              sample_noise(demo->source_sequence, source_x, channel);
+                generator_range((DemoWaveShape)demo->capture_wave[channel],
                                 t + (channel ? period * 0.2 : 0.0), us_per_pixel, period,
-                                demo->capture_sequence, x, channel, &low, &high);
+                                demo->source_sequence, source_x, channel, &low, &high);
                 demo->minimum[channel][x] = (int16_t)(base - height * high);
                 demo->maximum[channel][x] = (int16_t)(base - height * low);
             }
@@ -549,12 +544,30 @@ static void generate(DemoSignal *demo, int free_run)
     bind_envelopes(demo);
 }
 
+static void generate(DemoSignal *demo, int free_run)
+{
+    double step = time_us[demo->time_index] * 10.0 / SCOPE_PLOT_WIDTH;
+    int marker = clamp(SCOPE_PLOT_WIDTH / 2 - demo->time_position, 0, SCOPE_PLOT_WIDTH - 1);
+    int falling = demo->trigger_edge_index == 1 ||
+                  (demo->trigger_edge_index == 2 && (demo->capture_sequence & 1));
+    double crossing_us;
+    demo->screen.trigger_marker_x = marker;
+    demo->screen.trigger_locked =
+        (uint8_t)(!free_run && find_trigger_crossing(demo, falling, &crossing_us));
+    demo->capture_step_us = step;
+    demo->capture_start_us = demo->screen.trigger_locked ? crossing_us - marker * step :
+                            (demo->phase + demo->time_position) * step;
+    demo->capture_period_us = generator_period_us[demo->generator_frequency_index];
+    demo->capture_wave[0] = demo->generator_wave[0];
+    demo->capture_wave[1] = demo->generator_wave[1];
+    demo->source_sequence = demo->capture_sequence;
+    render_generator_view(demo, demo->capture_start_us, step);
+}
+
 static void save_capture(DemoSignal *demo)
 {
     memcpy(demo->saved_ch1, demo->ch1, sizeof(demo->ch1));
     memcpy(demo->saved_ch2, demo->ch2, sizeof(demo->ch2));
-    memcpy(demo->saved_minimum, demo->minimum, sizeof(demo->minimum));
-    memcpy(demo->saved_maximum, demo->maximum, sizeof(demo->maximum));
     demo->saved_trigger_marker_x = demo->screen.trigger_marker_x;
 }
 
@@ -585,29 +598,16 @@ static void record_history(DemoSignal *demo)
 
 static void apply_zoom_view(DemoSignal *demo)
 {
-    int x;
-    int half_window = SCOPE_PLOT_WIDTH / (2 * demo->zoom_factor);
-    int center = SCOPE_PLOT_WIDTH / 2 + demo->zoom_offset;
-    demo->screen.zoom_window_start = center - half_window;
-    demo->screen.zoom_window_end = center + half_window;
-    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
-        int source = center +
-                     (x - SCOPE_PLOT_WIDTH / 2) / demo->zoom_factor;
-        source = clamp(source, 0, SCOPE_PLOT_WIDTH - 1);
-        demo->ch1[x] = demo->saved_ch1[source];
-        demo->ch2[x] = demo->saved_ch2[source];
-        {
-            int channel;
-            for (channel = 0; channel < 2; ++channel) {
-                demo->minimum[channel][x] = demo->saved_minimum[channel][source];
-                demo->maximum[channel][x] = demo->saved_maximum[channel][source];
-            }
-        }
-    }
-    demo->screen.trigger_marker_x = clamp(SCOPE_PLOT_WIDTH / 2 +
-        (demo->saved_trigger_marker_x - SCOPE_PLOT_WIDTH / 2 - demo->zoom_offset) *
-        demo->zoom_factor, 0, SCOPE_PLOT_WIDTH - 1);
-    bind_envelopes(demo);
+    double ratio = zoom_ratio(demo);
+    double center = SCOPE_PLOT_WIDTH / 2.0 + demo->zoom_offset;
+    double width = SCOPE_PLOT_WIDTH / ratio;
+    double start = fmax(0.0, fmin(center - width / 2, SCOPE_PLOT_WIDTH - width));
+    demo->screen.zoom_window_start = (int)floor(start);
+    demo->screen.zoom_window_end = clamp((int)ceil(start + width), 0, SCOPE_PLOT_WIDTH);
+    render_generator_view(demo, demo->capture_start_us + start * demo->capture_step_us,
+                          demo->capture_step_us / ratio);
+    demo->screen.trigger_marker_x = clamp((int)lround(
+        (demo->saved_trigger_marker_x - start) * ratio), 0, SCOPE_PLOT_WIDTH - 1);
 }
 
 static void apply_loaded_view(DemoSignal *demo)
@@ -635,8 +635,11 @@ static void apply_loaded_view(DemoSignal *demo)
                        INT16_MIN, INT16_MAX);
         filter_samples(full, demo->filter_level[channel]);
         for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
-            int source = clamp((int)(start + x * step), 0, SCOPE_PLOT_WIDTH - 1);
-            visible[x] = full[source];
+            double position = fmin(start + x * step, SCOPE_PLOT_WIDTH - 1);
+            int source = (int)position;
+            int next = clamp(source + 1, 0, SCOPE_PLOT_WIDTH - 1);
+            visible[x] = (int16_t)lround(full[source] +
+                          (full[next] - full[source]) * (position - source));
             demo->minimum[channel][x] = demo->maximum[channel][x] = visible[x];
         }
     }
@@ -764,7 +767,6 @@ static void format_cursor_measurement(const DemoSignal *demo, int id, int channe
             snprintf(value, size, "--");
             return;
         }
-        if (demo->screen.zoom_enabled) us_per_pixel /= demo->zoom_factor;
         delta = abs(demo->screen.cursor_b - demo->screen.cursor_a) * us_per_pixel;
         if (id == DEMO_MEAS_CURSOR_DT) format_cursor_time(value, size, delta, 0);
         else if (delta <= 0.0) snprintf(value, size, "--");
@@ -785,7 +787,6 @@ static void format_cursor_measurement(const DemoSignal *demo, int id, int channe
                        demo->screen.cursor_a : demo->screen.cursor_b;
         if (demo->screen.cursor_mode == SCOPE_CURSOR_TIME) {
             double us_per_pixel = current_time_us_per_div(demo) * 10.0 / SCOPE_PLOT_WIDTH;
-            if (demo->screen.zoom_enabled) us_per_pixel /= demo->zoom_factor;
             format_cursor_time(value, size,
                                (position - demo->screen.trigger_marker_x) * us_per_pixel, 1);
         } else if (demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE) {
@@ -897,7 +898,7 @@ static int current_menu_value(const DemoSignal *demo)
         return demo->screen.grid_enabled;
     if (demo->menu_kind == DEMO_MENU_PC) return demo->pc_mode;
     if (demo->menu_kind == DEMO_MENU_TIME)
-        return demo->screen.zoom_enabled ? demo->zoom_factor - 2 : demo->time_index;
+        return demo->screen.zoom_enabled ? demo->zoom_time_index : demo->time_index;
     if (demo->menu_kind == DEMO_MENU_PROCESSING)
         return item < 2 ? demo->filter_level[item] :
                item == 2 ? demo->intensity_coloring :
@@ -918,7 +919,7 @@ static int menu_value_count(const DemoSignal *demo)
                item == 6 ? SCOPE_PLOT_HEIGHT : 2;
     if (demo->menu_kind == DEMO_MENU_CURSOR) return 3;
     if (demo->menu_kind == DEMO_MENU_TIME) return item == 0 ?
-        (demo->screen.zoom_enabled ? 15 : TIME_SCALE_COUNT) : 1;
+        (demo->screen.zoom_enabled ? demo->time_index + 1 : TIME_SCALE_COUNT) : 1;
     if (demo->menu_kind == DEMO_MENU_PROCESSING)
         return item < 2 ? 4 : item == 3 ? 3 : 2;
     if (demo->menu_kind == DEMO_MENU_GENERATOR)
@@ -1120,12 +1121,8 @@ static void refresh_menu(DemoSignal *demo)
             screen->menu_values[i] = demo->edit_value ? "ON" : "OFF";
         else if (demo->menu_kind == DEMO_MENU_TIME) {
             if (i == 0) {
-                if (screen->zoom_enabled)
-                    snprintf(demo->edit_scale_text, sizeof(demo->edit_scale_text),
-                             "ZOOM X%d", demo->edit_value + 2);
-                else
-                    format_time_scale(demo->edit_scale_text,
-                                      sizeof(demo->edit_scale_text), demo->edit_value);
+                format_time_scale(demo->edit_scale_text, sizeof(demo->edit_scale_text),
+                                  demo->edit_value);
                 screen->menu_values[i] = demo->edit_scale_text;
             }
         }
@@ -1157,9 +1154,7 @@ static void update_text(DemoSignal *demo, int regenerate)
                  demo->probe_ten[channel] ? 10 : 1);
         demo->screen.channel_zero_y[channel] = channel_zero(demo, channel);
     }
-    if (demo->screen.zoom_enabled)
-        snprintf(demo->time_text, sizeof(demo->time_text), "ZOOM X%d", demo->zoom_factor);
-    else if (demo->waveform_loaded)
+    if (demo->screen.zoom_enabled || demo->waveform_loaded)
         format_time_value(demo->time_text, sizeof(demo->time_text),
                           current_time_us_per_div(demo));
     else format_time_scale(demo->time_text, sizeof(demo->time_text), demo->time_index);
@@ -1271,7 +1266,7 @@ static void close_menu(DemoSignal *demo)
 
 void demo_signal_set_zoom_center(DemoSignal *demo, int source_x)
 {
-    int half_window;
+    double half_window;
     if (!demo->screen.zoom_enabled) return;
     if (demo->waveform_loaded) {
         int limit = loaded_pan_limit(demo);
@@ -1281,9 +1276,9 @@ void demo_signal_set_zoom_center(DemoSignal *demo, int source_x)
         update_text(demo, 1);
         return;
     }
-    half_window = SCOPE_PLOT_WIDTH / (2 * demo->zoom_factor);
-    demo->zoom_offset = clamp(source_x, half_window,
-                              SCOPE_PLOT_WIDTH - half_window) - SCOPE_PLOT_WIDTH / 2;
+    half_window = SCOPE_PLOT_WIDTH / (2 * zoom_ratio(demo));
+    demo->zoom_offset = clamp_position(source_x - SCOPE_PLOT_WIDTH / 2.0,
+                                       SCOPE_PLOT_WIDTH / 2.0 - half_window);
     update_text(demo, 1);
 }
 
@@ -1308,14 +1303,13 @@ void demo_signal_zoom_time(DemoSignal *demo, int steps)
 {
     if (steps == 0) return;
     if (demo->screen.zoom_enabled) {
-        demo->zoom_factor = clamp(demo->zoom_factor + steps, 2, 8);
+        demo->zoom_time_index = clamp(demo->zoom_time_index - steps, 0, demo->time_index);
         if (demo->waveform_loaded) {
             int limit = loaded_pan_limit(demo);
-            demo->zoom_offset = clamp(demo->zoom_offset, -limit, limit);
+            demo->zoom_offset = clamp_position(demo->zoom_offset, limit);
         } else
-            demo->zoom_offset = clamp(demo->zoom_offset,
-                -(SCOPE_PLOT_WIDTH / 2 - SCOPE_PLOT_WIDTH / (2 * demo->zoom_factor)),
-                 SCOPE_PLOT_WIDTH / 2 - SCOPE_PLOT_WIDTH / (2 * demo->zoom_factor));
+            demo->zoom_offset = clamp_position(demo->zoom_offset,
+                 SCOPE_PLOT_WIDTH / 2.0 - SCOPE_PLOT_WIDTH / (2 * zoom_ratio(demo)));
     } else {
         demo->time_index = clamp(demo->time_index - steps, 0,
             demo->waveform_loaded ? demo->loaded_wave.time_index : TIME_SCALE_COUNT - 1);
@@ -1534,14 +1528,16 @@ static void apply_edit(DemoSignal *demo)
     } else if (demo->menu_kind == DEMO_MENU_DISPLAY) {
         demo->screen.grid_enabled = (uint8_t)demo->edit_value;
     } else if (demo->menu_kind == DEMO_MENU_TIME) {
-        if (demo->screen.zoom_enabled) demo->zoom_factor = demo->edit_value + 2;
+        if (demo->screen.zoom_enabled) demo->zoom_time_index = clamp(demo->edit_value, 0, demo->time_index);
         else demo->time_index = demo->waveform_loaded ?
             clamp(demo->edit_value, 0, demo->loaded_wave.time_index) : demo->edit_value;
         if (demo->waveform_loaded) {
             int limit = loaded_pan_limit(demo);
-            int *position = demo->screen.zoom_enabled ?
-                            &demo->zoom_offset : &demo->time_position;
-            *position = clamp(*position, -limit, limit);
+            if (demo->screen.zoom_enabled) demo->zoom_offset = clamp_position(demo->zoom_offset, limit);
+            else demo->time_position = clamp(demo->time_position, -limit, limit);
+        } else if (demo->screen.zoom_enabled) {
+            demo->zoom_offset = clamp_position(demo->zoom_offset,
+                SCOPE_PLOT_WIDTH / 2.0 - SCOPE_PLOT_WIDTH / (2 * zoom_ratio(demo)));
         }
     } else if (demo->menu_kind == DEMO_MENU_PROCESSING) {
         if (item < 2) demo->filter_level[item] = demo->edit_value;
@@ -1890,7 +1886,7 @@ void demo_signal_ui_toggle_zoom(DemoSignal *demo)
     if (!demo->screen.zoom_enabled) {
         demo->fft_enabled = 0;
         save_capture(demo);
-        demo->zoom_factor = 2;
+        demo->zoom_time_index = demo->time_index > 0 ? demo->time_index - 1 : 0;
         demo->zoom_offset = 0;
         demo->screen.zoom_enabled = 1;
         close_menu(demo);
@@ -1921,11 +1917,10 @@ void demo_signal_ui_pan_time(DemoSignal *demo, int delta)
 {
     if (!delta) return;
     if (demo->screen.zoom_enabled) {
-        int limit = demo->waveform_loaded ? loaded_pan_limit(demo) :
-                    SCOPE_PLOT_WIDTH / 2 - SCOPE_PLOT_WIDTH / (2 * demo->zoom_factor);
-        demo->zoom_offset = clamp(demo->zoom_offset -
-                                  (demo->waveform_loaded ? delta : delta / demo->zoom_factor),
-                                  -limit, limit);
+        double limit = demo->waveform_loaded ? loaded_pan_limit(demo) :
+                       SCOPE_PLOT_WIDTH / 2.0 - SCOPE_PLOT_WIDTH / (2 * zoom_ratio(demo));
+        demo->zoom_offset = clamp_position(demo->zoom_offset -
+                                  (demo->waveform_loaded ? delta : delta / zoom_ratio(demo)), limit);
     } else {
         int limit = demo->waveform_loaded ? loaded_pan_limit(demo) : 420;
         demo->time_position = clamp(demo->time_position +
@@ -2090,9 +2085,8 @@ void demo_signal_export_wave(const DemoSignal *demo, DemoWaveCapture *wave)
         wave->enabled[channel] = channel ? demo->screen.ch2_enabled :
                                            demo->screen.ch1_enabled;
     }
-    wave->time_index = demo->time_index;
-    wave->time_us_per_div = current_time_us_per_div(demo) /
-                            (demo->screen.zoom_enabled ? demo->zoom_factor : 1);
+    wave->time_index = demo->screen.zoom_enabled ? demo->zoom_time_index : demo->time_index;
+    wave->time_us_per_div = current_time_us_per_div(demo);
     wave->trigger_marker_x = demo->screen.trigger_marker_x;
     wave->trigger_y = demo->screen.trigger_y;
     wave->trigger_source_channel = demo->trigger_source_index;
@@ -2195,12 +2189,12 @@ void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps)
     } else if (control == DEMO_ENC_TIME) {
         if (demo->screen.zoom_enabled) {
             if (demo->position_mode[2]) {
-                int max_offset = demo->waveform_loaded ? loaded_pan_limit(demo) :
-                                 SCOPE_PLOT_WIDTH / 2 -
-                                 SCOPE_PLOT_WIDTH / (2 * demo->zoom_factor);
-                demo->zoom_offset = clamp(demo->zoom_offset -
-                                          steps * (demo->screen.fine_mode ? 1 : 16),
-                                          -max_offset, max_offset);
+                double max_offset = demo->waveform_loaded ? loaded_pan_limit(demo) :
+                                    SCOPE_PLOT_WIDTH / 2.0 -
+                                    SCOPE_PLOT_WIDTH / (2 * zoom_ratio(demo));
+                double delta = steps * (demo->screen.fine_mode ? 1 : 16);
+                if (!demo->waveform_loaded) delta /= zoom_ratio(demo);
+                demo->zoom_offset = clamp_position(demo->zoom_offset - delta, max_offset);
                 demo_signal_notify(demo, "ZOOM / SCROLL CAPTURE");
             } else {
                 demo_signal_zoom_time(demo, steps);

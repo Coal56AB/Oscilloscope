@@ -5,6 +5,7 @@
 #include "wave_file.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +58,62 @@ static void test_time_range_and_csv_scale(void)
     assert(wave.time_us_per_div == 1000000.0);
     demo_signal_zoom_time(&demo, -1);
     assert(strcmp(demo.screen.time_scale, "1 s") == 0);
+}
+
+static void test_zoom_source_detail(void)
+{
+    static DemoSignal demo;
+    int16_t overview[SCOPE_PLOT_WIDTH], detail[SCOPE_PLOT_WIDTH];
+    DemoWaveCapture wave;
+    uint32_t sequence;
+    int x, narrow = 0, distinct = 0;
+    demo_signal_init(&demo);
+    demo_signal_zoom_time(&demo, -6); /* 10 ms/div: each column covers almost a period. */
+    demo_signal_ui_toggle_run(&demo);
+    sequence = demo.capture_sequence;
+    memcpy(overview, demo.ch1, sizeof(overview));
+    demo_signal_ui_toggle_zoom(&demo);
+    demo_signal_zoom_time(&demo, 8); /* 10 us/div, from the same captured source. */
+    assert(strcmp(demo.screen.time_scale, "10 us") == 0);
+    assert(memcmp(overview, demo.saved_ch1, sizeof(overview)) == 0);
+    for (x = 1; x < SCOPE_PLOT_WIDTH; ++x) {
+        if (demo.maximum[0][x] - demo.minimum[0][x] < 10) ++narrow;
+        if (demo.ch1[x] != demo.ch1[x - 1]) ++distinct;
+    }
+    assert(narrow > 900 && distinct > 20);
+    memcpy(detail, demo.ch1, sizeof(detail));
+    demo_signal_zoom_time(&demo, 1);
+    assert(strcmp(demo.screen.time_scale, "5 us") == 0);
+    demo_signal_zoom_time(&demo, -1);
+    assert(memcmp(detail, demo.ch1, sizeof(detail)) == 0);
+    demo_signal_ui_pan_time(&demo, 1);
+    assert(fabs(demo.zoom_offset + 0.001) < 1e-9);
+    assert(demo.screen.trigger_marker_x == 513);
+    for (x = 1; x < SCOPE_PLOT_WIDTH; ++x)
+        assert(abs(demo.ch1[x] - detail[x - 1]) <= 1);
+    assert(demo.capture_sequence == sequence && !demo.screen.running);
+    demo_signal_export_wave(&demo, &wave);
+    assert(wave.time_us_per_div == 10.0 && wave.time_index == demo.zoom_time_index);
+    demo_signal_zoom_time(&demo, 100);
+    assert(strcmp(demo.screen.time_scale, "500 ns") == 0);
+    demo_signal_zoom_time(&demo, -1);
+    assert(strcmp(demo.screen.time_scale, "1 us") == 0);
+    demo_signal_zoom_time(&demo, -1);
+    assert(strcmp(demo.screen.time_scale, "2 us") == 0);
+    demo_signal_zoom_time(&demo, -1);
+    assert(strcmp(demo.screen.time_scale, "5 us") == 0);
+    demo_signal_set_zoom_center(&demo, 0);
+    assert(demo.screen.zoom_window_start == 0);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_TIME);
+    demo_signal_ui_menu_activate(&demo);
+    demo_signal_ui_menu_adjust(&demo, demo.time_index - demo.zoom_time_index);
+    assert(strcmp(demo.screen.menu_values[0], "10 ms") == 0);
+    demo_signal_ui_menu_activate(&demo);
+    demo_signal_ui_dismiss_menu(&demo);
+    assert(strcmp(demo.screen.time_scale, "10 ms") == 0);
+    assert(demo.zoom_offset == 0.0);
+    demo_signal_ui_toggle_zoom(&demo);
+    assert(memcmp(overview, demo.ch1, sizeof(overview)) == 0);
 }
 
 static void test_measurements_beside_cursors(void)
@@ -283,6 +340,7 @@ int main(void)
     int i;
 
     test_time_range_and_csv_scale();
+    test_zoom_source_detail();
     test_measurements_beside_cursors();
     test_cursor_precision();
     test_compressed_generator();
@@ -413,12 +471,13 @@ int main(void)
     demo_signal_press(&demo, DEMO_BTN_RUN, 0);
     assert(demo.screen.running);
     demo_signal_rotate(&demo, DEMO_ENC_TIME, 2);
-    assert(demo.zoom_factor == 4 && demo.time_index == previous);
-    assert(demo.screen.zoom_window_start == 384);
-    assert(demo.screen.zoom_window_end == 640);
+    assert(demo.zoom_time_index == previous - 3 && demo.time_index == previous);
+    assert(strcmp(demo.screen.time_scale, "10 us") == 0);
+    assert(demo.screen.zoom_window_start == 460);
+    assert(demo.screen.zoom_window_end == 564);
     demo_signal_press(&demo, DEMO_ENC_TIME, 0);
     demo_signal_rotate(&demo, DEMO_ENC_TIME, 1);
-    assert(demo.zoom_offset == -16 && demo.screen.trigger_y == 128);
+    assert(fabs(demo.zoom_offset + 1.6) < 1e-9 && demo.screen.trigger_y == 128);
     demo_signal_press(&demo, DEMO_BTN_MENU, 1);
     assert(!demo.screen.zoom_enabled && demo.screen.running);
     assert(demo.time_index == previous && demo.time_position == 0);
@@ -529,10 +588,10 @@ int main(void)
     assert(demo.time_index == 6);
     demo_signal_press(&demo, DEMO_BTN_MENU, 1);
     demo_signal_zoom_time(&demo, 2);
-    assert(demo.zoom_factor == 4);
+    assert(strcmp(demo.screen.time_scale, "5 us") == 0);
     demo_signal_set_zoom_center(&demo, 600);
-    assert(demo.screen.zoom_window_start == 472);
-    assert(demo.screen.zoom_window_end == 728);
+    assert(demo.screen.zoom_window_start == 548);
+    assert(demo.screen.zoom_window_end == 652);
 
     demo_signal_init(&demo);
     demo_signal_press(&demo, DEMO_BTN_MENU, 0);
@@ -1148,7 +1207,7 @@ int main(void)
         previous = demo.screen.zoom_window_start;
         edge = demo.screen.trigger_marker_x;
         for (i = 0; i < 80; ++i) demo_signal_ui_pan_time(&demo, 1);
-        assert(previous - demo.screen.zoom_window_start == 20);
+        assert(previous - demo.screen.zoom_window_start == 16);
         assert(demo.screen.trigger_marker_x - edge == 80);
         demo_signal_set_zoom_center(&demo, 700);
         assert(demo.screen.zoom_window_start > 0);

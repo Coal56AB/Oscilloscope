@@ -68,8 +68,6 @@ typedef struct {
     int16_t saved_ch2[SCOPE_PLOT_WIDTH];
     int16_t minimum[2][SCOPE_PLOT_WIDTH];
     int16_t maximum[2][SCOPE_PLOT_WIDTH];
-    int16_t saved_minimum[2][SCOPE_PLOT_WIDTH];
-    int16_t saved_maximum[2][SCOPE_PLOT_WIDTH];
     DemoWaveCapture loaded_wave;
     int16_t history_ch1[8][SCOPE_PLOT_WIDTH];
     int16_t history_ch2[8][SCOPE_PLOT_WIDTH];
@@ -125,9 +123,13 @@ typedef struct {
     int browse_selected;
     int browse_filter;
     int pc_mode;
-    int zoom_factor;
-    int zoom_offset;
+    int zoom_time_index;
+    double zoom_offset;
     int saved_trigger_marker_x;
+    /* Immutable source timing for re-rendering the selected demo capture. */
+    double capture_start_us, capture_step_us, capture_period_us;
+    int capture_wave[2];
+    uint32_t source_sequence;
     int menu_position_x;
     int menu_position_y;
     DemoMenu menu_kind;

@@ -76,7 +76,6 @@ typedef struct {
     int remainder;
     int fine_x_remainder;
     int fine_y_remainder;
-    int zoom_pan_remainder;
     int axis;
     int active;
     int moved;
@@ -772,12 +771,6 @@ static int fine_touch_delta(int delta, int *remainder)
 static void pan_time_by_touch(int delta)
 {
     delta = fine_touch_delta(delta, &touch.fine_x_remainder);
-    if (demo.screen.zoom_enabled && !demo.waveform_loaded) {
-        int total = touch.zoom_pan_remainder + delta;
-        int source_delta = total / demo.zoom_factor;
-        touch.zoom_pan_remainder = total % demo.zoom_factor;
-        delta = source_delta * demo.zoom_factor;
-    }
     if (delta) demo_signal_ui_pan_time(&demo, delta);
 }
 
@@ -1187,7 +1180,6 @@ static void lcd_touch_begin(int x, int y)
     touch.remainder = 0;
     touch.fine_x_remainder = 0;
     touch.fine_y_remainder = 0;
-    touch.zoom_pan_remainder = 0;
     touch.axis = 0;
     touch.moved = 0;
     touch.since = GetTickCount64();
