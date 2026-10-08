@@ -11,14 +11,16 @@
 STM32/
 ├── oscill_controls.ioc
 ├── Core/
-│   ├── Inc/        заголовки приложения и генерируемой периферии
-│   └── Src/        приложение и генерируемая периферия
+│   ├── Inc/        заголовки генерируемой периферии
+│   ├── Src/        генерируемая периферия и main.c
+│   └── Oscill/     прикладные модули, пары .c/.h
 ├── Drivers/        локальные HAL/CMSIS с лицензиями ST/Arm
 ├── MDK-ARM/        проект Keil и startup
 └── tests/          переносимые проверки панели и UART
 ```
 
-Структура и оформление прикладного C-кода следуют образцу UIPS. Периферию
+Прикладной каталог `Core/Oscill` устроен по образцу `Core/UIPS`: пары `.c/.h`
+расположены рядом, `oscill_main` связывает модули через их API. Периферию
 настраивает CubeMX; `board_controls.c` читает плату, `controls.c` обрабатывает
 контакты, `controls_uart.c` отправляет события, `oscill_main.c` связывает модули.
 Общий codec включён из `ZYNQ7020/gui/src/control_protocol.c`, без копирования.
@@ -81,7 +83,7 @@ PA10 можно оставить неподключённым: приложен�
 `.uvprojx` в Keil и выполнить Rebuild. Результаты Keil направлены в `STM32/output/`
 в корне репозитория: `oscill_controls.axf`, `oscill_controls.hex` и map/listing.
 
-Прикладные файлы находятся в группах `Application/Panel` и `Shared/Control protocol`.
+Прикладные файлы находятся в группах `Oscill` и `Shared/Control protocol`.
 Сгенерированный `main.c` подключает `oscill_main.h` в `USER CODE Includes`,
 вызывает `Oscill_Init()` в `USER CODE 2`, `Oscill_Process()` в `USER CODE 3`.
 Изменения приложения не требуют правки генерируемого кода вне этих секций.

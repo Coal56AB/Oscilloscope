@@ -337,7 +337,7 @@
               <MiscControls />
               <Define>USE_HAL_DRIVER,STM32F103xE</Define>
               <Undefine />
-              <IncludePath>../Core/Inc;../Drivers/STM32F1xx_HAL_Driver/Inc;../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F1xx/Include;../Drivers/CMSIS/Include;../../ZYNQ7020/gui/src</IncludePath>
+              <IncludePath>../Core/Inc;../Core/Oscill;../Drivers/STM32F1xx_HAL_Driver/Inc;../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F1xx/Include;../Drivers/CMSIS/Include;../../ZYNQ7020/gui/src</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -504,27 +504,47 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>Application/Panel</GroupName>
+          <GroupName>Oscill</GroupName>
           <Files>
             <File>
               <FileName>controls.c</FileName>
               <FileType>1</FileType>
-              <FilePath>../Core/Src/controls.c</FilePath>
+              <FilePath>../Core/Oscill/controls.c</FilePath>
+            </File>
+            <File>
+              <FileName>controls.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../Core/Oscill/controls.h</FilePath>
             </File>
             <File>
               <FileName>board_controls.c</FileName>
               <FileType>1</FileType>
-              <FilePath>../Core/Src/board_controls.c</FilePath>
+              <FilePath>../Core/Oscill/board_controls.c</FilePath>
+            </File>
+            <File>
+              <FileName>board_controls.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../Core/Oscill/board_controls.h</FilePath>
             </File>
             <File>
               <FileName>controls_uart.c</FileName>
               <FileType>1</FileType>
-              <FilePath>../Core/Src/controls_uart.c</FilePath>
+              <FilePath>../Core/Oscill/controls_uart.c</FilePath>
+            </File>
+            <File>
+              <FileName>controls_uart.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../Core/Oscill/controls_uart.h</FilePath>
             </File>
             <File>
               <FileName>oscill_main.c</FileName>
               <FileType>1</FileType>
-              <FilePath>../Core/Src/oscill_main.c</FilePath>
+              <FilePath>../Core/Oscill/oscill_main.c</FilePath>
+            </File>
+            <File>
+              <FileName>oscill_main.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../Core/Oscill/oscill_main.h</FilePath>
             </File>
           </Files>
         </Group>

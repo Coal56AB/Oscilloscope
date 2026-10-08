@@ -62,7 +62,7 @@ def check_project():
         paths.add(resolved)
 
     for name in ("controls.c", "board_controls.c", "controls_uart.c", "oscill_main.c"):
-        require((STM32 / "Core/Src" / name).resolve() in paths, f"Application source lost: {name}")
+        require((STM32 / "Core/Oscill" / name).resolve() in paths, f"Application source lost: {name}")
     require((ROOT / "ZYNQ7020/gui/src/control_protocol.c").resolve() in paths,
             "Shared codec source lost")
 
@@ -73,6 +73,7 @@ def check_project():
     for path in include_paths:
         require(path.is_dir(), f"Include directory missing: {path}")
     require((ROOT / "ZYNQ7020/gui/src").resolve() in include_paths, "Shared codec include lost")
+    require((STM32 / "Core/Oscill").resolve() in include_paths, "Application include lost")
 
     output = target.findtext("./TargetOption/TargetCommonOption/OutputDirectory")
     require(output is not None, "Output directory missing")
