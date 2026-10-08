@@ -18,8 +18,8 @@ if {![file exists $workspace/diagnostic]} {
 }
 foreach application {fsbl diagnostic} {
     file copy -force $here/video.c $here/video.h $workspace/$application/src
-    file copy -force $root/display/boot_splash.c $root/display/boot_splash.h \
-        $root/display/boot_logo_data.h $workspace/$application/src
+    file copy -force $root/gui/logo/boot_splash.c $root/gui/logo/boot_splash.h \
+        $root/gui/logo/boot_logo_data.h $workspace/$application/src
     configbsp -bsp $workspace/${application}_bsp/system.mss stdin ps7_uart_1
     configbsp -bsp $workspace/${application}_bsp/system.mss stdout ps7_uart_1
     sdk configapp -app $application compiler-optimization {Optimize more (-O2)}

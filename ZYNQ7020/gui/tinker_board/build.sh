@@ -93,9 +93,9 @@ build_target()
 
     "$compiler" -O2 -std=gnu11 -DDEMO_ENABLE_GENERATOR=1 \
         -I"$build_dir/include" -I"$SDL_SOURCE/include" \
-        -I"$PROJECT_DIR/src" -I"$PROJECT_DIR/../display" \
+        -I"$PROJECT_DIR/src" -I"$PROJECT_DIR/logo" \
         "$PROJECT_DIR/src/scope_screen.c" "$PROJECT_DIR/src/rounded_box.c" \
-        "$PROJECT_DIR/../display/boot_splash.c" "$PROJECT_DIR/src/demo_signal.c" \
+        "$PROJECT_DIR/logo/boot_splash.c" "$PROJECT_DIR/src/demo_signal.c" \
         "$PROJECT_DIR/src/wave_file.c" "$PROJECT_DIR/src/panel_sdl.c" \
         "$PROJECT_DIR/src/preview_sdl.c" \
         "$PROJECT_DIR/src/capture_adapter.c" "$PROJECT_DIR/src/capture.c" \

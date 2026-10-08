@@ -4,7 +4,7 @@
 Oscill/
 ├── ZYNQ7020/
 │   ├── gui/          приложение C, WinAPI/SDL и переносимые тесты
-│   ├── display/      общая заставка FSBL и предпросмотра, исходный логотип
+│   │   └── logo/     логотип и общая отрисовка для FSBL и предпросмотра
 │   ├── fpga/         RTL, HDMI, аппаратный проект и симуляция Vivado
 │   ├── standalone/   тест DDR/HDMI и общая настройка видео для FSBL
 │   └── linux/        br2-external, rootfs, PS DTS и ARM toolchain

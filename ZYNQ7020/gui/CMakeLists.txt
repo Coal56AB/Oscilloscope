@@ -32,9 +32,8 @@ if(SCOPE_ENABLE_ZYNQ)
     target_compile_definitions(scope_runtime PUBLIC SCOPE_ENABLE_ZYNQ=1)
 endif()
 
-set(SCOPE_DISPLAY_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../display" CACHE PATH "Shared display sources")
-add_library(boot_splash STATIC "${SCOPE_DISPLAY_SOURCE_DIR}/boot_splash.c")
-target_include_directories(boot_splash PUBLIC "${SCOPE_DISPLAY_SOURCE_DIR}")
+add_library(boot_splash STATIC logo/boot_splash.c)
+target_include_directories(boot_splash PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/logo")
 
 add_library(scope_screen STATIC src/scope_screen.c src/rounded_box.c)
 target_link_libraries(scope_screen PUBLIC boot_splash)
