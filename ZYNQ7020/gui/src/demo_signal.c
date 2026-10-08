@@ -11,8 +11,8 @@
 #define PI 3.14159265358979323846
 #define PLOT_MIDDLE (SCOPE_PLOT_HEIGHT / 2)
 #define PIXELS_PER_DIV (SCOPE_PLOT_HEIGHT / 8.0)
-/* Simulated source grid, independent of screen width and time/div. */
-#define GENERATOR_SAMPLE_US 0.005
+/* Maximum simulated acquisition rate: 200 MSPS. */
+#define GENERATOR_MIN_SAMPLE_US 0.005
 
 #ifndef DEMO_ENABLE_GENERATOR
 #define DEMO_ENABLE_GENERATOR 1
@@ -327,39 +327,6 @@ static double generator_value(DemoWaveShape shape, double t, double period,
     }
 }
 
-/* Extrema over one display column, including edges hidden between its ends.
-   Periodic signals need only their turning points, even at very slow sweeps. */
-static void generator_range(DemoWaveShape shape, double t, double duration, double period,
-                            uint32_t sequence, size_t x, int channel, double *low, double *high)
-{
-    static const double turning_points[DEMO_WAVE_COUNT][7] = {
-        {0.0, 0.02, 0.50, 0.52}, {0.25, 0.75}, {0.0, 0.5}, {0.0},
-        {0.5, 0.5 - 4.493409457909064 / (8 * PI), 0.5 + 4.493409457909064 / (8 * PI),
-         0.5 - 7.725251836937707 / (8 * PI), 0.5 + 7.725251836937707 / (8 * PI),
-         0.5 - 10.9041216594289 / (8 * PI), 0.5 + 10.9041216594289 / (8 * PI)}, {0.0}
-    };
-    static const int counts[DEMO_WAVE_COUNT] = {4, 2, 2, 1, 7, 0};
-    double phase = fmod(t, period) / period;
-    double span = duration / period;
-    double a = generator_value(shape, t, period, sequence, x, channel);
-    double b = generator_value(shape, t + duration, period, sequence, x, channel);
-    int point;
-    if (phase < 0.0) phase += 1.0;
-    *low = fmin(a, b);
-    *high = fmax(a, b);
-    for (point = 0; point < counts[shape]; ++point) {
-        double p = turning_points[shape][point];
-        double distance = p - phase;
-        double value;
-        if (distance < 0.0) distance += 1.0;
-        if (distance > span) continue;
-        value = generator_value(shape, p * period, period, sequence, x, channel);
-        if (value < *low) *low = value;
-        if (value > *high) *high = value;
-        if (shape == DEMO_WAVE_SAW) *high = 1.0;
-    }
-}
-
 static void bind_envelopes(DemoSignal *demo)
 {
     demo->screen.ch1_min_samples = demo->minimum[0];
@@ -495,42 +462,16 @@ static void update_spectrum(DemoSignal *demo)
     spectrum(demo->ch2, demo->fft_ch2);
 }
 
-static double generator_source_value(const DemoSignal *demo, size_t index, unsigned channel)
-{
-    double t = demo->capture_start_us + index * GENERATOR_SAMPLE_US;
-    double amplitude = channel ? 1.60 : 1.20;
-    double noise_scale = channel ? 1.0 / 60.0 : 1.0 / 120.0;
-    return amplitude * generator_value((DemoWaveShape)demo->capture_wave[channel],
-        t + (channel ? demo->capture_period_us * 0.2 : 0.0),
-        demo->capture_period_us, demo->source_sequence, index, channel) -
-        sample_noise(demo->source_sequence, index, channel) * noise_scale;
-}
-
 static void generator_source_range(const void *context, size_t first, size_t end,
                                    unsigned channel, double *minimum, double *maximum)
 {
     const DemoSignal *demo = context;
+    const double *values = demo->source_samples[channel];
     size_t i;
-    if (end - first <= 64) {
-        *minimum = *maximum = generator_source_value(demo, first, channel);
-        for (i = first + 1; i < end; ++i) {
-            double value = generator_source_value(demo, i, channel);
-            if (value < *minimum) *minimum = value;
-            if (value > *maximum) *maximum = value;
-        }
-    } else {
-        /* Analytic bounds keep very long synthetic captures inexpensive.
-           Real records use exact ranges of the stored ADC samples. */
-        double low, high, amplitude = channel ? 1.60 : 1.20;
-        double noise = channel ? 0.05 : 0.025;
-        generator_range((DemoWaveShape)demo->capture_wave[channel],
-            demo->capture_start_us + first * GENERATOR_SAMPLE_US +
-            (channel ? demo->capture_period_us * 0.2 : 0.0),
-            (end - first - 1) * GENERATOR_SAMPLE_US, demo->capture_period_us,
-            demo->source_sequence, first, channel, &low, &high);
-        if (demo->capture_wave[channel] == DEMO_WAVE_NOISE) { low = 0.0; high = 1.0; }
-        *minimum = amplitude * low - noise;
-        *maximum = amplitude * high + noise;
+    *minimum = *maximum = values[first];
+    for (i = first + 1; i < end; ++i) {
+        if (values[i] < *minimum) *minimum = values[i];
+        if (values[i] > *maximum) *maximum = values[i];
     }
 }
 
@@ -540,14 +481,14 @@ static void render_generator_view(DemoSignal *demo, double start_us, double us_p
     WaveformSource source;
     int x;
     source.context = demo;
-    source.samples = (size_t)ceil(SCOPE_PLOT_WIDTH * demo->capture_step_us / GENERATOR_SAMPLE_US);
+    source.samples = demo->source_count;
     source.range = generator_source_range;
     for (x = 0; x < 2; ++x) {
         double scale = PIXELS_PER_DIV / volts_per_div(demo, x);
         double zero = channel_zero(demo, x) +
                       (demo->coupling[x] ? (x ? 1.60 : 1.20) * scale * 0.5 : 0.0);
-        waveform_view_reduce(&source, (start_us - demo->capture_start_us) / GENERATOR_SAMPLE_US,
-                             SCOPE_PLOT_WIDTH * us_per_pixel / GENERATOR_SAMPLE_US,
+        waveform_view_reduce(&source, (start_us - demo->capture_start_us) / demo->source_step_us,
+                             SCOPE_PLOT_WIDTH * us_per_pixel / demo->source_step_us,
                              x, zero, scale, SCOPE_PLOT_WIDTH, x ? demo->ch2 : demo->ch1,
                              demo->minimum[x], demo->maximum[x]);
     }
@@ -566,17 +507,31 @@ static void generate(DemoSignal *demo, int free_run)
     int marker = clamp(SCOPE_PLOT_WIDTH / 2 - demo->time_position, 0, SCOPE_PLOT_WIDTH - 1);
     int falling = demo->trigger_edge_index == 1 ||
                   (demo->trigger_edge_index == 2 && (demo->capture_sequence & 1));
-    double crossing_us;
+    double crossing_us, duration = step * SCOPE_PLOT_WIDTH;
+    double period = generator_period_us[demo->generator_frequency_index];
+    double samples = ceil(duration / GENERATOR_MIN_SAMPLE_US);
+    size_t i;
+    unsigned channel;
     demo->screen.trigger_marker_x = marker;
     demo->screen.trigger_locked =
         (uint8_t)(!free_run && find_trigger_crossing(demo, falling, &crossing_us));
     demo->capture_step_us = step;
     demo->capture_start_us = demo->screen.trigger_locked ? crossing_us - marker * step :
                             (demo->phase + demo->time_position) * step;
-    demo->capture_period_us = generator_period_us[demo->generator_frequency_index];
-    demo->capture_wave[0] = demo->generator_wave[0];
-    demo->capture_wave[1] = demo->generator_wave[1];
-    demo->source_sequence = demo->capture_sequence;
+    demo->source_count = samples > DEMO_CAPTURE_POINTS ? DEMO_CAPTURE_POINTS : (size_t)samples;
+    demo->source_step_us = duration / demo->source_count;
+    for (channel = 0; channel < 2; ++channel) {
+        double amplitude = channel ? 1.60 : 1.20;
+        double noise_scale = channel ? 1.0 / 60.0 : 1.0 / 120.0;
+        for (i = 0; i < demo->source_count; ++i) {
+            double t = demo->capture_start_us + i * demo->source_step_us;
+            demo->source_samples[channel][i] = amplitude *
+                generator_value((DemoWaveShape)demo->generator_wave[channel],
+                    t + (channel ? period * 0.2 : 0.0), period,
+                    demo->capture_sequence, i, channel) -
+                sample_noise(demo->capture_sequence, i, channel) * noise_scale;
+        }
+    }
     render_generator_view(demo, demo->capture_start_us, step);
 }
 

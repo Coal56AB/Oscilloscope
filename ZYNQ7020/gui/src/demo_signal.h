@@ -2,6 +2,7 @@
 #define DEMO_SIGNAL_H
 
 #include "scope_screen.h"
+#include <stddef.h>
 
 typedef enum {
     DEMO_ENC_CH1, DEMO_ENC_CH2, DEMO_ENC_TIME, DEMO_ENC_TRIGGER, DEMO_ENC_FUNCTION,
@@ -59,6 +60,8 @@ typedef enum {
     DEMO_MEAS_CURSOR_DT, DEMO_MEAS_CURSOR_INV_DT, DEMO_MEAS_CURSOR_DV,
     DEMO_MEAS_CURSOR_A, DEMO_MEAS_CURSOR_B, DEMO_MEAS_COUNT
 } DemoMeasurement;
+
+#define DEMO_CAPTURE_POINTS 8192
 
 typedef struct {
     ScopeScreen screen;
@@ -126,10 +129,10 @@ typedef struct {
     int zoom_time_index;
     double zoom_offset;
     int saved_trigger_marker_x;
-    /* Immutable source timing for re-rendering the selected demo capture. */
-    double capture_start_us, capture_step_us, capture_period_us;
-    int capture_wave[2];
-    uint32_t source_sequence;
+    /* Source buffer is read, not regenerated, when ZOOM adjusts its view. */
+    double capture_start_us, capture_step_us, source_step_us;
+    size_t source_count;
+    double source_samples[2][DEMO_CAPTURE_POINTS];
     int menu_position_x;
     int menu_position_y;
     DemoMenu menu_kind;

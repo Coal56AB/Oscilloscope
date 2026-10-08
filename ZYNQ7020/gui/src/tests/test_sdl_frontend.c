@@ -53,8 +53,17 @@ int main(void)
     demo_signal_zoom_time(&demo,-6); /* Default 10 kHz signal at 10 ms/div. */
     assert(strcmp(demo.screen.time_scale,"10 ms")==0);
     for(channel=0;channel<2;++channel)
-        for(x=0;x<SCOPE_PLOT_WIDTH;++x)
-            assert(demo.maximum[channel][x]-demo.minimum[channel][x]>=95);
+        for(x=0;x<SCOPE_PLOT_WIDTH;++x){
+            size_t i;
+            double low=demo.source_samples[channel][8*x], high=low;
+            double scale=channel?60.0:120.0, zero=channel?330.0:200.0;
+            for(i=8*x+1;i<8*(size_t)(x+1);++i){
+                if(demo.source_samples[channel][i]<low)low=demo.source_samples[channel][i];
+                if(demo.source_samples[channel][i]>high)high=demo.source_samples[channel][i];
+            }
+            assert(demo.minimum[channel][x]==(int16_t)(zero-high*scale));
+            assert(demo.maximum[channel][x]==(int16_t)(zero-low*scale));
+        }
     scope_screen_render(expected,SCOPE_WIDTH,&demo.screen);
     draw_all();
     assert(memcmp(screen_pixels,expected,SCOPE_WIDTH*SCOPE_HEIGHT*sizeof(*expected))==0);

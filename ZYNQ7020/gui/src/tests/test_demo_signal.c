@@ -122,9 +122,9 @@ static void test_zoom_noise_source_grid(void)
     int x, changes = 0, longest = 0, run = 0;
     int16_t stopped[SCOPE_PLOT_WIDTH];
     demo_signal_init(&demo);
+    demo_signal_zoom_time(&demo, 100); /* Fast base acquisition, not a zoom into a slower one. */
     demo_signal_ui_toggle_run(&demo);
     demo_signal_ui_toggle_zoom(&demo);
-    demo_signal_zoom_time(&demo, 100);
     assert(strcmp(demo.screen.time_scale, "500 ns") == 0);
     for (x = 1; x < SCOPE_PLOT_WIDTH; ++x) {
         if (demo.ch2[x] != demo.ch2[x - 1]) { ++changes; run = 0; }
@@ -136,6 +136,39 @@ static void test_zoom_noise_source_grid(void)
     demo_signal_zoom_time(&demo, -1);
     demo_signal_zoom_time(&demo, 1);
     assert(memcmp(stopped, demo.ch2, sizeof(stopped)) == 0);
+}
+
+static void test_adaptive_capture(void)
+{
+    static DemoSignal demo;
+    static double stopped[2][DEMO_CAPTURE_POINTS];
+    int16_t low[SCOPE_PLOT_WIDTH], high[SCOPE_PLOT_WIDTH];
+    size_t x, count;
+    double step;
+    int changed = 0;
+    demo_signal_init(&demo);
+    assert(demo.source_count == DEMO_CAPTURE_POINTS);
+    assert(fabs(demo.source_step_us - 1000.0 / DEMO_CAPTURE_POINTS) < 1e-12);
+    memcpy(low, demo.minimum[0], sizeof(low));
+    memcpy(high, demo.maximum[0], sizeof(high));
+    demo_signal_advance(&demo);
+    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x)
+        if (low[x] != demo.minimum[0][x] || high[x] != demo.maximum[0][x]) ++changed;
+    assert(changed > 200); /* RUN changes real envelope values, not just a hidden center trace. */
+    demo_signal_ui_toggle_run(&demo);
+    count = demo.source_count;
+    step = demo.source_step_us;
+    memcpy(stopped, demo.source_samples, sizeof(stopped));
+    demo_signal_ui_toggle_zoom(&demo);
+    demo_signal_zoom_time(&demo, 100);
+    assert(demo.source_count == count && demo.source_step_us == step);
+    assert(!memcmp(stopped, demo.source_samples, sizeof(stopped)));
+    demo_signal_ui_toggle_zoom(&demo);
+    demo_signal_zoom_time(&demo, 100);
+    assert(demo.source_count == 1000 && fabs(demo.source_step_us - 0.005) < 1e-12);
+    demo_signal_zoom_time(&demo, -100);
+    assert(demo.source_count == DEMO_CAPTURE_POINTS);
+    assert(fabs(demo.source_step_us - 1e7 / DEMO_CAPTURE_POINTS) < 1e-9);
 }
 
 static void test_measurements_beside_cursors(void)
@@ -201,8 +234,15 @@ static void test_compressed_generator(void)
         while (demo.generator_wave[0] != shape)
             demo_signal_ui_menu_tap(&demo, 0, 1);
         for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
-            int span = demo.maximum[0][x] - demo.minimum[0][x];
-            assert(span >= (shape == DEMO_WAVE_SINC ? 86 : 143));
+            size_t i;
+            double low = demo.source_samples[0][8 * x];
+            double high = low;
+            for (i = 8 * x + 1; i < 8 * (x + 1); ++i) {
+                if (demo.source_samples[0][i] < low) low = demo.source_samples[0][i];
+                if (demo.source_samples[0][i] > high) high = demo.source_samples[0][i];
+            }
+            assert(demo.minimum[0][x] == (int16_t)(200.0 - high * 120.0));
+            assert(demo.maximum[0][x] == (int16_t)(200.0 - low * 120.0));
             assert(demo.minimum[0][x] <= demo.ch1[x]);
             assert(demo.maximum[0][x] >= demo.ch1[x]);
         }
@@ -364,6 +404,7 @@ int main(void)
     test_time_range_and_csv_scale();
     test_zoom_source_detail();
     test_zoom_noise_source_grid();
+    test_adaptive_capture();
     test_measurements_beside_cursors();
     test_cursor_precision();
     test_compressed_generator();
