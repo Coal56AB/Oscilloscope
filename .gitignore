@@ -1,0 +1,7 @@
+/build*/
+/output/
+/ZYNQ7020/fpga/.Xil/
+/ZYNQ7020/fpga/*.jou
+/ZYNQ7020/fpga/*.log
+__pycache__/
+*.pyc

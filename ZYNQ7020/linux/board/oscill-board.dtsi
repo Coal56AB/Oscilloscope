@@ -1,0 +1,36 @@
+#include "ps-peripherals.dtsi"
+/ {
+    model = "Oscill ZYNQ MINI rev B XC7Z020";
+    compatible = "oscill,zynq-mini-revb", "xlnx,zynq-7000";
+    options {
+        u-boot {
+            bootscr-address = /bits/ 64 <0x02000000>;
+            bootscr-flash-offset = /bits/ 64 <0x00ff0000>;
+            bootscr-flash-size = /bits/ 64 <0x00010000>;
+        };
+    };
+    aliases {
+        serial0 = &uart1;
+        mmc0 = &sdhci0;
+        mmc1 = &sdhci1;
+    };
+    /* Upper 16 MiB belongs to the FSBL-initialized scanout, including in U-Boot. */
+    memory@0 { device_type = "memory"; reg = <0 0x1f000000>; };
+    chosen {
+        stdout-path = "serial0:115200n8";
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges;
+        framebuffer@1f000000 {
+            compatible = "simple-framebuffer";
+            reg = <0x1f000000 0x00258000>;
+            width = <1024>;
+            height = <600>;
+            stride = <4096>;
+            format = "x8r8g8b8";
+            clocks = <&clkc 15>;
+            status = "okay";
+        };
+    };
+};
+&clkc { ps-clk-frequency = <33333333>; };

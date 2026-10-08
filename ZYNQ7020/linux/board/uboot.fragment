@@ -1,0 +1,22 @@
+# FSBL from the same Vivado handoff initializes DDR and loads PL.
+# CONFIG_SPL is not set
+# CONFIG_OF_BOARD is not set
+CONFIG_OF_SEPARATE=y
+CONFIG_DEFAULT_DEVICE_TREE="oscill-zynq7020-uboot"
+CONFIG_OF_LIST="oscill-zynq7020-uboot"
+# CONFIG_FIT_SIGNATURE is not set
+# CONFIG_TOOLS_LIBCRYPTO is not set
+# CONFIG_TOOLS_KWBIMAGE is not set
+# CONFIG_TOOLS_MKEFICAPSULE is not set
+# CONFIG_EFI_LOADER is not set
+# CONFIG_USB_GADGET is not set
+# CONFIG_CMD_DFU is not set
+# CONFIG_CMD_THOR_DOWNLOAD is not set
+CONFIG_ENV_IS_NOWHERE=y
+# CONFIG_ENV_IS_IN_FAT is not set
+# CONFIG_ENV_IS_IN_NAND is not set
+# CONFIG_ENV_IS_IN_SPI_FLASH is not set
+# CONFIG_SYS_REDUNDAND_ENVIRONMENT is not set
+CONFIG_BOOTDELAY=2
+CONFIG_USE_BOOTCOMMAND=y
+CONFIG_BOOTCOMMAND="if test \"${modeboot}\" = qspiboot; then sf probe 0 25000000 0 && sf read ${scriptaddr} ${script_offset_f} ${script_size_f} && source ${scriptaddr}; else if fatload mmc 0:1 ${scriptaddr} boot.scr; then source ${scriptaddr}; fi; fi"

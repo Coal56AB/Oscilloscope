@@ -1,0 +1,9 @@
+/build/
+/build-tinker/
+/OscilGUI-TinkerBoard.zip
+*.bmp
+*.csv
+*.exe
+*.obj
+*.o
+*.dll

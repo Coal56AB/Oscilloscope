@@ -1,0 +1,61 @@
+/* Fragment for linux-xlnx zynq-7000.dtsi; PS settings must match the handoff. */
+&gpio0 { #address-cells = <0>; };
+&intc { #address-cells = <0>; };
+&uart1 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&oscill_uart1_pins>;
+};
+&usb0 {
+    status = "okay";
+    dr_mode = "host";
+    phy_type = "ulpi";
+    usb-phy = <&oscill_usb_phy>;
+    pinctrl-names = "default";
+    pinctrl-0 = <&oscill_usb0_pins>;
+};
+&sdhci0 {
+    status = "okay";
+    bus-width = <4>;
+    disable-wp;
+    broken-cd;
+    pinctrl-names = "default";
+    pinctrl-0 = <&oscill_sd0_pins>;
+};
+&sdhci1 {
+    status = "okay";
+    bus-width = <4>;
+    disable-wp;
+    broken-cd;
+    pinctrl-names = "default";
+    pinctrl-0 = <&oscill_sd1_pins>;
+};
+&qspi {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&oscill_qspi_pins>;
+    flash@0 {
+        compatible = "winbond,w25q128", "jedec,spi-nor";
+        reg = <0>;
+        spi-max-frequency = <25000000>; /* Conservative bring-up limit. */
+        spi-rx-bus-width = <4>;
+        spi-tx-bus-width = <1>;
+    };
+};
+&pinctrl0 {
+    oscill_uart1_pins: uart1-default { mux { groups = "uart1_10_grp"; function = "uart1"; }; };
+    oscill_usb0_pins: usb0-default { mux { groups = "usb0_0_grp"; function = "usb0"; }; };
+    oscill_sd0_pins: sd0-default { mux { groups = "sdio0_2_grp"; function = "sdio0"; }; };
+    oscill_sd1_pins: sd1-default { mux { groups = "sdio1_0_grp"; function = "sdio1"; }; };
+    oscill_qspi_pins: qspi-default { mux { groups = "qspi0_0_grp"; function = "qspi0"; }; };
+};
+/ {
+    /* Reset on MIO46 is pulsed by the matching FSBL ps7_init. */
+    oscill_usb_phy: phy@e0002000 {
+        compatible = "ulpi-phy";
+        reg = <0xe0002000 0x1000>;
+        #phy-cells = <0>;
+        view-port = <0x170>;
+        drv-vbus;
+    };
+};

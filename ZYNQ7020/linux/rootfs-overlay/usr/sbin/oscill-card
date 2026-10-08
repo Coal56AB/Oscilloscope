@@ -1,0 +1,15 @@
+#!/bin/sh
+# Explicit mount/unmount; no automatic formatting or guessed block device.
+set -eu
+case "${1:-}" in
+mount)
+    [ "$#" -eq 2 ] && [ -b "$2" ] || { echo 'Usage: oscill-card mount /dev/mmcblkXp1' >&2; exit 2; }
+    mkdir -p /media/scope
+    mount -o nosuid,nodev,noexec "$2" /media/scope
+    ;;
+unmount)
+    sync
+    umount /media/scope
+    ;;
+*) echo 'Usage: oscill-card mount DEVICE | unmount' >&2; exit 2 ;;
+esac

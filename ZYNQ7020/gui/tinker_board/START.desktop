@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Start OscilGUI
+Comment=Open the oscilloscope display in kiosk mode
+Exec=/bin/sh -c "path=\\$1; dir=\\$(dirname -- \"\\$path\"); exec /bin/sh \"\\$dir/run.sh\"" launcher %k
+Icon=video-display
+Terminal=false
+StartupNotify=false
+Categories=Utility;

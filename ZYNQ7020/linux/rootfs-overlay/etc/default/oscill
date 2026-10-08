@@ -1,0 +1,8 @@
+DISPLAY_BACKEND=fb
+DISPLAY_DEVICE=/dev/fb0
+# Selects an evdev device with at least two Type B multitouch slots.
+TOUCH_DEVICE=auto
+TOUCH_ROTATION=0
+SERIAL_DEVICE=
+SERIAL_BAUD=115200
+DATA_DIR=/media/scope

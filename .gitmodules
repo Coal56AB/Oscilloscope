@@ -1,7 +1,3 @@
-[submodule "GUI"]
-	path = GUI
-	url = https://github.com/Coal56AB/OscilGUI.git
-	branch = main
 [submodule "PCB"]
 	path = PCB
 	url = https://github.com/Coal56AB/OscilPCB.git

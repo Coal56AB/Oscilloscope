@@ -1,0 +1,8 @@
+add_library(stm32_controls STATIC controls.c)
+target_include_directories(stm32_controls PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(stm32_controls PUBLIC control_protocol)
+if(BUILD_TESTING)
+    add_executable(stm32_controls_test tests/test_controls.c)
+    target_link_libraries(stm32_controls_test PRIVATE stm32_controls)
+    add_test(NAME stm32_controls COMMAND stm32_controls_test)
+endif()

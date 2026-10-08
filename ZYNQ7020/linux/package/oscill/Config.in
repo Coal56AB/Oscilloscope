@@ -1,0 +1,8 @@
+config BR2_PACKAGE_OSCILL
+    bool "oscill"
+    depends on BR2_TOOLCHAIN_HAS_THREADS
+    depends on !BR2_STATIC_LIBS
+    select BR2_PACKAGE_SDL2
+    help
+      Oscilloscope GUI with software rendering, framebuffer and USB touch input.
+      Selecting libdrm also enables the direct DRM backend.

@@ -1,0 +1,5 @@
+*.sh text eol=lf
+*.tcl text eol=lf
+ZYNQ7020/linux/** text eol=lf
+ZYNQ7020/linux/rootfs-overlay/etc/init.d/* text eol=lf
+ZYNQ7020/linux/rootfs-overlay/usr/sbin/* text eol=lf

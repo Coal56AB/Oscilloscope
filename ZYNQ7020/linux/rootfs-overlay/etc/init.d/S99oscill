@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+PIDFILE=/run/oscill.pid
+case "${1:-start}" in
+start)
+    [ ! -f "$PIDFILE" ] || exit 0
+    . /etc/default/oscill
+    [ -e "$DISPLAY_DEVICE" ] || { echo 'Oscill: display is not ready' >&2; exit 1; }
+    case "$DISPLAY_BACKEND" in fb|drm) ;; *) echo 'Oscill: invalid display backend' >&2; exit 1;; esac
+    set -- --kiosk "--$DISPLAY_BACKEND" "$DISPLAY_DEVICE" --data-dir "$DATA_DIR"
+    [ -z "$TOUCH_DEVICE" ] || set -- "$@" --touch "$TOUCH_DEVICE" --touch-rotate "$TOUCH_ROTATION"
+    [ -z "$SERIAL_DEVICE" ] || set -- "$@" --serial "$SERIAL_DEVICE" --baud "$SERIAL_BAUD"
+    start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/scope_preview -- "$@"
+    ;;
+stop)
+    start-stop-daemon -K -p "$PIDFILE" || true
+    rm -f "$PIDFILE"
+    ;;
+restart) "$0" stop; "$0" start ;;
+*) echo 'Usage: S99oscill start|stop|restart' >&2; exit 2 ;;
+esac

@@ -1,0 +1,13 @@
+# Bank 35, direct TMDS outputs, ZYNQ MINI rev B sheets 5 and 11.
+set_property PACKAGE_PIN H16 [get_ports hdmi_clk_p]
+set_property PACKAGE_PIN H17 [get_ports hdmi_clk_n]
+set_property PACKAGE_PIN D19 [get_ports {hdmi_data_p[0]}]
+set_property PACKAGE_PIN D20 [get_ports {hdmi_data_n[0]}]
+set_property PACKAGE_PIN C20 [get_ports {hdmi_data_p[1]}]
+set_property PACKAGE_PIN B20 [get_ports {hdmi_data_n[1]}]
+set_property PACKAGE_PIN B19 [get_ports {hdmi_data_p[2]}]
+set_property PACKAGE_PIN A20 [get_ports {hdmi_data_n[2]}]
+set_property IOSTANDARD TMDS_33 [get_ports {hdmi_clk_* hdmi_data_*}]
+set_property PACKAGE_PIN H18 [get_ports hdmi_enable]
+set_property IOSTANDARD LVCMOS33 [get_ports hdmi_enable]
+set_property BITSTREAM.GENERAL.COMPRESS TRUE [current_design]

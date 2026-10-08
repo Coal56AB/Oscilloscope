@@ -1,0 +1,2 @@
+# SquashFS is read-only; the boot image contains no persistent random seed.
+SEEDRNG_ARGS="--seed-dir=/run/seedrng --skip-credit"
