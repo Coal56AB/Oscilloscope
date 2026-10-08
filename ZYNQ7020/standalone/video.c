@@ -1,8 +1,11 @@
 #include "video.h"
+#include "boot_splash.h"
 #include "xaxivdma.h"
 #include "xil_cache.h"
 #include "xparameters.h"
 #include "xvtc.h"
+#include "xpseudo_asm.h"
+#include "xreg_cortexa9.h"
 #include <string.h>
 
 void board_video_pattern(unsigned phase, int failed)
@@ -31,6 +34,8 @@ void board_video_pattern(unsigned phase, int failed)
 
 int board_video_start(void)
 {
+    static int started;
+    u32 cache_control;
     XAxiVdma dma;
     XAxiVdma_Config *dc = XAxiVdma_LookupConfig(XPAR_VDMA_DEVICE_ID);
     XAxiVdma_DmaSetup setup;
@@ -39,10 +44,17 @@ int board_video_start(void)
     XVtc_Timing mode;
     XVtc_SourceSelect source;
     UINTPTR address = VIDEO_ADDRESS;
+    if (started) return 1;
     if (!dc || !tc || XAxiVdma_CfgInitialize(&dma, dc, dc->BaseAddress) != XST_SUCCESS ||
         XVtc_CfgInitialize(&timing, tc, tc->BaseAddress) != XST_SUCCESS)
         return 0;
-    board_video_pattern(0, 2);
+    /* FSBL normally disables D-cache. Use it for the 2.4 MiB frame, then
+       flush scanout data and restore the caller's cache state before DMA. */
+    cache_control = mfcp(XREG_CP15_SYS_CONTROL);
+    Xil_DCacheEnable();
+    boot_splash_render((uint32_t *)VIDEO_ADDRESS, VIDEO_WIDTH, VIDEO_WIDTH, VIDEO_HEIGHT);
+    Xil_DCacheFlushRange(VIDEO_ADDRESS, VIDEO_STRIDE * VIDEO_HEIGHT);
+    if (!(cache_control & 4u)) Xil_DCacheDisable();
     memset(&mode, 0, sizeof(mode));
     mode.HActiveVideo = VIDEO_WIDTH;
     mode.HFrontPorch = 24;
@@ -67,5 +79,6 @@ int board_video_start(void)
         XAxiVdma_DmaStart(&dma, XAXIVDMA_READ) != XST_SUCCESS)
         return 0;
     XVtc_EnableGenerator(&timing);
+    started = 1;
     return 1;
 }

@@ -26,6 +26,6 @@
 - [`STM32/`](STM32/) — контроллер панели STM32F103RCT6, CubeMX и Keil.
 - [`PCB/`](PCB/) — схемы, печатная плата и файлы изготовления.
 
-Для проверки Zynq-7020 подготовлены тест DDR/HDMI и Linux с запуском GUI: [первый запуск](docs/BRINGUP.md). Подключение АЦП и STM32 находится в разработке.
+Для проверки Zynq-7020 подготовлены тест DDR/HDMI и Linux с загрузочным логотипом и автозапуском GUI с демосигналами: [первый запуск](docs/BRINGUP.md). Сборка создаёт проект Vivado `ZYNQ7020/oscill.xpr`. Подключение АЦП и STM32 находится в разработке.
 
 Описание интерфейса — в [README GUI](ZYNQ7020/gui/README.md), устройство платы — в [README PCB](https://github.com/Coal56AB/OscilPCB/blob/5c4f6dd616d461db2b3ec94a01ae66af5781a7e2/README.md), сборка — в [документации разработчика](docs/BUILD.md).

@@ -1,6 +1,6 @@
 # Прошивка и восстановление
 
-Первый загрузочный комплект для TF1 собран: FSBL, PL HDMI и тест DDR в `output/diagnostic/BOOT.BIN`. Запуск — [BRINGUP.md](BRINGUP.md). Linux использует тот же аппаратный проект и отдельный комплект с U-Boot. Запись на устройство в этом сеансе не выполнялась.
+Первый загрузочный комплект для TF1 собран: FSBL, PL HDMI и тест DDR в `ZYNQ7020/output/diagnostic/BOOT.BIN`. Запуск — [BRINGUP.md](BRINGUP.md). Linux использует тот же аппаратный проект и отдельный комплект с U-Boot. Запись на устройство в этом сеансе не выполнялась.
 
 ## Zynq-7020
 
@@ -18,12 +18,21 @@ fatwrite mmc 0:1 0x08000000 qspi-backup.bin 0x01000000
 
 Каждая команда должна завершиться успешно. Сохранить `qspi-backup.bin` с карты на ПК и проверить размер 16 МиБ и SHA-256. Сохранить исходное положение SW1; оставить доступ к JTAG и UART. Если исходная QSPI не читается или сравнение не проходит, запись не выполнять.
 
-4. `assemble-qspi.py` формирует `qspi.bin`, загрузочный скрипт, MTD Device Tree и `qspi-layout.json` из фактических файлов релиза. Весь образ — 16 МиБ; разделы выровнены по 64 КиБ, есть 1 МиБ настроек и две свободные области по 64 КиБ. Скрипт загрузки находится в последнем секторе, его адрес также задан в U-Boot DTB. В этом комплекте один системный слот; автоматическое A/B обновление не реализовано.
+4. `assemble-qspi.py` формирует `qspi.bin` и `qspi-layout.json` из `BOOT.BIN` и `image.bin`. Весь образ — 16 МиБ; адреса фиксированы:
+
+| Файл / область | Адрес QSPI | Доступно |
+|---|---:|---:|
+| `BOOT.BIN` | `0x00000000` | `0x500000` байт |
+| Резерв | `0x00500000` | `0x20000` байт |
+| `image.bin` (FIT) | `0x00520000` | `0x9e0000` байт |
+| Настройки | `0x00f00000` | 1 МиБ |
+
+В SDK Program Flash можно выбрать отдельно `BOOT.BIN` с offset `0x0` и `image.bin` с offset `0x520000`. Дополнительный `.ub` не нужен. Полный `qspi.bin` записывается с offset `0x0` и заменяет также область настроек. В этом комплекте один системный слот; автоматическое A/B обновление не реализовано.
 5. После backup и по отдельной команде владельца перевести плату в JTAG mode, подключить JTAG и запустить `hw_server`. Команда SDK 2019.1 из корня проекта:
 
 ```powershell
-C:/Xilinx/SDK/2019.1/bin/program_flash.bat -f output/linux/qspi.bin -offset 0 `
-  -flash_type qspi-x4-single -fsbl output/linux/fsbl.elf -verify -url tcp:localhost:3121
+C:/Xilinx/SDK/2019.1/bin/program_flash.bat -f ZYNQ7020/output/linux/qspi.bin -offset 0 `
+  -flash_type qspi-x4-single -fsbl ZYNQ7020/output/linux/fsbl.elf -verify -url tcp:localhost:3121
 ```
 
 Имена параметров проверены по `program_flash -help`; запись на плату не выполнялась. Команда заменяет всю QSPI, включая область настроек. Для готового ZIP пути задаются к распакованным `qspi.bin` и `fsbl.elf`.
@@ -32,7 +41,7 @@ C:/Xilinx/SDK/2019.1/bin/program_flash.bat -f output/linux/qspi.bin -offset 0 `
 
 ## STM32
 
-Проект STM32F103RCT6 — `STM32/oscill_controls.ioc` и `STM32/MDK-ARM/oscill_controls.uvprojx`. Настройки, распиновка и регенерация — [STM32.md](STM32.md). После успешного Rebuild в Keil HEX создаётся в `output/stm32/oscill_controls.hex`. В текущем окружении завершение сборки Keil блокирует ошибка лицензии — [TESTING.md](TESTING.md). Начальная настройка использует HSI/PLL 64 МГц, не зависит от неизвестного кварца модуля.
+Проект STM32F103RCT6 — `STM32/oscill_controls.ioc` и `STM32/MDK-ARM/oscill_controls.uvprojx`. Настройки, распиновка и регенерация — [STM32.md](STM32.md). После успешного Rebuild в Keil HEX создаётся в `STM32/output/oscill_controls.hex`. В текущем окружении завершение сборки Keil блокирует ошибка лицензии — [TESTING.md](TESTING.md). Начальная настройка использует HSI/PLL 64 МГц, не зависит от неизвестного кварца модуля.
 
 Подключить SWDIO к PA13, SWCLK к PA14 и общий GND; при необходимости NRST к RST модуля. В символе PBD это контакты 46, 43 и 30 соответственно, GND — 28/55. Перед подключением сверить маркировку и ориентацию фактического модуля. В проекте выбран ST-Link/SWD и STM32F103RC, Flash 256 КиБ с адреса `0x08000000`; запись на устройство автоматически не выполняется.
 

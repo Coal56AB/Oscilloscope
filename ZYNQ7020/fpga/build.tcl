@@ -1,6 +1,7 @@
 # vivado -mode batch -source build.tcl -tclargs /absolute/output /absolute/vivado-library [part]
 if {$argc < 2 || $argc > 3} { error "Expected output directory, Digilent IP repository, optional part" }
 set here [file dirname [file normalize [info script]]]
+set root [file dirname $here]
 set output [file normalize [lindex $argv 0]]
 set ip_repo [file normalize [lindex $argv 1]]
 set part xc7z020clg400-1
@@ -9,7 +10,7 @@ if {![regexp {^xc7z020clg400-[123]$} $part]} { error "Expected XC7Z020 CLG400 pa
 if {![file exists $ip_repo/ip/rgb2dvi/component.xml]} { error "Digilent rgb2dvi missing" }
 file mkdir $output
 cd $output
-create_project oscill $output/vivado -part $part -force
+create_project oscill $root -part $part -force
 set_property ip_repo_paths [list $ip_repo/ip/rgb2dvi $ip_repo/if] [current_project]
 set_param general.maxThreads 8
 update_ip_catalog
@@ -41,6 +42,8 @@ cell vdma xilinx.com:ip:axi_vdma:6.3 {CONFIG.c_include_s2mm 0 CONFIG.c_include_m
     CONFIG.c_num_fstores 1 CONFIG.c_m_axis_mm2s_tdata_width 32 \
     CONFIG.c_m_axi_mm2s_data_width 64 CONFIG.c_mm2s_genlock_mode 0 \
     CONFIG.c_mm2s_linebuffer_depth 8192 CONFIG.c_include_mm2s_dre 0}
+cell video_cdc xilinx.com:ip:axis_clock_converter:1.1 {CONFIG.TDATA_NUM_BYTES 4 \
+    CONFIG.TUSER_WIDTH 1 CONFIG.HAS_TLAST 1 CONFIG.IS_ACLK_ASYNC 1}
 cell pixels xilinx.com:ip:axis_subset_converter:1.1 {CONFIG.S_TDATA_NUM_BYTES 4 \
     CONFIG.M_TDATA_NUM_BYTES 3 CONFIG.TDATA_REMAP {tdata[23:16],tdata[7:0],tdata[15:8]} \
     CONFIG.S_TUSER_WIDTH 1 CONFIG.M_TUSER_WIDTH 1 CONFIG.S_HAS_TLAST 1 CONFIG.M_HAS_TLAST 1}
@@ -61,20 +64,21 @@ bus control/M00_AXI vdma/S_AXI_LITE
 bus control/M01_AXI timing/ctrl
 bus vdma/M_AXI_MM2S memory/S00_AXI
 bus memory/M00_AXI ps7/S_AXI_HP2
-bus vdma/M_AXIS_MM2S pixels/S_AXIS
+bus vdma/M_AXIS_MM2S video_cdc/S_AXIS
+bus video_cdc/M_AXIS pixels/S_AXIS
 bus pixels/M_AXIS video/video_in
 bus timing/vtiming_out video/vtiming_in
 bus video/vid_io_out tmds/RGB
 net ps7/FCLK_CLK0 ps7/M_AXI_GP0_ACLK ps7/S_AXI_HP2_ACLK control/aclk memory/aclk \
     reset_axi/slowest_sync_clk pixel_clock/clk_in1 vdma/s_axi_lite_aclk \
-    vdma/m_axi_mm2s_aclk timing/s_axi_aclk
+    vdma/m_axi_mm2s_aclk vdma/m_axis_mm2s_aclk video_cdc/s_axis_aclk timing/s_axi_aclk
 net ps7/FCLK_RESET0_N reset_axi/ext_reset_in reset_pixel/ext_reset_in pixel_clock/resetn
-net reset_axi/peripheral_aresetn control/aresetn memory/aresetn vdma/axi_resetn timing/s_axi_aresetn
-net pixel_clock/clk_out1 reset_pixel/slowest_sync_clk vdma/m_axis_mm2s_aclk \
+net reset_axi/peripheral_aresetn control/aresetn memory/aresetn vdma/axi_resetn video_cdc/s_axis_aresetn timing/s_axi_aresetn
+net pixel_clock/clk_out1 reset_pixel/slowest_sync_clk video_cdc/m_axis_aclk \
     pixels/aclk video/aclk timing/clk tmds/PixelClk
 net pixel_clock/clk_out2 tmds/SerialClk
 net pixel_clock/locked reset_pixel/dcm_locked
-net reset_pixel/peripheral_aresetn pixels/aresetn video/aresetn timing/resetn tmds/aRst_n
+net reset_pixel/peripheral_aresetn video_cdc/m_axis_aresetn pixels/aresetn video/aresetn timing/resetn tmds/aRst_n
 net zero/dout video/fid
 net one/dout video/aclken video/vid_io_out_ce timing/clken timing/s_axi_aclken
 net video/vtg_ce timing/gen_clken
@@ -107,6 +111,12 @@ open_run impl_1
 report_timing_summary -file $output/timing.rpt
 if {[get_property SLACK [get_timing_paths -delay_type max -max_paths 1]] < 0} { error "Setup timing failed" }
 if {[get_property SLACK [get_timing_paths -delay_type min -max_paths 1]] < 0} { error "Hold timing failed" }
-write_hwdef -force -file $output/system.hdf
-file copy -force $output/vivado/oscill.runs/impl_1/system_wrapper.bit $output/system.bit
-puts "OSCILL HARDWARE READY: $output/system.hdf $output/system.bit"
+set bitstream $root/oscill.runs/impl_1/system_wrapper.bit
+write_hwdef -force -file $output/system.hwdef
+write_sysdef -force -hwdef $output/system.hwdef -bitfile $bitstream $output/system.sysdef
+file copy -force $output/system.sysdef $output/system.hdf
+file copy -force $bitstream $output/system.bit
+file mkdir $root/oscill.sdk
+file copy -force $output/system.hdf $root/oscill.sdk/system_wrapper.hdf
+close_project
+puts "OSCILL HARDWARE READY: $root/oscill.xpr $output/system.hdf $output/system.bit"

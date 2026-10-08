@@ -32,7 +32,7 @@ def script_header(data):
 
 def main(directory):
     boot_header((directory / 'BOOT.BIN').read_bytes())
-    for name in ('boot.scr', 'qspi.scr'):
+    for name in ('boot.scr',):
         script_header((directory / name).read_bytes())
     rootfs = (directory / 'rootfs.squashfs').read_bytes()
     require(rootfs[:4] == b'hsqs', 'SquashFS magic')
@@ -54,25 +54,28 @@ def main(directory):
     flash = (directory / 'qspi.bin').read_bytes()
     require(len(flash) == layout['flash_bytes'] == 16 * 1024 * 1024, 'QSPI length')
     require(hashlib.sha256(flash).hexdigest() == layout['image_sha256'], 'QSPI hash')
-    names = ('BOOT.BIN', 'zImage', 'oscill-zynq7020-qspi.dtb', 'rootfs.squashfs')
+    names = ('BOOT.BIN', 'image.bin')
+    require(len(layout['partitions']) == len(names), 'QSPI partition count')
     end = 0
     for part, name in zip(layout['partitions'], names):
         data = (directory / name).read_bytes()
         start, allocated = part['offset'], part['allocated']
-        require(start == end and start % 65536 == 0 and allocated % 65536 == 0, 'QSPI alignment')
+        require(start >= end and start % 65536 == 0 and allocated % 65536 == 0, 'QSPI alignment')
+        require(flash[end:start] == b'\xff' * (start - end), 'QSPI reserve padding')
         require(len(data) == part['bytes'] <= allocated, 'QSPI partition length')
         require(flash[start:start + len(data)] == data, f'QSPI payload: {name}')
         require(hashlib.sha256(data).hexdigest() == part['sha256'], f'QSPI hash: {name}')
         end = start + allocated
         require(flash[start + len(data):end] == b'\xff' * (allocated - len(data)), 'QSPI padding')
-    script = (directory / 'qspi.scr').read_bytes()
-    start = layout['script_offset']
-    require(end <= layout['settings_offset'] and layout['settings_offset'] + layout['settings_bytes'] <= start,
-            'QSPI settings overlap')
-    require(flash[end:start] == b'\xff' * (start - end), 'QSPI reserves/free space')
-    require(flash[start:start + len(script)] == script, 'QSPI script payload')
-    require(flash[start + len(script):] == b'\xff' * (len(flash) - start - len(script)), 'QSPI script padding')
-    print('PASS: Zynq header, script CRCs, MBR/FAT32, SD rootfs, QSPI payloads/reserves')
+    require(layout['partitions'][0]['offset'] == 0 and layout['partitions'][1]['offset'] == 0x520000,
+            'QSPI boot/FIT offsets')
+    require(end == layout['settings_offset'] == 0xf00000 and layout['settings_bytes'] == 0x100000,
+            'QSPI settings layout')
+    require(flash[end:] == b'\xff' * (len(flash) - end), 'QSPI settings padding')
+    fit = (directory / 'image.bin').read_bytes()
+    require(struct.unpack_from('>I', fit)[0] == 0xd00dfeed, 'FIT header')
+    require(struct.unpack_from('>I', fit, 4)[0] == len(fit), 'FIT length')
+    print('PASS: Zynq header, SD script/MBR/FAT32/rootfs, QSPI FIT payload/reserves')
 
 
 if __name__ == '__main__':

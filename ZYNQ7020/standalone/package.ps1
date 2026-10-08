@@ -37,7 +37,7 @@ $Manifest = [ordered]@{
 }
 $Utf8 = New-Object Text.UTF8Encoding($false)
 [IO.File]::WriteAllText("$Diagnostic/manifest.json", ($Manifest | ConvertTo-Json -Depth 5) + "`n", $Utf8)
-$Xilinx = [IO.File]::ReadAllText("$Diagnostic/sdk/fsbl/src/main.c")
+$Xilinx = [IO.File]::ReadAllText("$Root/ZYNQ7020/oscill.sdk/fsbl/src/main.c")
 $Notice = [regex]::Match($Xilinx,'(?s)/\*.*?\*/').Value
 $Digilent = [IO.File]::ReadAllText("$IpRepository/ip/rgb2dvi/src/rgb2dvi.vhd")
 $Notice = "Xilinx FSBL / standalone BSP`n$Notice`n`nDigilent rgb2dvi`n" + ($Digilent -split '(?m)^library ',2)[0]
@@ -46,5 +46,5 @@ $Launch = [IO.File]::ReadAllText("$Root/docs/BRINGUP.md")
 $Launch = ($Launch -split '## Linux и GUI',2)[0].Trim() + "`n"
 [IO.File]::WriteAllText("$Diagnostic/FIRST-LAUNCH.txt", $Launch, $Utf8)
 Compress-Archive -LiteralPath "$Diagnostic/BOOT.BIN","$Diagnostic/manifest.json",
-    "$Diagnostic/THIRD_PARTY_LICENSES.txt","$Diagnostic/FIRST-LAUNCH.txt" -DestinationPath "$Output/oscill-ddr-hdmi-test.zip" -Force
-Write-Host "Board test package: $Output/oscill-ddr-hdmi-test.zip"
+    "$Diagnostic/THIRD_PARTY_LICENSES.txt","$Diagnostic/FIRST-LAUNCH.txt" -DestinationPath "$Diagnostic/oscill-ddr-hdmi-test.zip" -Force
+Write-Host "Board test package: $Diagnostic/oscill-ddr-hdmi-test.zip"

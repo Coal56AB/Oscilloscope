@@ -8,6 +8,11 @@
 |---|---|
 | Корневой CMake, Release, llvm-mingw 20240619 / Clang 18.1.8 | Windows WinAPI frontend и все переносимые targets собраны |
 | CTest Windows | 4/4: `scope_simulator`, `scope_runtime`, `stm32_controls`, `stm32_controls_uart` |
+| Windows MSVC 19.29 / VS 2019, текущая интеграция Linux | Release собран; CTest 4/4 |
+| Linux GCC 11.4 / SDL2 2.0.20, framebuffer backend | Release собран; CTest 5/5, включая `scope_linux_touch` |
+| Evdev с подменой системных вызовов | Single touch, один и два MT слота, поворот, чтение нескольких пакетов за кадр, SYN_DROPPED, отпускание при disconnect и восстановление активного контакта при reconnect; pointer-устройство отклоняется |
+| Linux display/touch `-Wall -Wextra -Werror` | Без предупреждений |
+| Раздельные каталоги результатов | GUI Windows собран в `ZYNQ7020/gui/output/windows`, CTest 2/2; STM32 host-тесты собраны в `STM32/output/tests/windows`, CTest 2/2; Keil output проверен скриптом проекта; Linux BOOT после переноса совпадает по SHA-256 |
 | CubeMX 6.12.1 / STM32CubeF1 1.8.7 | Проект F103RCT6 сгенерирован; повторная генерация сохраняет USER CODE, прикладные файлы, группы/пути Keil, compiler и output |
 | `python STM32/tests/check_project.py` | PASS: MCU, SWD, UART, clock, точки подключения приложения, исходники/include Keil и каталог результатов |
 | Keil MDK 5.38 / Arm Compiler 6.19 | Все C-модули компилируются без предупреждений; assembler не запускается из-за `A9555E / R207(3): REGISTRY READ ERROR`, итогового Keil HEX/AXF нет |
@@ -34,7 +39,9 @@
 
 `scope_runtime` проверяет CRC16 known vector, фрагментацию/ресинхронизацию UART, duplicate/sequence wrap/gaps, queue overflow, правила владения raw buffers, все три full policies, сохранение узкого импульса min/max при уменьшении до экранных столбцов, raw read/write и CRC corruption, threaded acquisition/processing, STOP и смену масштаба после STOP. STM32 тест проверяет дребезг/переполнение timestamps, DOWN/UP, quadrature cycle, невалидный переход и TX overflow. Assertions в новых тестах действуют и в Release.
 
-В timing report нет внутренних endpoints без ограничений или registers без clock. Внешние задержки приёмника HDMI не заданы; сигнал на разъёме ещё не измерен. В сгенерированном VDMA включён переход между AXI 100 МГц и AXIS 50 МГц. Диагностический тест DDR использует отдельные адресные биты 2…28, walking data и два полных прохода 464 МиБ; перед чтением результатов выполняется ARM `dsb`.
+В timing report нет внутренних endpoints без ограничений или registers без clock. Внешние задержки приёмника HDMI не заданы; сигнал на разъёме ещё не измерен. В текущей сборке VDMA MM2S работает на 100 МГц, отдельный AXI clock converter передаёт поток в видео 50 МГц. Сборка `ZYNQ7020/oscill.xpr` после этого изменения прошла: WNS 1,307 нс, WHS 0,020 нс; SDK собрал FSBL и диагностический BOOT из нового HDF. Диагностический тест DDR использует отдельные адресные биты 2…28, walking data и два полных прохода 464 МиБ; перед чтением результатов выполняется ARM `dsb`.
+
+Комплект с экранным журналом загрузки проверен в QEMU 6.2: U-Boot ELF читает FIT из полного QSPI-образа без SD, проверяет три SHA-256, Linux распаковывает initramfs и автоматически запускает штатные демосигналы с UART diagnostics. Для SD исполнен штатный `boot.scr` с корнем SquashFS. В обоих случаях активная консоль GUI — tty2; `S99oscill stop` завершает процесс и возвращает tty1. Кадры 1024×600 прочитаны из памяти framebuffer; визуально проверены сообщения ядра/rcS перед запуском GUI и сам QSPI GUI с двумя демосигналами. BootROM, FSBL, PL и USB-сенсор этот прогон не проверяет.
 
 `stm32_controls_uart` проверяет HAL busy, неизменность активного буфера,
 подтверждение только после TX complete, повтор ошибки с тем же пакетом,
@@ -74,7 +81,7 @@ FSBL, HDMI bitstream и полный Linux-комплект собраны. GUI 
 
 1. DDR handoff, UART console, восстановление и загрузку QSPI без карты.
 2. HDMI mode/pixel clock и длительную работу около 60 Hz. Первый Linux-комплект копирует кадры в одну framebuffer-поверхность; page flip относится к отдельному DRM backend.
-3. USB Host/VBUS, фактический HID multitouch минимум с двумя контактами, pinch и отсутствие mouse duplicates; reconnect/SYN_DROPPED.
+3. USB Host/VBUS, фактический HID single touch или multitouch, pinch при наличии двух контактов и отсутствие mouse duplicates; reconnect/SYN_DROPPED.
 4. Физический UART STM32, последовательности encoder/down/up/hold/chord, повреждения и разрыв связи.
 5. DMA PL pattern сначала без видео, затем с HDMI и обработкой: 100/200/400 МБ/с, повышенная нагрузка и soak. Полный контроль payload, FIFO/SG/queue counters и cache coherency.
 6. STOP/pretrigger/posttrigger, масштабирование всей сохранённой raw записи, реальную задержку реакции интерфейса.

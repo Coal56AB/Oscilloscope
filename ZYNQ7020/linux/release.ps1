@@ -1,11 +1,10 @@
-param([string]$Output = "$PSScriptRoot/../../output")
+param([string]$Output = "$PSScriptRoot/../output")
 $ErrorActionPreference = 'Stop'
 $Output = [IO.Path]::GetFullPath($Output)
 $Root = [IO.Path]::GetFullPath("$PSScriptRoot/../..")
 $Release = Join-Path $Output 'linux'
 $Names = @('BOOT.BIN','fsbl.elf','boot.scr','zImage','oscill-zynq7020.dtb','rootfs.squashfs',
-           'sdcard.img','qspi.bin','oscill-zynq7020-qspi.dtb','qspi.scr',
-           'qspi-boot.cmd','qspi-partitions.dtso','qspi-layout.json')
+           'sdcard.img','qspi.bin','image.bin','qspi-layout.json')
 foreach ($Name in $Names) {
     if (!(Test-Path -LiteralPath "$Release/$Name" -PathType Leaf)) { throw "Missing $Release/$Name" }
 }
@@ -69,5 +68,5 @@ $Manifest = [ordered]@{
 $Sums += (Get-FileHash -LiteralPath "$Release/manifest.json" -Algorithm SHA256).Hash.ToLowerInvariant() + '  manifest.json'
 [IO.File]::WriteAllText("$Release/SHA256SUMS", ($Sums -join "`n") + "`n", $Utf8)
 $ArchiveFiles = @($Files.Keys | ForEach-Object { "$Release/$_" }) + @("$Release/manifest.json","$Release/SHA256SUMS")
-Compress-Archive -LiteralPath $ArchiveFiles -DestinationPath "$Output/oscill-linux-gui.zip" -Force
-Write-Host "Linux/GUI package: $Output/oscill-linux-gui.zip"
+Compress-Archive -LiteralPath $ArchiveFiles -DestinationPath "$Release/oscill-linux-gui.zip" -Force
+Write-Host "Linux/GUI package: $Release/oscill-linux-gui.zip"
