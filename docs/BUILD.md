@@ -4,6 +4,45 @@
 
 Результаты Zynq находятся в `ZYNQ7020/output/`: `hardware/` — bitstream и handoff, `diagnostic/` — тест платы, `linux/` — Linux и архив релиза, `logs/` — журналы. Сборки GUI располагаются в `ZYNQ7020/gui/output/<платформа>/`, Keil и проверки STM32 — в `STM32/output/`. Общего `output/` в корне репозитория нет.
 
+## Полная сборка Zynq
+
+После подготовки окружения:
+
+1. Закрыть Vivado/SDK с этим проектом и открыть PowerShell в корне репозитория.
+2. Выполнить `./ZYNQ7020/linux/build.ps1` и дождаться `Ready`.
+3. Забрать `qspi.bin`, `sdcard.img` и `oscill-linux-gui.zip` из `ZYNQ7020/output/linux/`.
+
+Скрипт выполняет аппаратную сборку, FSBL, Linux с текущим GUI, упаковку BOOT, SD/QSPI и проверку образов. Для раздельной записи в том же каталоге находятся `BOOT.BIN`, `image.bin` и `fsbl.elf`. Настройки другого окружения можно передать через `-Config /путь/build-environment.json`.
+
+## Подготовка полной сборки Zynq
+
+Выполняется один раз на компьютере:
+
+1. Установить Vivado и SDK **2019.1**, Git и WSL с Ubuntu. В репозитории выполнить `git submodule update --init`.
+2. В Ubuntu установить инструменты и распаковать закреплённую версию Buildroot:
+
+   ```sh
+   sudo apt update
+   sudo apt install build-essential cmake git wget cpio unzip rsync bc bison flex libssl-dev libncurses-dev file python3 dosfstools mtools
+   mkdir -p ~/src
+   cd ~/src
+   wget https://buildroot.org/downloads/buildroot-2025.02.12.tar.xz
+   echo '9c8b7a2a14c74c934ed656988c473b1c01d869cebb5b00525104cc8a65381fb4  buildroot-2025.02.12.tar.xz' | sha256sum -c -
+   tar -xf buildroot-2025.02.12.tar.xz
+   ```
+
+3. В PowerShell из корня репозитория создать настройки сборки:
+
+   ```powershell
+   New-Item -ItemType Directory -Force ZYNQ7020/output | Out-Null
+   Copy-Item ZYNQ7020/linux/build-environment.example.json ZYNQ7020/output/build-environment.json
+   notepad ZYNQ7020/output/build-environment.json
+   ```
+
+   Указать имя WSL-дистрибутива (`wsl --list --quiet`), пользователя Ubuntu, абсолютные Linux-пути к Buildroot и его результатам, корень установки Xilinx. В примере указано используемое здесь окружение `ZynqStudy` / `builder`; на другом компьютере заменить значения. Результаты Buildroot хранить в файловой системе Ubuntu. Этот файл содержит только настройки компьютера, не входит в Git и не заменяет сохранённые конфигурации проекта.
+
+Дальше используется только команда из [полной сборки](#полная-сборка-zynq). Разделы ниже нужны для запуска отдельных этапов и настольных проверок.
+
 ## Windows
 
 MSYS2 UCRT64: GCC, CMake и Ninja. SDL на Windows не нужен, используется существующий WinAPI frontend.

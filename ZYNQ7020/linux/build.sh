@@ -12,6 +12,8 @@ OUTPUT=$2
 case "$OUTPUT" in /*) ;; *) echo 'Output must be absolute' >&2; exit 2;; esac
 grep -q "^export BR2_VERSION := $VERSION$" "$SOURCE/Makefile" || { echo "Buildroot $VERSION required" >&2; exit 1; }
 make -C "$SOURCE" O="$OUTPUT" BR2_EXTERNAL="$SCRIPT_DIR" oscill_zynq_defconfig
+# Local packages are not refreshed automatically by an incremental Buildroot build.
+make -C "$SOURCE" O="$OUTPUT" BR2_EXTERNAL="$SCRIPT_DIR" oscill-dirclean
 make -C "$SOURCE" O="$OUTPUT" BR2_EXTERNAL="$SCRIPT_DIR"
 for OPTION in CONFIG_FB_SIMPLE CONFIG_FB_DEVICE CONFIG_VT_CONSOLE \
     CONFIG_INPUT_EVDEV CONFIG_USB_CHIPIDEA_HOST CONFIG_USB_CHIPIDEA_GENERIC \

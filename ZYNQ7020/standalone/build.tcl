@@ -1,4 +1,5 @@
 # xsct build.tcl /absolute/hardware /absolute/output
+if {[catch {
 if {$argc != 2} { error "Expected hardware directory and software output directory" }
 set here [file dirname [file normalize [info script]]]
 set hardware [file normalize [lindex $argv 0]]
@@ -71,3 +72,7 @@ set stream [open $output/diagnostic.bif w]
 puts $stream "image: {\n  \[bootloader\] \"$output/fsbl.elf\"\n  \"$hardware/system.bit\"\n  \"$output/diagnostic.elf\"\n}"
 close $stream
 puts "Run bootgen -arch zynq -image $output/diagnostic.bif -o $output/BOOT.BIN -w on"
+} message]} {
+    puts stderr "Standalone build failed: $message"
+    exit 1
+}

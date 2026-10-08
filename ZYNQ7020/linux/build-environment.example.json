@@ -1,0 +1,7 @@
+{
+  "distribution": "ZynqStudy",
+  "user": "builder",
+  "buildroot": "/home/builder/src/buildroot-2025.02.12",
+  "linux_output": "/home/builder/build/oscill",
+  "xilinx_root": "C:/Xilinx"
+}
