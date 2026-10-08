@@ -1,3 +1,13 @@
+cmake_minimum_required(VERSION 3.16)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(oscill_controls C)
+    set(CMAKE_C_STANDARD 11)
+    set(CMAKE_C_STANDARD_REQUIRED ON)
+    include(CTest)
+    add_library(control_protocol STATIC ../ZYNQ7020/gui/src/control_protocol.c)
+    target_include_directories(control_protocol PUBLIC ../ZYNQ7020/gui/src)
+endif()
+
 add_library(stm32_controls STATIC Core/Src/controls.c)
 target_include_directories(stm32_controls PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc")
 target_link_libraries(stm32_controls PUBLIC control_protocol)

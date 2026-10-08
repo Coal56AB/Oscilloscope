@@ -78,7 +78,7 @@ PA10 можно оставить неподключённым: приложен�
 ## Генерация и сборка
 
 Открыть `.ioc`, оставить `MDK-ARM V5.32` и выполнить Generate Code. Затем открыть
-`.uvprojx` в Keil и выполнить Rebuild. Результаты Keil направлены в `output/stm32/`
+`.uvprojx` в Keil и выполнить Rebuild. Результаты Keil направлены в `STM32/output/`
 в корне репозитория: `oscill_controls.axf`, `oscill_controls.hex` и map/listing.
 
 Прикладные файлы находятся в группах `Application/Panel` и `Shared/Control protocol`.

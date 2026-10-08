@@ -76,7 +76,7 @@ def check_project():
 
     output = target.findtext("./TargetOption/TargetCommonOption/OutputDirectory")
     require(output is not None, "Output directory missing")
-    require((PROJECT.parent / output.replace("\\", "/")).resolve() == ROOT / "output/stm32",
+    require((PROJECT.parent / output.replace("\\", "/")).resolve() == STM32 / "output",
             "Keil output must stay outside source directories")
 
     sections = user_sections((STM32 / "Core/Src/main.c").read_text(encoding="utf-8-sig"))

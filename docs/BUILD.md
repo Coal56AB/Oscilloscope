@@ -140,9 +140,17 @@ vivado -mode batch -source ZYNQ7020/fpga/simulate.tcl -tclargs /absolute/output/
 
 HDMI bitstream строится отдельно от packer simulation. ADC constraints, clock/CDC, trigger и capture DMA ещё не подключены. Part `xc7z020clg400-1` не подтверждает speed grade установленного кристалла.
 
-Прошивка STM32F103RCT6: открыть `STM32/oscill_controls.ioc` в CubeMX 6.12.1, выполнить Generate Code, затем Rebuild в `STM32/MDK-ARM/oscill_controls.uvprojx` с Arm Compiler 6. HAL/CMSIS находятся в проекте, результаты Keil — в `output/stm32/`. Распиновка, настройки и сохранение приложения при генерации — [STM32.md](STM32.md), запись — [FLASHING.md](FLASHING.md#stm32).
+Прошивка STM32F103RCT6: открыть `STM32/oscill_controls.ioc` в CubeMX 6.12.1, выполнить Generate Code, затем Rebuild в `STM32/MDK-ARM/oscill_controls.uvprojx` с Arm Compiler 6. HAL/CMSIS находятся в проекте, результаты Keil — в `STM32/output/`. Распиновка, настройки и сохранение приложения при генерации — [STM32.md](STM32.md), запись — [FLASHING.md](FLASHING.md#stm32).
 
-Переносимая обработка панели и UART-транспорт входят в корневой CMake/CTest (`stm32_controls`, `stm32_controls_uart`). После генерации проверить конфигурацию и подключение приложения:
+Переносимая обработка панели и UART-транспорт проверяются отдельно (`stm32_controls`, `stm32_controls_uart`):
+
+```sh
+cmake -S STM32 -B STM32/output/tests -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build STM32/output/tests
+ctest --test-dir STM32/output/tests --output-on-failure
+```
+
+После генерации проверить конфигурацию и подключение приложения:
 
 ```sh
 python STM32/tests/check_project.py
