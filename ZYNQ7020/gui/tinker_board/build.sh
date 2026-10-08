@@ -114,6 +114,7 @@ build_target armhf arm-linux-gnueabihf arm-linux-gnueabihf-gcc arm-linux-gnueabi
 build_target arm64 aarch64-linux-gnu aarch64-linux-gnu-gcc aarch64-linux-gnu-strip
 
 cp "$SCRIPT_DIR/README.txt" "$PACKAGE_DIR/README.txt"
+cp "$SCRIPT_DIR/BUILDING.md" "$PACKAGE_DIR/BUILDING.md"
 cp "$SCRIPT_DIR/run.sh" "$PACKAGE_DIR/run.sh"
 cp "$SCRIPT_DIR/START.desktop" "$PACKAGE_DIR/START.desktop"
 cp "$PROJECT_DIR/src/fonts/LICENSE-Inter.txt" "$PACKAGE_DIR/licenses/Inter.txt"

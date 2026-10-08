@@ -43,6 +43,7 @@ OscilGUI-TinkerBoard/
   START.desktop
   run.sh
   README.txt
+  BUILDING.md
   SHA256SUMS.txt
   bin/armhf/scope_preview
   bin/arm64/scope_preview
@@ -53,3 +54,30 @@ OscilGUI-TinkerBoard/
 ```
 
 На Tinker Board распакуйте архив на флешку и дважды нажмите `START.desktop`. Устанавливать компилятор или SDL2 на плату не требуется.
+
+## Параметры запуска и диагностика
+
+START.desktop запускает run.sh как программу, а не открывает его в редакторе.
+Если флешка не разрешает запуск ELF-файлов, run.sh сам скопирует нужную версию
+в ~/.local/share/OscilGUI-TinkerBoard и запустит её оттуда.
+
+Запасной вариант через терминал:
+
+       chmod +x run.sh bin/armhf/scope_preview bin/arm64/scope_preview
+       ./run.sh
+
+Для отладки можно отключить полноэкранный kiosk-режим и вернуть оба окна:
+
+       ./run.sh --windowed
+
+Проверка без открытия окна:
+
+       ./run.sh --snapshot preview.bmp
+       ./run.sh --panel-snapshot panel.bmp
+
+Если появляется ошибка про libX11.so.6 или libXext.so.6, в образе нет базовых
+библиотек графической среды. Для Debian/TinkerOS они устанавливаются командой:
+
+       sudo apt install libx11-6 libxext6
+
+Если uname -m выводит x86_64, пакет запущен не на Tinker Board.
