@@ -337,7 +337,7 @@
               <MiscControls />
               <Define>USE_HAL_DRIVER,STM32F103xE</Define>
               <Undefine />
-              <IncludePath>../Core/Inc;../Core/Oscill;../Drivers/STM32F1xx_HAL_Driver/Inc;../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F1xx/Include;../Drivers/CMSIS/Include;../../ZYNQ7020/gui/src</IncludePath>
+              <IncludePath>../Core/Inc;../Core/Oscill;../AllLibs/PeriphGeneral/Inc;../AllLibs/MyLibs/MyLibs/Inc;../Drivers/STM32F1xx_HAL_Driver/Inc;../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F1xx/Include;../Drivers/CMSIS/Include;../../ZYNQ7020/gui/src</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -546,6 +546,11 @@
               <FileType>5</FileType>
               <FilePath>../Core/Oscill/oscill_main.h</FilePath>
             </File>
+            <File>
+              <FileName>mylibs_config.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../Core/Oscill/mylibs_config.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -555,6 +560,31 @@
               <FileName>control_protocol.c</FileName>
               <FileType>1</FileType>
               <FilePath>../../ZYNQ7020/gui/src/control_protocol.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Libraries/PeriphGeneral</GroupName>
+          <Files>
+            <File>
+              <FileName>general_gpio.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../AllLibs/PeriphGeneral/Src/general_gpio.c</FilePath>
+            </File>
+            <File>
+              <FileName>general_gpio.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../AllLibs/PeriphGeneral/Inc/general_gpio.h</FilePath>
+            </File>
+            <File>
+              <FileName>general_encoder.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../AllLibs/PeriphGeneral/Src/general_encoder.c</FilePath>
+            </File>
+            <File>
+              <FileName>general_encoder.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../AllLibs/PeriphGeneral/Inc/general_encoder.h</FilePath>
             </File>
           </Files>
         </Group>

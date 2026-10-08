@@ -41,6 +41,9 @@ def check_project():
         "PA14.Signal": "SYS_JTCK-SWCLK",
         "PA9.Signal": "USART1_TX",
         "PA10.Signal": "USART1_RX",
+        "PC7.Signal": "GPIO_Output",
+        "PC7.GPIO_Label": "LED_RUN",
+        "PC7.PinState": "GPIO_PIN_RESET",
         "RCC.PLLSourceVirtual": "RCC_PLLSOURCE_HSI_DIV2",
         "RCC.PLLMUL": "RCC_PLL_MUL16",
         "RCC.APB1CLKDivider": "RCC_HCLK_DIV2",
@@ -65,6 +68,9 @@ def check_project():
         require((STM32 / "Core/Oscill" / name).resolve() in paths, f"Application source lost: {name}")
     require((ROOT / "ZYNQ7020/gui/src/control_protocol.c").resolve() in paths,
             "Shared codec source lost")
+    for name in ("general_gpio.c", "general_encoder.c"):
+        require((STM32 / "AllLibs/PeriphGeneral/Src" / name).resolve() in paths,
+                f"Library source lost: {name}")
 
     includes = target.findtext("./TargetOption/TargetArmAds/Cads/VariousControls/IncludePath")
     require(includes is not None, "Keil include paths missing")
@@ -74,6 +80,8 @@ def check_project():
         require(path.is_dir(), f"Include directory missing: {path}")
     require((ROOT / "ZYNQ7020/gui/src").resolve() in include_paths, "Shared codec include lost")
     require((STM32 / "Core/Oscill").resolve() in include_paths, "Application include lost")
+    for directory in ("AllLibs/PeriphGeneral/Inc", "AllLibs/MyLibs/MyLibs/Inc"):
+        require((STM32 / directory).resolve() in include_paths, f"Library include lost: {directory}")
 
     output = target.findtext("./TargetOption/TargetCommonOption/OutputDirectory")
     require(output is not None, "Output directory missing")

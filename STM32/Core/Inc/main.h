@@ -69,6 +69,8 @@ void Error_Handler(void);
 #define RUN_GPIO_Port GPIOB
 #define MENU_Pin GPIO_PIN_15
 #define MENU_GPIO_Port GPIOB
+#define LED_RUN_Pin GPIO_PIN_7
+#define LED_RUN_GPIO_Port GPIOC
 #define FUNC_A_Pin GPIO_PIN_8
 #define FUNC_A_GPIO_Port GPIOC
 #define FUNC_B_Pin GPIO_PIN_9

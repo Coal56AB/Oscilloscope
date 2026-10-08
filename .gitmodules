@@ -2,3 +2,9 @@
 	path = PCB
 	url = https://github.com/Coal56AB/OscilPCB.git
 	branch = master
+[submodule "STM32/AllLibs/PeriphGeneral"]
+	path = STM32/AllLibs/PeriphGeneral
+	url = https://git.rd12.ru/Templates/STM32_General.git
+[submodule "STM32/AllLibs/MyLibs"]
+	path = STM32/AllLibs/MyLibs
+	url = https://git.rd12.ru/Templates/ExtendedLibs.git

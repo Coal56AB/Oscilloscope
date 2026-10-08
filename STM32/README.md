@@ -8,13 +8,14 @@
 - `Core/Oscill/` — приложение контроллера панели.
 - `Core/Inc/`, `Core/Src/` — код настройки микроконтроллера.
 - `Drivers/` — HAL и CMSIS.
+- `AllLibs/` — субмодули библиотек кнопок, светодиодов и энкодеров.
 - `MDK-ARM/` — готовый проект Keil и startup.
 - `tests/` — проверки логики на ПК.
 - `output/` — прошивка и файлы отладки.
 
 ## Как собрать прошивку
 
-Подготовка: установить Keil MDK с Arm Compiler 6.19 и пакетом `Keil.STM32F1xx_DFP.2.4.0`.
+Подготовка: установить Keil MDK с Arm Compiler 6.19 и пакетом `Keil.STM32F1xx_DFP.2.4.0`; из корня репозитория выполнить `git submodule update --init --recursive`.
 
 1. Открыть `MDK-ARM/oscill_controls.uvprojx` в Keil.
 2. Выполнить **Project → Rebuild all target files**.
