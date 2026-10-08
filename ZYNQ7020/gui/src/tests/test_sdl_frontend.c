@@ -6,6 +6,38 @@
 #undef main
 #include <assert.h>
 
+static void test_fft_fine_touch(void)
+{
+    int mode;
+    for(mode=SCOPE_CURSOR_TIME;mode<=SCOPE_CURSOR_VOLTAGE;++mode){
+        int x=300,y=SCOPE_PLOT_Y+45,initial,delta,coarse;
+        demo_signal_init(&demo);
+        demo_signal_ui_open_menu(&demo,DEMO_MENU_PROCESSING);
+        demo_signal_ui_menu_choose(&demo,4,1);
+        demo_signal_ui_dismiss_menu(&demo);
+        demo_signal_ui_cycle_cursor_mode(&demo);
+        if(mode==SCOPE_CURSOR_VOLTAGE)demo_signal_ui_cycle_cursor_mode(&demo);
+        lcd_touch_begin(x,y);
+        assert(touch.zone==TOUCH_FFT_CURSOR);
+        initial=mode==SCOPE_CURSOR_TIME?demo.screen.fft_cursor_x:demo.screen.fft_cursor_level;
+        touch_move(x+8,y-8);
+        coarse=(mode==SCOPE_CURSOR_TIME?demo.screen.fft_cursor_x:demo.screen.fft_cursor_level)-initial;
+        lcd_touch_end(y-8);
+        demo_signal_ui_move_fft_cursor(&demo,initial);
+        demo_signal_ui_toggle_fine(&demo);
+        lcd_touch_begin(x+20,y+3);
+        /* Grabbing in FINE selects the cursor without jumping to the finger. */
+        assert((mode==SCOPE_CURSOR_TIME?demo.screen.fft_cursor_x:demo.screen.fft_cursor_level)==initial);
+        touch_move(x+28,y-5);
+        delta=mode==SCOPE_CURSOR_TIME?8:scope_screen_fft_level_at(&demo.screen,y-5)-scope_screen_fft_level_at(&demo.screen,y+3);
+        assert((mode==SCOPE_CURSOR_TIME?demo.screen.fft_cursor_x:demo.screen.fft_cursor_level)==initial+delta/4);
+        assert(abs(delta/4)<abs(coarse));
+        touch_move(x+20,y+3);
+        assert((mode==SCOPE_CURSOR_TIME?demo.screen.fft_cursor_x:demo.screen.fft_cursor_level)==initial);
+        lcd_touch_end(y+3);
+    }
+}
+
 int main(void)
 {
     char directory[]="/dev/shm/oscill-export-XXXXXX", path[PATH_MAX];
@@ -16,6 +48,7 @@ int main(void)
     expected=malloc(SCOPE_WIDTH*SCOPE_HEIGHT*sizeof(*expected));
     assert(screen_pixels && expected);
     panel_enabled=0;
+    test_fft_fine_touch();
     demo_signal_init(&demo);
     demo_signal_zoom_time(&demo,-6); /* Default 10 kHz signal at 10 ms/div. */
     assert(strcmp(demo.screen.time_scale,"10 ms")==0);

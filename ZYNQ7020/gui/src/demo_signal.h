@@ -176,6 +176,8 @@ void demo_signal_ui_apply_trigger(DemoSignal *demo);
 void demo_signal_ui_pan_time(DemoSignal *demo, int delta);
 void demo_signal_ui_move_cursor(DemoSignal *demo, int coordinate);
 void demo_signal_ui_move_fft_cursor(DemoSignal *demo, int coordinate);
+void demo_signal_ui_drag_fft_cursor(DemoSignal *demo, int coordinate, int previous,
+                                    int *fine_remainder);
 void demo_signal_ui_select_cursor(DemoSignal *demo, int selected);
 void demo_signal_ui_cycle_cursor_mode(DemoSignal *demo);
 void demo_signal_ui_cycle_trigger_mode(DemoSignal *demo);

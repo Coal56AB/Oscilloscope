@@ -600,8 +600,12 @@ static void touch_move(int x, int y)
     if(touch.zone==TOUCH_MENU_DRAG)motion_threshold=3;
     if(!touch.active)return;
     if(touch.zone==TOUCH_FFT_CURSOR){
-        if(x!=touch.last_x||y!=touch.last_y){demo_signal_ui_move_fft_cursor(&demo,
-            demo.screen.cursor_mode==SCOPE_CURSOR_VOLTAGE?scope_screen_fft_level_at(&demo.screen,y):x-SCOPE_PLOT_X);
+        if(x!=touch.last_x||y!=touch.last_y){
+            int vertical=demo.screen.cursor_mode==SCOPE_CURSOR_VOLTAGE;
+            int coordinate=vertical?scope_screen_fft_level_at(&demo.screen,y):x-SCOPE_PLOT_X;
+            int previous=vertical?scope_screen_fft_level_at(&demo.screen,touch.last_y):touch.last_x-SCOPE_PLOT_X;
+            demo_signal_ui_drag_fft_cursor(&demo,coordinate,previous,
+                vertical?&touch.fine_y_remainder:&touch.fine_x_remainder);
             touch.last_x=x;touch.last_y=y;touch.moved=1;invalidate();}
         return;
     }
@@ -708,8 +712,11 @@ static void lcd_touch_begin(int x, int y)
     touch.x=touch.last_x=x;touch.y=touch.last_y=y;touch.remainder=0;
     touch.fine_x_remainder=touch.fine_y_remainder=touch.zoom_pan_remainder=0;
     touch.axis=touch.moved=touch.long_done=0;touch.since=now_ms();touch.active=1;
-    if(touch.zone==TOUCH_FFT_CURSOR){demo_signal_ui_move_fft_cursor(&demo,
-        demo.screen.cursor_mode==SCOPE_CURSOR_VOLTAGE?scope_screen_fft_level_at(&demo.screen,y):x-SCOPE_PLOT_X);invalidate();}
+    if(touch.zone==TOUCH_FFT_CURSOR){
+        if(demo.screen.fine_mode)demo_signal_ui_select_cursor(&demo,SCOPE_CURSOR_SELECT_FFT);
+        else demo_signal_ui_move_fft_cursor(&demo,demo.screen.cursor_mode==SCOPE_CURSOR_VOLTAGE?
+            scope_screen_fft_level_at(&demo.screen,y):x-SCOPE_PLOT_X);
+        invalidate();}
     if(touch.zone==TOUCH_PLOT_CURSOR){int c=demo.screen.cursor_mode==SCOPE_CURSOR_TIME?x-SCOPE_PLOT_X:touch_plot_y(y);
         demo_signal_ui_select_cursor(&demo,abs(c-demo.screen.cursor_b)<abs(c-demo.screen.cursor_a));}
 }

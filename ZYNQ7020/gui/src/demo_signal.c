@@ -187,6 +187,18 @@ void demo_signal_ui_move_fft_cursor(DemoSignal *demo, int coordinate)
     update_fft_cursor(demo);
 }
 
+void demo_signal_ui_drag_fft_cursor(DemoSignal *demo, int coordinate, int previous,
+                                    int *fine_remainder)
+{
+    if (demo->screen.fine_mode) {
+        int delta = coordinate - previous + *fine_remainder;
+        *fine_remainder = delta % 4;
+        coordinate = (demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE ?
+                      demo->screen.fft_cursor_level : demo->screen.fft_cursor_x) + delta / 4;
+    } else *fine_remainder = 0;
+    demo_signal_ui_move_fft_cursor(demo, coordinate);
+}
+
 void demo_signal_set_fft_range(DemoSignal *demo, double span_hz)
 {
     char sampling[24], step[24];
