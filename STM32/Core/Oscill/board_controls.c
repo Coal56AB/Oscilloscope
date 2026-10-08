@@ -53,6 +53,9 @@ void board_controls_init(void)
     {
       Error_Handler();
     }
+    switches[i].Sw_FilterDelay = 0U;
+    GPIO_Read_Switch(&switches[i]);
+    switches[i].tickprev = 0U;
     switches[i].Sw_FilterDelay = 5U;
   }
   for (i = 0; i < STM32_ENCODER_COUNT; ++i)
@@ -80,11 +83,12 @@ void board_controls_poll(Stm32Controls *controls, uint32_t now_ms)
   for (i = 0; i < CONTROL_ID_COUNT; ++i)
   {
     uint32_t previous = switches[i].Sw_CurrentState;
+    uint32_t changed_ms = switches[i].tickprev;
     int pressed = GPIO_Read_Switch(&switches[i]);
     if (pressed >= 0 && (uint32_t)pressed != previous)
     {
       stm32_controls_input(controls, pressed ? CONTROL_DOWN : CONTROL_UP, i, 0,
-                           switches[i].tickprev);
+                           changed_ms ? changed_ms : now_ms);
     }
   }
   for (i = 0; i < STM32_ENCODER_COUNT; ++i)

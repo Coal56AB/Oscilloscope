@@ -31,8 +31,7 @@ STM32/
 `AllLibs/MyLibs` — из [ExtendedLibs](https://git.rd12.ru/Templates/ExtendedLibs.git).
 Версии закреплены gitlink; подготовка рабочей копии — `git submodule update --init --recursive`.
 Конфигурация HAL и времени находится в `Core/Oscill/mylibs_config.h`.
-`GPIO_Read_Switch` подтверждает устойчивый уровень в течение `Sw_FilterDelay`,
-включая отпускание. `Encoder_Init` принимает порты и пины A/B и число переходов
+`GPIO_Read_Switch` используется с фильтром `Sw_FilterDelay`. `Encoder_Init` принимает порты и пины A/B и число переходов
 на детент. `Encoder_Update(&encoder)` сама читает GPIO, обрабатывает фазы
 и возвращает −1, 0 или +1. Библиотека не зависит от номеров каналов, очереди
 или UART; каждая кнопка и энкодер имеют собственное состояние.

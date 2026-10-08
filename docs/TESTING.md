@@ -37,7 +37,7 @@
 | ARM GUI в Linux | Процесс работает с `--fb /dev/fb0 --touch auto`; кадр прочитан из framebuffer и визуально проверен |
 | `tests/verify_release.py` и чтение FAT32 через mtools | PASS: Zynq header/checksum, CRC скриптов, MBR/FAT32, все загрузочные файлы, rootfs, payloads и свободные области QSPI |
 
-`scope_runtime` проверяет CRC16 known vector, фрагментацию/ресинхронизацию UART, duplicate/sequence wrap/gaps, queue overflow, правила владения raw buffers, все три full policies, сохранение узкого импульса min/max при уменьшении до экранных столбцов, raw read/write и CRC corruption, threaded acquisition/processing, STOP и смену масштаба после STOP. STM32 тест проверяет дребезг/переполнение timestamps, DOWN/UP, quadrature cycle, невалидный переход и TX overflow. Assertions в новых тестах действуют и в Release.
+`scope_runtime` проверяет CRC16 known vector, фрагментацию/ресинхронизацию UART, duplicate/sequence wrap/gaps, queue overflow, правила владения raw buffers, все три full policies, сохранение узкого импульса min/max при уменьшении до экранных столбцов, raw read/write и CRC corruption, threaded acquisition/processing, STOP и смену масштаба после STOP. STM32 тест проверяет приём DOWN/UP и шагов энкодера, переполнение timestamps и TX overflow. Assertions в новых тестах действуют и в Release.
 
 В timing report нет внутренних endpoints без ограничений или registers без clock. Внешние задержки приёмника HDMI не заданы; сигнал на разъёме ещё не измерен. В текущей сборке VDMA MM2S работает на 100 МГц, отдельный AXI clock converter передаёт поток в видео 50 МГц. Сборка `ZYNQ7020/oscill.xpr` после этого изменения прошла: WNS 1,307 нс, WHS 0,020 нс; SDK собрал FSBL и диагностический BOOT из нового HDF. Диагностический тест DDR использует отдельные адресные биты 2…28, walking data и два полных прохода 464 МиБ; перед чтением результатов выполняется ARM `dsb`.
 
@@ -48,23 +48,6 @@
 потерянный IRQ, переполнение tick и callback во время запуска HAL.
 ARM-проверка STM32 использует Flash 256 КиБ / SRAM 48 КиБ; аппаратных результатов
 для панели, частоты HSI и USART пока нет.
-
-## Библиотеки панели, 9 октября 2026
-
-Windows MSVC Release: 4/4 — `stm32_controls`, `stm32_controls_uart`,
-`stm32_panel`, `stm32_encoder`. Проверены настоящая карта GPIO и общие библиотеки:
-устойчивое нажатие/отпускание, дребезг, tick=0 и переполнение времени, направления
-вращения, все начальные фазы и 1–4 перехода на детент, неверные переходы,
-полярность LED_RUN и сохранение соседнего выхода. GPIO заменён управляемыми
-уровнями; испытания платы не выполнялись.
-
-CubeMX 6.12.1 повторно сгенерировал проект с PC7/LED_RUN. `check_project.py`
-подтвердил USER CODE, группы, файлы и include-пути Keil, включая субмодули.
-GNU Arm 15.2.1 собрал и слинковал текущий список C-файлов Keil с GCC startup.
-Для существующих предупреждений библиотек `comment`, `unused-variable` и
-`sign-compare` оставлены предупреждения вместо `-Werror`. Проверочный ELF создан
-в `STM32/output/validation/arm`; это не Keil release. Текущий запуск Keil
-прерван до компиляции: среда не находит Arm Compiler V6.19.
 
 ## Сохранение изображения исходного GUI
 
