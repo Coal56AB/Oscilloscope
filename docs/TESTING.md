@@ -7,7 +7,11 @@
 | Проверка | Результат |
 |---|---|
 | Корневой CMake, Release, llvm-mingw 20240619 / Clang 18.1.8 | Windows WinAPI frontend и все переносимые targets собраны |
-| CTest Windows | 3/3: `scope_simulator`, `scope_runtime`, `stm32_controls` |
+| CTest Windows | 4/4: `scope_simulator`, `scope_runtime`, `stm32_controls`, `stm32_controls_uart` |
+| CubeMX 6.12.1 / STM32CubeF1 1.8.7 | Проект F103RCT6 сгенерирован; повторная генерация сохраняет USER CODE, прикладные файлы, группы/пути Keil, compiler и output |
+| `python STM32/tests/check_project.py` | PASS: MCU, SWD, UART, clock, точки подключения приложения, исходники/include Keil и каталог результатов |
+| Keil MDK 5.38 / Arm Compiler 6.19 | Все C-модули компилируются без предупреждений; assembler не запускается из-за `A9555E / R207(3): REGISTRY READ ERROR`, итогового Keil HEX/AXF нет |
+| GNU Arm 15.2.1, Cortex-M3, `-Wall -Wextra -Werror` | Все C-файлы из Keil-проекта скомпилированы и слинкованы с официальным GCC startup F103xE; ELF/HEX созданы отдельно для проверки, это не результат линковки Keil |
 | ARM Linux GCC 8.2.0, Cortex-A9 / NEON / hard-float | SDL frontend, runtime, Zynq adapter и evdev собраны и слинкованы в вариантах DRM и framebuffer; framebuffer собирается без libdrm |
 | Target SDL2 2.30.12 | ARM static library собрана из исходников |
 | Target libdrm 2.4.124, Meson 1.7.2 | ARM static library собрана из исходников |
@@ -31,6 +35,12 @@
 `scope_runtime` проверяет CRC16 known vector, фрагментацию/ресинхронизацию UART, duplicate/sequence wrap/gaps, queue overflow, правила владения raw buffers, все три full policies, сохранение узкого импульса min/max при уменьшении до экранных столбцов, raw read/write и CRC corruption, threaded acquisition/processing, STOP и смену масштаба после STOP. STM32 тест проверяет дребезг/переполнение timestamps, DOWN/UP, quadrature cycle, невалидный переход и TX overflow. Assertions в новых тестах действуют и в Release.
 
 В timing report нет внутренних endpoints без ограничений или registers без clock. Внешние задержки приёмника HDMI не заданы; сигнал на разъёме ещё не измерен. В сгенерированном VDMA включён переход между AXI 100 МГц и AXIS 50 МГц. Диагностический тест DDR использует отдельные адресные биты 2…28, walking data и два полных прохода 464 МиБ; перед чтением результатов выполняется ARM `dsb`.
+
+`stm32_controls_uart` проверяет HAL busy, неизменность активного буфера,
+подтверждение только после TX complete, повтор ошибки с тем же пакетом,
+потерянный IRQ, переполнение tick и callback во время запуска HAL.
+ARM-проверка STM32 использует Flash 256 КиБ / SRAM 48 КиБ; аппаратных результатов
+для панели, частоты HSI и USART пока нет.
 
 ## Сохранение изображения исходного GUI
 

@@ -140,4 +140,12 @@ vivado -mode batch -source ZYNQ7020/fpga/simulate.tcl -tclargs /absolute/output/
 
 HDMI bitstream строится отдельно от packer simulation. ADC constraints, clock/CDC, trigger и capture DMA ещё не подключены. Part `xc7z020clg400-1` не подтверждает speed grade установленного кристалла.
 
-Переносимая логика STM32 и её тест входят в корневой CMake. `STM32/controls.h` принимает нормализованные состояния пяти энкодеров и одиннадцати кнопок; BSP должен читать GPIO, вызывать обработку и передавать пакет неблокирующим UART. В схеме обнаружена маркировка STM32F103RCT6, но pin mapping и фактический модуль ещё требуют проверки; загрузочный HAL-проект не создан. Подготовка прошивки — [FLASHING.md](FLASHING.md).
+Прошивка STM32F103RCT6: открыть `STM32/oscill_controls.ioc` в CubeMX 6.12.1, выполнить Generate Code, затем Rebuild в `STM32/MDK-ARM/oscill_controls.uvprojx` с Arm Compiler 6. HAL/CMSIS находятся в проекте, результаты Keil — в `output/stm32/`. Распиновка, настройки и сохранение приложения при генерации — [STM32.md](STM32.md), запись — [FLASHING.md](FLASHING.md#stm32).
+
+Переносимая обработка панели и UART-транспорт входят в корневой CMake/CTest (`stm32_controls`, `stm32_controls_uart`). После генерации проверить конфигурацию и подключение приложения:
+
+```sh
+python STM32/tests/check_project.py
+```
+
+Фактически выполненные сборки и ограничение установленного Keil — [TESTING.md](TESTING.md).

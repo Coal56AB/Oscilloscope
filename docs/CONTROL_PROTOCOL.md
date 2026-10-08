@@ -37,6 +37,6 @@ Heartbeat формируется раз в секунду. Serial worker не б
 
 ## Переносимая сторона STM32
 
-`STM32/controls.h/c` принимает нормализованные GPIO состояния, а не номера pins. Quadrature decoder учитывает последовательные переходы и invalid jumps; configurable 1…4 перехода/детент. Buttons используют configurable debounce и сохраняют timestamp начала устойчивого перехода, включая wrap uptime. TX ring: 64 события. UART adapter берёт packet через `peek` и удаляет через `sent` только после принятия асинхронным передатчиком.
+`STM32/Core/Inc/controls.h` и `STM32/Core/Src/controls.c` принимают нормализованные GPIO состояния, а не номера pins. Quadrature decoder учитывает последовательные переходы и invalid jumps; configurable 1…4 перехода/детент. Buttons используют configurable debounce и сохраняют timestamp начала устойчивого перехода, включая wrap uptime. TX ring: 64 события. UART adapter берёт packet через `peek` и удаляет через `sent` после TX complete; при ошибке повторяет событие с тем же sequence.
 
-HAL, GPIO pin mapping и UART DMA для STM32F103RCT6 не добавлены без проверки электрических соединений. Формирование событий и codec уже проверяются тестами без платы; физическое управление — следующий уровень проверки.
+CubeMX/HAL проект STM32F103RCT6 читает входы по Interfaces.SchDoc и передаёт пакеты через USART1 в режиме IT. Настройка и таблица GPIO — [STM32.md](STM32.md). Формирование событий, codec и асинхронный UART проверяются без платы; физическое управление остаётся аппаратной проверкой.

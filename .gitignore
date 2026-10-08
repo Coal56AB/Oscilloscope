@@ -5,3 +5,7 @@
 /ZYNQ7020/fpga/*.log
 __pycache__/
 *.pyc
+/STM32/MDK-ARM/oscill_controls/
+/STM32/MDK-ARM/RTE/
+/STM32/MDK-ARM/*.uvguix.*
+/STM32/MDK-ARM/*.uvgui.*

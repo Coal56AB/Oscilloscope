@@ -34,7 +34,7 @@ static int valid(const ControlEvent *e)
         return e->control < 5 && e->value && e->value >= -4096 && e->value <= 4096;
     return (e->type == CONTROL_DOWN || e->type == CONTROL_UP) && e->value == 0;
 }
-int control_encode(uint8_t *p, const ControlEvent *e)
+int control_encode(uint8_t p[CONTROL_PACKET_SIZE], const ControlEvent *e)
 {
     if (!p || !e || !valid(e))
         return 0;
