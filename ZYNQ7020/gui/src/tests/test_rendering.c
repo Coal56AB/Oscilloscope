@@ -50,6 +50,33 @@ static void test_cursor_table_and_fft_overlay(uint32_t *pixels, int stride)
     assert(pixels[y * stride + 80] == 0xffc44d);
 }
 
+static void test_trace_width(uint32_t *pixels, int stride)
+{
+    int zoom, split, x, y, colored;
+    demo_signal_init(&demo);
+    demo.screen.ch2_enabled = 0;
+    demo.screen.measurement_count = 0;
+    demo.screen.channel_zero_y[0] = 350;
+    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x)
+        demo.ch1[x] = demo.minimum[0][x] = demo.maximum[0][x] = 210;
+    for (zoom = 0; zoom < 2; ++zoom) {
+        demo.screen.zoom_enabled = (uint8_t)zoom;
+        for (split = 70; split <= 250; split += 90) {
+            demo.screen.split_height = split;
+            scope_screen_render(pixels, stride, &demo.screen);
+            colored = 0;
+            {
+                int top = SCOPE_PLOT_Y + (zoom ? split : 0);
+                int height = SCOPE_PLOT_HEIGHT - (zoom ? split : 0);
+                int expected = top + 210 * height / SCOPE_PLOT_HEIGHT;
+                for (y = expected - 6; y <= expected + 6; ++y)
+                    if (pixels[y * stride + 100] == 0xffc44d) ++colored;
+            }
+            assert(colored == 1); /* One monitor pixel in every layout. */
+        }
+    }
+}
+
 static void test_fft_cursor_label(uint32_t *pixels, int stride)
 {
     int side, x, y;
@@ -246,6 +273,7 @@ int main(void)
     int mode, menu, x, width;
     assert(pixels);
     test_corner_composition();
+    test_trace_width(pixels, SCOPE_WIDTH + 3);
     test_trigger_icons(pixels, SCOPE_WIDTH + 3);
     test_lowercase_n(pixels, SCOPE_WIDTH + 3);
     test_cursor_table_and_fft_overlay(pixels, SCOPE_WIDTH + 3);

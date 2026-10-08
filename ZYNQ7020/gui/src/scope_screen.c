@@ -561,16 +561,14 @@ static void channel_zero_marker(int y, const char *label, uint32_t background, u
 static void trace_segment(int x0, int a, int x1, int b, uint32_t shadow, uint32_t color)
 {
     if (x0 == x1) {
-        pixel(x0, a - 2, shadow);
-        pixel(x0, b + 2, shadow);
-        fill(x0, a - 1, 1, b - a + 3, color);
+        pixel(x0, a - 1, shadow);
+        pixel(x0, b + 1, shadow);
+        fill(x0, a, 1, b - a + 1, color);
         return;
     }
-    line(x0, a - 2, x1, b - 2, shadow);
-    line(x0, a + 2, x1, b + 2, shadow);
-    line(x0, a - 1, x1, b - 1, color);
+    line(x0, a - 1, x1, b - 1, shadow);
+    line(x0, a + 1, x1, b + 1, shadow);
     line(x0, a, x1, b, color);
-    line(x0, a + 1, x1, b + 1, color);
 }
 
 static int trace_y(int y)

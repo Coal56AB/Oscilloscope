@@ -1,16 +1,24 @@
 #include "spectrum_bins.h"
 #include "capture_processor.h"
+#include "waveform_view.h"
 #include <math.h>
 #include <string.h>
-static int16_t pixel_y(double volts, double zero, double scale)
-{
-    double y = zero - volts * scale;
-    return (int16_t)(y < 0 ? 0 : y > SCOPE_PLOT_HEIGHT - 1 ? SCOPE_PLOT_HEIGHT - 1 : y);
-}
 static double sample_voltage(const CaptureBuffer *b, size_t sample, unsigned channel)
 {
     return ((double)b->data[2 * sample + channel] - b->zero_code[channel]) *
            b->volts_per_code[channel];
+}
+static void source_range(const void *context, size_t first, size_t end, unsigned channel,
+                         double *minimum, double *maximum)
+{
+    const CaptureBuffer *b = context;
+    size_t i;
+    *minimum = *maximum = sample_voltage(b, first, channel);
+    for (i = first + 1; i < end; ++i) {
+        double value = sample_voltage(b, i, channel);
+        if (value < *minimum) *minimum = value;
+        if (value > *maximum) *maximum = value;
+    }
 }
 int capture_value_at(const CaptureBuffer *b, size_t sample, unsigned channel, double *volts)
 {
@@ -78,7 +86,7 @@ static void spectrum(const CaptureBuffer *b, const CaptureView *v, unsigned ch, 
 int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *f)
 {
     unsigned ch;
-    size_t x;
+    WaveformSource source;
     uint64_t start_ns = scope_clock_ns();
     if (!capture_buffer_valid(b) || !v || !f || !v->samples || v->start >= b->bytes / 2 ||
         v->samples > b->bytes / 2 - v->start)
@@ -87,6 +95,9 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         if (!isfinite(b->volts_per_code[ch]) || !isfinite(b->zero_code[ch]) ||
             !isfinite(v->pixels_per_volt[ch]) || !isfinite(v->zero_y[ch]))
             return 0;
+    source.context = b;
+    source.samples = b->bytes / 2;
+    source.range = source_range;
     memset(f, 0, sizeof(*f));
     f->sequence = b->sequence;
     f->sample_rate_hz = b->sample_rate_hz;
@@ -126,29 +137,9 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         if (crossings > 1 && last > first)
             f->frequency_hz[ch] = (double)(crossings - 1) * b->sample_rate_hz / (last - first);
         f->duty[ch] = 100.0 * high / v->samples;
-        for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
-            size_t a = x * (v->samples / SCOPE_PLOT_WIDTH) +
-                       x * (v->samples % SCOPE_PLOT_WIDTH) / SCOPE_PLOT_WIDTH;
-            size_t end = (x + 1) * (v->samples / SCOPE_PLOT_WIDTH) +
-                         (x + 1) * (v->samples % SCOPE_PLOT_WIDTH) / SCOPE_PLOT_WIDTH;
-            double low, upper, value;
-            if (end <= a)
-                end = a + 1;
-            if (end > v->samples)
-                end = v->samples;
-            low = sample_voltage(b, v->start + a, ch);
-            upper = low;
-            for (i = a + 1; i < end; ++i) {
-                value = sample_voltage(b, v->start + i, ch);
-                if (value < low)
-                    low = value;
-                if (value > upper)
-                    upper = value;
-            }
-            f->y_min[ch][x] = pixel_y(upper, v->zero_y[ch], v->pixels_per_volt[ch]);
-            f->y_max[ch][x] = pixel_y(low, v->zero_y[ch], v->pixels_per_volt[ch]);
-            f->y[ch][x] = pixel_y((low + upper) * 0.5, v->zero_y[ch], v->pixels_per_volt[ch]);
-        }
+        waveform_view_reduce(&source, (double)v->start, (double)v->samples, ch,
+                             v->zero_y[ch], v->pixels_per_volt[ch], SCOPE_PLOT_WIDTH,
+                             f->y[ch], f->y_min[ch], f->y_max[ch]);
         spectrum(b, v, ch, f->fft[ch]);
     }
     f->processing_ns = scope_clock_ns() - start_ns;

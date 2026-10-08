@@ -11,13 +11,19 @@ option(SCOPE_ENABLE_ZYNQ "Enable the Linux Zynq capture adapter" OFF)
 option(SCOPE_BUILD_BENCHMARKS "Build synthetic capture and renderer benchmarks" ON)
 find_package(Threads REQUIRED)
 
+add_library(waveform_view STATIC src/waveform_view.c)
+target_include_directories(waveform_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+if(NOT MSVC)
+    target_link_libraries(waveform_view PUBLIC m)
+endif()
+
 add_library(control_protocol STATIC src/control_protocol.c)
 target_include_directories(control_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 add_library(scope_runtime STATIC
     src/scope_thread.c src/capture.c src/capture_processor.c src/capture_file.c
     src/capture_pipeline.c src/control_transport.c src/control_serial.c)
 target_include_directories(scope_runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(scope_runtime PUBLIC control_protocol Threads::Threads)
+target_link_libraries(scope_runtime PUBLIC control_protocol Threads::Threads waveform_view)
 if(WIN32)
     target_compile_definitions(scope_runtime PUBLIC _WIN32_WINNT=0x0602)
 endif()
@@ -36,7 +42,7 @@ add_library(boot_splash STATIC logo/boot_splash.c)
 target_include_directories(boot_splash PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/logo")
 
 add_library(scope_screen STATIC src/scope_screen.c src/rounded_box.c)
-target_link_libraries(scope_screen PUBLIC boot_splash)
+target_link_libraries(scope_screen PUBLIC boot_splash waveform_view)
 target_include_directories(scope_screen PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 include(CTest)

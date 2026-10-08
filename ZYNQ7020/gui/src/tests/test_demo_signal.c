@@ -116,6 +116,28 @@ static void test_zoom_source_detail(void)
     assert(memcmp(overview, demo.ch1, sizeof(overview)) == 0);
 }
 
+static void test_zoom_noise_source_grid(void)
+{
+    static DemoSignal demo;
+    int x, changes = 0, longest = 0, run = 0;
+    int16_t stopped[SCOPE_PLOT_WIDTH];
+    demo_signal_init(&demo);
+    demo_signal_ui_toggle_run(&demo);
+    demo_signal_ui_toggle_zoom(&demo);
+    demo_signal_zoom_time(&demo, 100);
+    assert(strcmp(demo.screen.time_scale, "500 ns") == 0);
+    for (x = 1; x < SCOPE_PLOT_WIDTH; ++x) {
+        if (demo.ch2[x] != demo.ch2[x - 1]) { ++changes; run = 0; }
+        else if (++run > longest) longest = run;
+    }
+    /* Source noise must not repeat for the width of a former overview pixel. */
+    assert(changes > 400 && longest < 15);
+    memcpy(stopped, demo.ch2, sizeof(stopped));
+    demo_signal_zoom_time(&demo, -1);
+    demo_signal_zoom_time(&demo, 1);
+    assert(memcmp(stopped, demo.ch2, sizeof(stopped)) == 0);
+}
+
 static void test_measurements_beside_cursors(void)
 {
     static DemoSignal demo;
@@ -341,6 +363,7 @@ int main(void)
 
     test_time_range_and_csv_scale();
     test_zoom_source_detail();
+    test_zoom_noise_source_grid();
     test_measurements_beside_cursors();
     test_cursor_precision();
     test_compressed_generator();

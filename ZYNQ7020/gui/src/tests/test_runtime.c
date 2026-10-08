@@ -186,6 +186,31 @@ static void processor_short_pulse_test(void)
         }
     }
 }
+static void processor_zoom_source_test(void)
+{
+    uint8_t data[8192], original[8192];
+    CaptureBuffer buffer = {0};
+    CaptureView view = {0, 4096, {200, 330}, {100, 100}};
+    DisplayFrame frame;
+    size_t x;
+    buffer.data = data;
+    buffer.capacity = sizeof(data);
+    fill(&buffer, 1);
+    memset(data, 128, sizeof(data));
+    data[2 * 2048] = 255;
+    memcpy(original, data, sizeof(data));
+    assert(capture_process(&buffer, &view, &frame));
+    assert(frame.y_min[0][512] == 73 && frame.y_max[0][512] == 200);
+    view.start = 2047;
+    view.samples = 4;
+    assert(capture_process(&buffer, &view, &frame));
+    assert(frame.y[0][0] == 200 && frame.y[0][256] == 73 && frame.y[0][512] == 200);
+    assert(frame.y[0][128] == 136); /* Between original samples, not compressed min/max. */
+    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x)
+        assert(frame.y_min[0][x] == frame.y_max[0][x]);
+    assert(!memcmp(original, data, sizeof(data)) && frame.sequence == 1);
+}
+
 static void processor_fft_test(void)
 {
     static const unsigned frequencies[] = {10, 201, 400, 511, 512};
@@ -267,6 +292,7 @@ int main(void)
     ring_test();
     processor_file_test();
     processor_short_pulse_test();
+    processor_zoom_source_test();
     processor_fft_test();
     pipeline_test();
     return 0;

@@ -1,5 +1,6 @@
 #include "demo_signal.h"
 #include "spectrum_bins.h"
+#include "waveform_view.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -10,6 +11,8 @@
 #define PI 3.14159265358979323846
 #define PLOT_MIDDLE (SCOPE_PLOT_HEIGHT / 2)
 #define PIXELS_PER_DIV (SCOPE_PLOT_HEIGHT / 8.0)
+/* Simulated source grid, independent of screen width and time/div. */
+#define GENERATOR_SAMPLE_US 0.005
 
 #ifndef DEMO_ENABLE_GENERATOR
 #define DEMO_ENABLE_GENERATOR 1
@@ -279,7 +282,7 @@ static void update_trigger_positions(DemoSignal *demo)
         8, SCOPE_PLOT_HEIGHT - 9);
 }
 
-static double generator_noise(uint32_t sequence, int x, int channel)
+static uint32_t generator_noise_code(uint32_t sequence, size_t x, int channel)
 {
     uint32_t value = (uint32_t)x * 0x9e3779b9u ^
                      sequence * 0x85ebca6bu ^
@@ -287,11 +290,16 @@ static double generator_noise(uint32_t sequence, int x, int channel)
     value ^= value >> 16;
     value *= 0x7feb352du;
     value ^= value >> 15;
-    return (value & 0xffffu) / 65535.0;
+    return value;
+}
+
+static double generator_noise(uint32_t sequence, size_t x, int channel)
+{
+    return (generator_noise_code(sequence, x, channel) & 0xffffu) / 65535.0;
 }
 
 static double generator_value(DemoWaveShape shape, double t, double period,
-                              uint32_t sequence, int x, int channel)
+                              uint32_t sequence, size_t x, int channel)
 {
     double p = fmod(t, period) / period;
     if (p < 0.0) p += 1.0;
@@ -322,7 +330,7 @@ static double generator_value(DemoWaveShape shape, double t, double period,
 /* Extrema over one display column, including edges hidden between its ends.
    Periodic signals need only their turning points, even at very slow sweeps. */
 static void generator_range(DemoWaveShape shape, double t, double duration, double period,
-                            uint32_t sequence, int x, int channel, double *low, double *high)
+                            uint32_t sequence, size_t x, int channel, double *low, double *high)
 {
     static const double turning_points[DEMO_WAVE_COUNT][7] = {
         {0.0, 0.02, 0.50, 0.52}, {0.25, 0.75}, {0.0, 0.5}, {0.0},
@@ -406,15 +414,9 @@ static int trigger_crossing_available(const DemoSignal *demo)
     return find_trigger_crossing(demo, falling, &crossing_us);
 }
 
-static int sample_noise(uint32_t sequence, int x, int channel)
+static int sample_noise(uint32_t sequence, size_t x, int channel)
 {
-    uint32_t value = (uint32_t)x * 0x9e3779b9u ^
-                     sequence * 0x85ebca6bu ^
-                     (uint32_t)(channel + 1) * 0xc2b2ae35u;
-    value ^= value >> 16;
-    value *= 0x7feb352du;
-    value ^= value >> 15;
-    return (int)(value % 7u) - 3;
+    return (int)(generator_noise_code(sequence, x, channel) % 7u) - 3;
 }
 
 static void filter_samples(int16_t *samples, int level)
@@ -493,47 +495,61 @@ static void update_spectrum(DemoSignal *demo)
     spectrum(demo->ch2, demo->fft_ch2);
 }
 
-/* Evaluate the source again at the selected timestamps, before screen reduction. */
+static double generator_source_value(const DemoSignal *demo, size_t index, unsigned channel)
+{
+    double t = demo->capture_start_us + index * GENERATOR_SAMPLE_US;
+    double amplitude = channel ? 1.60 : 1.20;
+    double noise_scale = channel ? 1.0 / 60.0 : 1.0 / 120.0;
+    return amplitude * generator_value((DemoWaveShape)demo->capture_wave[channel],
+        t + (channel ? demo->capture_period_us * 0.2 : 0.0),
+        demo->capture_period_us, demo->source_sequence, index, channel) -
+        sample_noise(demo->source_sequence, index, channel) * noise_scale;
+}
+
+static void generator_source_range(const void *context, size_t first, size_t end,
+                                   unsigned channel, double *minimum, double *maximum)
+{
+    const DemoSignal *demo = context;
+    size_t i;
+    if (end - first <= 64) {
+        *minimum = *maximum = generator_source_value(demo, first, channel);
+        for (i = first + 1; i < end; ++i) {
+            double value = generator_source_value(demo, i, channel);
+            if (value < *minimum) *minimum = value;
+            if (value > *maximum) *maximum = value;
+        }
+    } else {
+        /* Analytic bounds keep very long synthetic captures inexpensive.
+           Real records use exact ranges of the stored ADC samples. */
+        double low, high, amplitude = channel ? 1.60 : 1.20;
+        double noise = channel ? 0.05 : 0.025;
+        generator_range((DemoWaveShape)demo->capture_wave[channel],
+            demo->capture_start_us + first * GENERATOR_SAMPLE_US +
+            (channel ? demo->capture_period_us * 0.2 : 0.0),
+            (end - first - 1) * GENERATOR_SAMPLE_US, demo->capture_period_us,
+            demo->source_sequence, first, channel, &low, &high);
+        if (demo->capture_wave[channel] == DEMO_WAVE_NOISE) { low = 0.0; high = 1.0; }
+        *minimum = amplitude * low - noise;
+        *maximum = amplitude * high + noise;
+    }
+}
+
+/* Both demo and ADC records reduce their source interval through waveform_view. */
 static void render_generator_view(DemoSignal *demo, double start_us, double us_per_pixel)
 {
-    double height1 = 1.20 * PIXELS_PER_DIV / volts_per_div(demo, 0);
-    double height2 = 1.60 * PIXELS_PER_DIV / volts_per_div(demo, 1);
-    int zero1 = channel_zero(demo, 0), zero2 = channel_zero(demo, 1);
-    double period = demo->capture_period_us;
+    WaveformSource source;
     int x;
-    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
-        double t = start_us + x * us_per_pixel;
-        int source_x = (int)floor((t - demo->capture_start_us) / demo->capture_step_us + 1e-7);
-        double duty1 = generator_value((DemoWaveShape)demo->capture_wave[0],
-                                       t, period, demo->source_sequence, source_x, 0);
-        double duty2 = generator_value((DemoWaveShape)demo->capture_wave[1],
-                                       t + period * 0.2, period,
-                                       demo->source_sequence, source_x, 1);
-        double y1 = zero1 - height1 * duty1;
-        double y2 = zero2 - height2 * duty2;
-        if (demo->coupling[0] == 1)
-            y1 = zero1 + height1 * (0.5 - duty1);
-        if (demo->coupling[1] == 1)
-            y2 = zero2 + height2 * (0.5 - duty2);
-        y1 += sample_noise(demo->source_sequence, source_x, 0);
-        y2 += sample_noise(demo->source_sequence, source_x, 1);
-        demo->ch1[x] = (int16_t)y1;
-        demo->ch2[x] = (int16_t)y2;
-        {
-            int channel;
-            for (channel = 0; channel < 2; ++channel) {
-                double low, high;
-                double height = channel ? height2 : height1;
-                double base = (channel ? zero2 : zero1) +
-                              (demo->coupling[channel] ? height * 0.5 : 0.0) +
-                              sample_noise(demo->source_sequence, source_x, channel);
-                generator_range((DemoWaveShape)demo->capture_wave[channel],
-                                t + (channel ? period * 0.2 : 0.0), us_per_pixel, period,
-                                demo->source_sequence, source_x, channel, &low, &high);
-                demo->minimum[channel][x] = (int16_t)(base - height * high);
-                demo->maximum[channel][x] = (int16_t)(base - height * low);
-            }
-        }
+    source.context = demo;
+    source.samples = (size_t)ceil(SCOPE_PLOT_WIDTH * demo->capture_step_us / GENERATOR_SAMPLE_US);
+    source.range = generator_source_range;
+    for (x = 0; x < 2; ++x) {
+        double scale = PIXELS_PER_DIV / volts_per_div(demo, x);
+        double zero = channel_zero(demo, x) +
+                      (demo->coupling[x] ? (x ? 1.60 : 1.20) * scale * 0.5 : 0.0);
+        waveform_view_reduce(&source, (start_us - demo->capture_start_us) / GENERATOR_SAMPLE_US,
+                             SCOPE_PLOT_WIDTH * us_per_pixel / GENERATOR_SAMPLE_US,
+                             x, zero, scale, SCOPE_PLOT_WIDTH, x ? demo->ch2 : demo->ch1,
+                             demo->minimum[x], demo->maximum[x]);
     }
     filter_samples(demo->ch1, demo->filter_level[0]);
     filter_samples(demo->ch2, demo->filter_level[1]);
@@ -610,9 +626,24 @@ static void apply_zoom_view(DemoSignal *demo)
         (demo->saved_trigger_marker_x - start) * ratio), 0, SCOPE_PLOT_WIDTH - 1);
 }
 
+static void loaded_source_range(const void *context, size_t first, size_t end,
+                                unsigned channel, double *minimum, double *maximum)
+{
+    const DemoSignal *demo = context;
+    const int16_t *values = channel ? demo->saved_ch2 : demo->saved_ch1;
+    size_t i;
+    *minimum = *maximum = -values[first];
+    for (i = first + 1; i < end; ++i) {
+        double value = -values[i];
+        if (value < *minimum) *minimum = value;
+        if (value > *maximum) *maximum = value;
+    }
+}
+
 static void apply_loaded_view(DemoSignal *demo)
 {
     const DemoWaveCapture *wave = &demo->loaded_wave;
+    WaveformSource source = {demo, SCOPE_PLOT_WIDTH, loaded_source_range};
     double step = loaded_view_step(demo);
     double width, start, max_start;
     int channel, x;
@@ -634,14 +665,8 @@ static void apply_loaded_view(DemoSignal *demo)
                        (original[x] - wave->zero_y[channel]) * ratio),
                        INT16_MIN, INT16_MAX);
         filter_samples(full, demo->filter_level[channel]);
-        for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
-            double position = fmin(start + x * step, SCOPE_PLOT_WIDTH - 1);
-            int source = (int)position;
-            int next = clamp(source + 1, 0, SCOPE_PLOT_WIDTH - 1);
-            visible[x] = (int16_t)lround(full[source] +
-                          (full[next] - full[source]) * (position - source));
-            demo->minimum[channel][x] = demo->maximum[channel][x] = visible[x];
-        }
+        waveform_view_reduce(&source, start, width, channel, 0.0, 1.0, SCOPE_PLOT_WIDTH,
+                             visible, demo->minimum[channel], demo->maximum[channel]);
     }
     demo->screen.zoom_window_start = (int)start;
     demo->screen.zoom_window_end = (int)(start + width);
