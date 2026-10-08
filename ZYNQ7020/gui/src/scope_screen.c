@@ -811,7 +811,7 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         text(PLOT_X + 9, PLOT_Y + overview_height + 3,
              "FULL CAPTURE", 2, white);
         text(PLOT_X + 839, PLOT_Y + overview_height + 3,
-             screen->time_scale, 2, yellow);
+             "ZOOM", 2, yellow);
         fill(0, PLOT_Y + screen->split_height - 2,
              SCOPE_WIDTH, 4, RGB(126, 143, 185));
         fill(492, PLOT_Y + screen->split_height - 5,
