@@ -784,6 +784,7 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
     fill(0, 50, SCOPE_WIDTH, SCOPE_BOTTOM_Y - 50, RGB(8, 9, 16));
     fill(PLOT_X, PLOT_Y, SCOPE_PLOT_WIDTH, SCOPE_PLOT_HEIGHT, RGB(7, 8, 14));
     if (screen->zoom_enabled) {
+        const char *zoom_label = screen->zoom_label ? screen->zoom_label : "ZOOM";
         int overview_height = screen->split_height - 26;
         int start = screen->zoom_window_start;
         int end = screen->zoom_window_end;
@@ -808,8 +809,8 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
              RGB(31, 38, 64));
         text(PLOT_X + 9, PLOT_Y + overview_height + 3,
              "FULL CAPTURE", 2, white);
-        text(PLOT_X + 839, PLOT_Y + overview_height + 3,
-             "ZOOM", 2, yellow);
+        text(PLOT_X + SCOPE_PLOT_WIDTH - 12 - text_width(zoom_label, 2),
+             PLOT_Y + overview_height + 3, zoom_label, 2, yellow);
         fill(0, PLOT_Y + screen->split_height - 2,
              SCOPE_WIDTH, 4, RGB(126, 143, 185));
         fill(492, PLOT_Y + screen->split_height - 5,

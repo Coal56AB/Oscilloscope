@@ -66,6 +66,7 @@ typedef struct {
     const char *ch1_input;
     const char *ch2_input;
     const char *time_scale;
+    const char *zoom_label;
     const char *horizontal_position;
     const char *trigger_mode;
     const char *trigger_source;

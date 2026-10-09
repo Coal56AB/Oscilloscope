@@ -1138,6 +1138,7 @@ static void update_text(DemoSignal *demo, int regenerate)
         format_time_value(demo->time_text, sizeof(demo->time_text),
                           current_time_us_per_div(demo));
     else format_time_scale(demo->time_text, sizeof(demo->time_text), demo->time_index);
+    snprintf(demo->zoom_text, sizeof(demo->zoom_text), "ZOOM x%.7g", zoom_ratio(demo));
     snprintf(demo->horizontal_position_text, sizeof(demo->horizontal_position_text),
              "M POS %+d", demo->time_position);
     snprintf(demo->trigger_source_text, sizeof(demo->trigger_source_text), "CH%d %s",
@@ -1153,6 +1154,7 @@ static void update_text(DemoSignal *demo, int regenerate)
     demo->screen.ch1_input = demo->ch_input_text[0];
     demo->screen.ch2_input = demo->ch_input_text[1];
     demo->screen.time_scale = demo->time_text;
+    demo->screen.zoom_label = demo->zoom_text;
     demo->screen.horizontal_position = demo->horizontal_position_text;
     demo->screen.ch_position_mode[0] = (uint8_t)demo->position_mode[0];
     demo->screen.ch_position_mode[1] = (uint8_t)demo->position_mode[1];

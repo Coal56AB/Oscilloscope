@@ -86,6 +86,7 @@ typedef struct {
     char edit_scale_text[20];
     char ch_input_text[2][20];
     char time_text[20];
+    char zoom_text[24];
     char horizontal_position_text[24];
     char trigger_level_text[20];
     char trigger_preview_text[20];
