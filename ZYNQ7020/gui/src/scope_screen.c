@@ -715,6 +715,27 @@ static void spectrum_trace(const uint8_t *bins, int height, uint32_t color)
     }
 }
 
+static void status_overlay(const ScopeScreen *screen)
+{
+    active_rounding = SCOPE_WINDOW_RADIUS;
+    if (screen->status_visible && screen->status_message && screen->status_message[0]) {
+        int width = (int)strlen(screen->status_message) * 12 + 24;
+        int left;
+        int top = screen->cursor_measurement_count ? 97 : SCOPE_PLOT_Y + 3;
+        uint32_t background = screen->status_warning ? RGB(83, 25, 34) : RGB(26, 33, 55);
+        uint32_t border = screen->status_warning ? RGB(245, 93, 109) : RGB(124, 143, 185);
+        uint32_t foreground = screen->status_warning ? RGB(255, 219, 223) : RGB(229, 240, 242);
+        if (width > SCOPE_WIDTH - 12) width = SCOPE_WIDTH - 12;
+        left = (SCOPE_WIDTH - width) / 2;
+        draw_alpha = screen->status_alpha ? screen->status_alpha : 255;
+        rounded_fill(left, top, width, 25, background);
+        rounded_frame(left, top, width, 25, border);
+        text(left + 12, top + 6, screen->status_message, 2, foreground);
+        rounded_done();
+        draw_alpha = 255;
+    }
+}
+
 void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen)
 {
     const uint32_t yellow = RGB(255, 196, 77);
@@ -758,6 +779,8 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         rounded_frame(872, 546, 140, 44, RGB(105, 119, 173));
         text(942 - text_width("BACK", 2) / 2, 561, "BACK", 2, white);
         rounded_done();
+        status_overlay(screen);
+        assert(rounded_depth == 0);
         return;
     }
     {
@@ -1182,22 +1205,6 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         text(title_x + 10, title_y + 6, screen->browser_title, 2, white);
         rounded_done();
     }
-    if (screen->status_visible && screen->status_message && screen->status_message[0]) {
-        int width = (int)strlen(screen->status_message) * 12 + 24;
-        int left;
-        int top = screen->cursor_measurement_count ? 97 : SCOPE_PLOT_Y + 3;
-        uint32_t background = screen->status_warning ? RGB(83, 25, 34) : RGB(26, 33, 55);
-        uint32_t border = screen->status_warning ? RGB(245, 93, 109) : RGB(124, 143, 185);
-        uint32_t foreground = screen->status_warning ? RGB(255, 219, 223) : white;
-        if (width > SCOPE_WIDTH - 12) width = SCOPE_WIDTH - 12;
-        left = (SCOPE_WIDTH - width) / 2;
-        draw_alpha = screen->status_alpha ? screen->status_alpha : 255;
-        rounded_fill(left, top, width, 25, background);
-        rounded_frame(left, top, width, 25, border);
-        text(left + 12, top + 6, screen->status_message, 2, foreground);
-        rounded_done();
-        draw_alpha = 255;
-    }
     active_rounding = SCOPE_WINDOW_RADIUS;
     if (screen->measurement_menu) {
         rounded_fill(20, 74, 984, SCOPE_BOTTOM_Y - 84, RGB(17, 19, 31));
@@ -1395,5 +1402,6 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         }
     }
 
+    status_overlay(screen);
     assert(rounded_depth == 0);
 }
