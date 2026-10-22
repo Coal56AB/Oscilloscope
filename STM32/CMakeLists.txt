@@ -8,9 +8,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     target_include_directories(control_protocol PUBLIC ../ZYNQ7020/gui/src)
 endif()
 
-add_library(stm32_controls STATIC Core/Oscill/controls.c)
+add_library(stm32_controls STATIC Core/Oscill/controls.c Core/Oscill/panel_state.c)
 target_include_directories(stm32_controls PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Core/Oscill")
 target_link_libraries(stm32_controls PUBLIC control_protocol)
+# Host checks cover normal operation independently of the firmware debug setting.
+target_compile_definitions(stm32_controls PUBLIC STM32_STANDALONE_DEBUG=0)
 if(BUILD_TESTING)
     add_executable(stm32_controls_test tests/test_controls.c)
     target_link_libraries(stm32_controls_test PRIVATE stm32_controls)
@@ -20,5 +22,34 @@ if(BUILD_TESTING)
     target_include_directories(stm32_controls_uart_test PRIVATE tests/fakes)
     target_link_libraries(stm32_controls_uart_test PRIVATE stm32_controls)
     add_test(NAME stm32_controls_uart COMMAND stm32_controls_uart_test)
+
+    add_executable(stm32_panel_test tests/test_panel_state.c)
+    target_link_libraries(stm32_panel_test PRIVATE stm32_controls)
+    add_test(NAME stm32_panel COMMAND stm32_panel_test)
+
+    add_executable(stm32_panel_standalone_test tests/test_panel_state.c
+        Core/Oscill/panel_state.c Core/Oscill/controls.c)
+    target_include_directories(stm32_panel_standalone_test PRIVATE Core/Oscill)
+    target_compile_definitions(stm32_panel_standalone_test PRIVATE STM32_STANDALONE_DEBUG=1)
+    target_link_libraries(stm32_panel_standalone_test PRIVATE control_protocol)
+    add_test(NAME stm32_panel_standalone COMMAND stm32_panel_standalone_test)
+
+    add_executable(stm32_outputs_test tests/test_board_outputs.c Core/Oscill/board_outputs.c)
+    target_include_directories(stm32_outputs_test PRIVATE tests/fakes Core/Oscill)
+    add_test(NAME stm32_outputs COMMAND stm32_outputs_test)
+
+    if(UNIX AND TARGET scope_runtime)
+        add_executable(stm32_panel_link_test tests/test_panel_link.c)
+        target_link_libraries(stm32_panel_link_test PRIVATE stm32_controls scope_runtime)
+        target_link_options(stm32_panel_link_test PRIVATE -Wl,--wrap=write)
+        add_test(NAME stm32_panel_link COMMAND stm32_panel_link_test)
+        add_executable(stm32_panel_standalone_link_test tests/test_panel_link.c
+            Core/Oscill/panel_state.c Core/Oscill/controls.c)
+        target_include_directories(stm32_panel_standalone_link_test PRIVATE Core/Oscill)
+        target_compile_definitions(stm32_panel_standalone_link_test PRIVATE STM32_STANDALONE_DEBUG=1)
+        target_link_libraries(stm32_panel_standalone_link_test PRIVATE control_protocol scope_runtime)
+        target_link_options(stm32_panel_standalone_link_test PRIVATE -Wl,--wrap=write)
+        add_test(NAME stm32_panel_standalone_link COMMAND stm32_panel_standalone_link_test)
+    endif()
 
 endif()

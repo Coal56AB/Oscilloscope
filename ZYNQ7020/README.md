@@ -1,6 +1,6 @@
 # ZYNQ7020 — экран и основное приложение осциллографа
 
-Проект для Zynq-7020: аппаратная часть FPGA, Linux и приложение на C. Выводит интерфейс 1024 × 600 через HDMI, обрабатывает USB-сенсор. Штатная сборка запускает GUI с демосигналами.
+Проект для Zynq-7020: аппаратная часть FPGA, Linux и приложение на C. Выводит интерфейс 1024 × 600 через HDMI, обрабатывает USB-сенсор и панель STM32 через USB–UART. Штатная сборка запускает GUI с демосигналами.
 
 ![Интерфейс осциллографа](gui/docs/images/preview.png)
 
@@ -18,6 +18,6 @@
 
 1. Закрыть Vivado/SDK с этим проектом и открыть PowerShell в корне репозитория `Oscill`.
 2. Запустить `./ZYNQ7020/linux/build.ps1` и дождаться `Ready`.
-3. Забрать файлы из `ZYNQ7020/output/linux/`: `qspi.bin` — образ QSPI, `sdcard.img` — образ SD, `oscill-linux-gui.zip` — комплект прошивки.
+3. Забрать `BOOT.BIN`, `image.bin`, `qspi.bin` и `fsbl.elf` для SDK Program Flash из `ZYNQ7020/output/linux/`.
 
 Запись на плату — [FLASHING.md](../docs/FLASHING.md#zynq-7020), запуск Windows-предпросмотра — [документация GUI](gui/README.md).

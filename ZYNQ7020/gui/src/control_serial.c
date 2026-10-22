@@ -11,10 +11,10 @@ static SerialHandle open_serial(const char *device, unsigned baud)
 {
     HANDLE h;
     DCB dcb;
-    COMMTIMEOUTS timeout = {MAXDWORD, 0, 0, 0, 0};
+    COMMTIMEOUTS timeout = {MAXDWORD, 0, 0, 0, 50};
     char path[280];
     snprintf(path, sizeof(path), "\\\\.\\%s", device);
-    h = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+    h = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
     if (h == INVALID_HANDLE_VALUE)
         return h;
     memset(&dcb, 0, sizeof(dcb));
@@ -50,10 +50,17 @@ static int read_serial(SerialHandle h, uint8_t *data, size_t size)
     return (int)got;
 }
 static void close_serial(SerialHandle h) { CloseHandle(h); }
+static int write_serial(SerialHandle h, const uint8_t *data, size_t size)
+{
+    DWORD sent = 0;
+    if (!WriteFile(h, data, (DWORD)size, &sent, NULL)) return -1;
+    return (int)sent;
+}
 #else
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include "linux_serial.h"
 #include <termios.h>
 #include <unistd.h>
 typedef int SerialHandle;
@@ -63,41 +70,8 @@ static SerialHandle open_serial(const char *device, unsigned baud)
     int fd;
     struct termios options;
     speed_t speed;
-    switch (baud) {
-    case 9600:
-        speed = B9600;
-        break;
-    case 19200:
-        speed = B19200;
-        break;
-    case 38400:
-        speed = B38400;
-        break;
-    case 57600:
-        speed = B57600;
-        break;
-    case 115200:
-        speed = B115200;
-        break;
-#ifdef B230400
-    case 230400:
-        speed = B230400;
-        break;
-#endif
-#ifdef B460800
-    case 460800:
-        speed = B460800;
-        break;
-#endif
-#ifdef B921600
-    case 921600:
-        speed = B921600;
-        break;
-#endif
-    default:
-        return -1;
-    }
-    fd = open(device, O_RDONLY | O_NOCTTY | O_NONBLOCK);
+    if (!linux_serial_speed(baud, &speed)) return -1;
+    fd = open(device, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0)
         return -1;
     if (tcgetattr(fd, &options) < 0) {
@@ -134,7 +108,48 @@ static int read_serial(SerialHandle fd, uint8_t *data, size_t size)
     return n == 0 ? -1 : (int)n;
 }
 static void close_serial(SerialHandle h) { close(h); }
+static int write_serial(SerialHandle fd, const uint8_t *data, size_t size)
+{
+    ssize_t n = write(fd, data, size);
+    if (n < 0) return errno == EAGAIN || errno == EINTR ? 0 : -1;
+    return (int)n;
+}
 #endif
+
+/* Coalesce GUI requests before serialization. Never change an active packet. */
+static int next_command(SerialControlTransport *t, uint16_t *sequence, uint32_t now,
+                        uint8_t packet[CONTROL_PACKET_SIZE])
+{
+    ControlEvent event = {CONTROL_SET_RUN, 255, 0, 0, 0};
+    unsigned bit;
+    scope_mutex_lock(&t->mutex);
+    for (bit = 0; bit < 5 && !(t->command_dirty & (1U << bit)); ++bit) {}
+    if (bit == 5) { scope_mutex_unlock(&t->mutex); return 0; }
+    t->command_dirty &= ~(1U << bit);
+    if (bit == 0) event.value = t->run;
+    else if (bit < 3) {
+        event.type = CONTROL_SET_ENCODER_MODE;
+        event.control = (uint8_t)(bit - 1);
+        event.value = t->position_mode[bit - 1];
+    } else {
+        event.type = CONTROL_SET_SCALE;
+        event.control = (uint8_t)(bit - 3);
+        event.value = t->requested_scale[bit - 3];
+    }
+    scope_mutex_unlock(&t->mutex);
+    event.sequence = (*sequence)++;
+    event.timestamp_ms = now;
+    return control_encode(packet, &event);
+}
+
+static void refresh_configuration(SerialControlTransport *t)
+{
+    scope_mutex_lock(&t->mutex);
+    if (t->run_valid) t->command_dirty |= 1U;
+    if (t->mode_valid[0]) t->command_dirty |= 2U;
+    if (t->mode_valid[1]) t->command_dirty |= 4U;
+    scope_mutex_unlock(&t->mutex);
+}
 static int stopping(SerialControlTransport *t)
 {
     int stop;
@@ -148,42 +163,73 @@ static void serial_worker(void *context)
     SerialControlTransport *t = context;
     SerialHandle h = SERIAL_INVALID;
     uint64_t next_open = 0, last = 0, seen_gaps = 0;
+    uint64_t next_configuration = 0, tx_started = 0;
+    uint16_t command_sequence = 0;
+    uint8_t tx_packet[CONTROL_PACKET_SIZE];
+    size_t tx_offset = CONTROL_PACKET_SIZE;
+    char device[256] = "";
+    int identified = 0;
     while (!stopping(t)) {
         uint64_t now = scope_clock_ns() / 1000000;
         uint8_t data[1024];
         ControlParser before;
-        int n, i;
+        int n, i, read_failed;
         if (h == SERIAL_INVALID) {
             if (now < next_open) {
                 scope_sleep_ms(20);
                 continue;
             }
             next_open = now + 500;
-            h = open_serial(t->device, t->baud);
+#ifndef _WIN32
+            if (!strcmp(t->device, "auto")) {
+                char previous[sizeof(device)];
+                strcpy(previous, device);
+                if (!linux_serial_next_usb("/dev", previous, device, sizeof(device)))
+                    continue;
+            } else
+#endif
+                strcpy(device, t->device);
+            h = open_serial(device, t->baud);
             if (h == SERIAL_INVALID)
                 continue;
             control_parser_init(&t->parser);
             seen_gaps = 0;
             last = now;
+            tx_offset = CONTROL_PACKET_SIZE;
+            next_configuration = 0;
+            identified = 0;
             scope_mutex_lock(&t->mutex);
             ++t->metrics.reconnects;
+            strcpy(t->metrics.device, device);
             scope_mutex_unlock(&t->mutex);
         }
         before = t->parser;
         n = read_serial(h, data, sizeof(data));
+        read_failed = n < 0;
         for (i = 0; i < n; ++i) {
             ControlEvent e;
             if (control_parser_feed(&t->parser, data[i], &e)) {
+                if (e.type != CONTROL_ROTATE && e.type != CONTROL_DOWN && e.type != CONTROL_UP &&
+                    e.type != CONTROL_HEARTBEAT && e.type != CONTROL_SCALE && e.type != CONTROL_POWER)
+                    continue;
                 if (t->parser.sequence_gaps != seen_gaps) {
                     control_queue_reset(t->transport.queue);
                     seen_gaps = t->parser.sequence_gaps;
                 }
                 last = now;
+                identified = 1;
                 if (e.type != CONTROL_HEARTBEAT)
                     control_queue_push(t->transport.queue, &e);
                 scope_mutex_lock(&t->mutex);
                 t->metrics.last_received_ms = now;
                 t->metrics.connected = 1;
+                if (e.type == CONTROL_POWER) {
+                    t->metrics.power_mv = e.value;
+                    t->metrics.power_received_ms = now;
+                } else if (e.type == CONTROL_SCALE) {
+                    t->metrics.scale_mv[e.control] = e.value;
+                    t->metrics.scale_valid |= (uint8_t)(1U << e.control);
+                }
                 scope_mutex_unlock(&t->mutex);
             }
         }
@@ -194,13 +240,35 @@ static void serial_worker(void *context)
         t->metrics.sequence_gaps += t->parser.sequence_gaps - before.sequence_gaps;
         t->metrics.duplicates += t->parser.duplicates - before.duplicates;
         scope_mutex_unlock(&t->mutex);
+        if (now >= next_configuration) {
+            refresh_configuration(t);
+            next_configuration = now + 500;
+        }
+        if (identified && n >= 0 && tx_offset == CONTROL_PACKET_SIZE &&
+            next_command(t, &command_sequence, (uint32_t)now, tx_packet)) {
+            tx_offset = 0;
+            tx_started = now;
+        }
+        if (n >= 0 && tx_offset < CONTROL_PACKET_SIZE) {
+            int sent = write_serial(h, tx_packet + tx_offset, CONTROL_PACKET_SIZE - tx_offset);
+            if (sent < 0 || now - tx_started > 500) {
+                scope_mutex_lock(&t->mutex);
+                ++t->metrics.write_errors;
+                scope_mutex_unlock(&t->mutex);
+                n = -1;
+            } else tx_offset += (size_t)sent;
+        }
         if (n < 0 || now - last > 2000) {
             close_serial(h);
             h = SERIAL_INVALID;
             control_queue_reset(t->transport.queue);
             scope_mutex_lock(&t->mutex);
             t->metrics.connected = 0;
-            if (n < 0)
+            t->metrics.scale_valid = 0;
+            t->metrics.power_received_ms = 0;
+            t->metrics.device[0] = '\0';
+            t->command_dirty &= 7U;
+            if (read_failed)
                 ++t->metrics.read_errors;
             scope_mutex_unlock(&t->mutex);
         }
@@ -208,11 +276,49 @@ static void serial_worker(void *context)
     if (h != SERIAL_INVALID)
         close_serial(h);
 }
+
+int serial_control_set_scale(SerialControlTransport *t, unsigned channel, int millivolts)
+{
+    int available;
+    if (!t->started || channel >= 2 || control_scale_index(millivolts) < 0) return 0;
+    scope_mutex_lock(&t->mutex);
+    available = t->metrics.connected && (t->metrics.scale_valid & (1U << channel));
+    if (available) {
+        t->requested_scale[channel] = millivolts;
+        t->command_dirty |= 1U << (channel + 3);
+    }
+    scope_mutex_unlock(&t->mutex);
+    return available;
+}
+
+void serial_control_set_run(SerialControlTransport *t, int running)
+{
+    if (!t->started) return;
+    scope_mutex_lock(&t->mutex);
+    if (!t->run_valid || t->run != !!running) t->command_dirty |= 1U;
+    t->run = (uint8_t)!!running;
+    t->run_valid = 1;
+    scope_mutex_unlock(&t->mutex);
+}
+
+void serial_control_set_encoder_mode(SerialControlTransport *t, unsigned channel, int position)
+{
+    if (!t->started || channel >= 2) return;
+    scope_mutex_lock(&t->mutex);
+    if (!t->mode_valid[channel] || t->position_mode[channel] != !!position)
+        t->command_dirty |= 1U << (channel + 1);
+    t->position_mode[channel] = (uint8_t)!!position;
+    t->mode_valid[channel] = 1;
+    scope_mutex_unlock(&t->mutex);
+}
 int serial_control_start(SerialControlTransport *t, ControlQueue *q, const char *device,
                          unsigned baud)
 {
     if (!device || !device[0] || strlen(device) >= sizeof(t->device) || !baud)
         return 0;
+#ifdef _WIN32
+    if (!strcmp(device, "auto")) return 0;
+#endif
     memset(t, 0, sizeof(*t));
     scope_mutex_init(&t->mutex);
     t->transport.queue = q;
@@ -234,6 +340,9 @@ void serial_control_stop(SerialControlTransport *t)
     scope_mutex_destroy(&t->mutex);
     t->started = 0;
     t->metrics.connected = 0;
+    t->metrics.scale_valid = 0;
+    t->metrics.power_received_ms = 0;
+    t->metrics.device[0] = '\0';
 }
 void serial_control_metrics(SerialControlTransport *t, SerialControlMetrics *metrics)
 {

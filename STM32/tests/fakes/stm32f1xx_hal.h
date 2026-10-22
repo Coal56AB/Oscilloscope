@@ -19,5 +19,8 @@ typedef enum
 
 HAL_StatusTypeDef HAL_UART_Transmit_IT(UART_HandleTypeDef *uart, uint8_t *data, uint16_t size);
 HAL_StatusTypeDef HAL_UART_AbortTransmit(UART_HandleTypeDef *uart);
+HAL_StatusTypeDef HAL_UART_Receive_IT(UART_HandleTypeDef *uart, uint8_t *data, uint16_t size);
+HAL_StatusTypeDef HAL_UART_AbortReceive(UART_HandleTypeDef *uart);
+#define __DMB() ((void)0)
 
 #endif

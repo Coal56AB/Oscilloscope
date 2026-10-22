@@ -126,7 +126,9 @@ typedef struct {
     int browse_count;
     int browse_selected;
     int browse_filter;
-    int pc_mode;
+    int pc_baud_index;
+    int pc_available;
+    int pc_active;
     int zoom_time_index;
     double zoom_offset;
     int saved_trigger_marker_x;
@@ -147,9 +149,13 @@ typedef struct {
     double trigger_preview_voltage;
     int phase;
     uint32_t capture_sequence;
-    int notice_ticks;
+    uint64_t now_ms;
+    uint64_t notice_until_ms;
     uint8_t waveform_loaded;
     uint8_t loaded_timing_valid[2];
+    /* Optional device-owned input scales; callback queues an absolute request. */
+    int (*request_scale)(void *context, unsigned channel, int millivolts);
+    void *scale_context;
     double loaded_period_us[2];
     double loaded_duty_percent[2];
 } DemoSignal;
@@ -157,6 +163,9 @@ typedef struct {
 void demo_signal_init(DemoSignal *demo);
 void demo_signal_set_fft_range(DemoSignal *demo, double span_hz);
 void demo_signal_advance(DemoSignal *demo);
+void demo_signal_update_time(DemoSignal *demo, uint64_t now_ms);
+unsigned demo_signal_pc_baud(int index);
+void demo_signal_pc_status(DemoSignal *demo, int available, unsigned baud, int active);
 void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps);
 DemoAction demo_signal_press(DemoSignal *demo, DemoControl control, int long_press);
 DemoAction demo_signal_press_at(DemoSignal *demo, DemoControl control,
@@ -172,6 +181,15 @@ void demo_signal_ui_menu_back(DemoSignal *demo);
 void demo_signal_ui_dismiss_menu(DemoSignal *demo);
 void demo_signal_ui_menu_select(DemoSignal *demo, int index);
 void demo_signal_ui_menu_choose(DemoSignal *demo, int index, int option);
+/* Direct settings API shared by the local menus and PC frontend. */
+int demo_signal_set_option(DemoSignal *demo, DemoMenu kind, int item, int value);
+void demo_signal_set_trigger_voltage(DemoSignal *demo, double voltage);
+void demo_signal_force_trigger(DemoSignal *demo);
+double demo_signal_time_scale_us(int index);
+int demo_signal_scale_mv(int index);
+void demo_signal_bind_scale_control(DemoSignal *demo,
+    int (*request)(void *, unsigned, int), void *context);
+void demo_signal_accept_scale(DemoSignal *demo, unsigned channel, int millivolts);
 void demo_signal_ui_menu_adjust(DemoSignal *demo, int steps);
 DemoAction demo_signal_ui_menu_activate(DemoSignal *demo);
 DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction);

@@ -1,8 +1,10 @@
 #include "panel_sdl.h"
 #include "wave_file.h"
 #include "linux_storage.h"
+#include "linux_serial.h"
 #include "capture_adapter.h"
 #include "control_transport.h"
+#include "remote_control.h"
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
 #include "linux_display.h"
 #include "linux_touch.h"
@@ -12,6 +14,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -45,6 +48,30 @@ static SerialControlTransport serial_controls;
 static CapturePipeline *capture_pipeline;
 static DisplayFrame capture_frame;
 static int capture_frame_valid;
+static const char *console_path;
+static unsigned console_baud = 115200;
+static uint64_t pc_activity_until;
+
+static int request_panel_scale(void *context, unsigned channel, int millivolts)
+{
+    return serial_control_set_scale(context, channel, millivolts);
+}
+
+static void update_pc_console(uint64_t now)
+{
+    unsigned requested = demo_signal_pc_baud(demo.pc_baud_index);
+    int active = now < pc_activity_until;
+    if (requested != console_baud) {
+        int ok = console_path && linux_serial_set_baud(console_path, requested);
+        if (ok) console_baud = requested;
+        demo_signal_pc_status(&demo, demo.pc_available, console_baud, active);
+        demo_signal_notify(&demo, ok ? "UART BAUD APPLIED" : "UART BAUD FAILED");
+        dirty = 1;
+    } else if (demo.pc_active != active) {
+        demo_signal_pc_status(&demo, demo.pc_available, console_baud, active);
+        dirty = 1;
+    }
+}
 
 typedef struct {
     DemoControl control;
@@ -777,6 +804,7 @@ static void drain_controls(uint64_t now)
     ControlEvent event;unsigned next=control_queue_generation(&controls);
     if(next!=generation){memset(key_holds,0,sizeof(key_holds));pending_chord=DEMO_CONTROL_COUNT;generation=next;}
     while(control_queue_pop(&controls,&event)){
+        if(event.type==CONTROL_SCALE){demo_signal_accept_scale(&demo,event.control,event.value);invalidate();continue;}
         if(event.control>=CONTROL_ID_COUNT)continue;
         if(event.type==CONTROL_ROTATE){pending_chord=DEMO_CONTROL_COUNT;demo_signal_rotate(&demo,(DemoControl)event.control,event.value);}
         else if(event.type==CONTROL_DOWN&&!key_holds[event.control].active){down_ms[event.control]=event.timestamp_ms;
@@ -840,12 +868,80 @@ static int unsigned_option(const char *text, unsigned *value)
     *value=(unsigned)number;return 1;
 }
 
+static void remote_state(FILE *response)
+{
+    int channel,i;
+    fprintf(response,"{\"version\":1,\"source\":\"%s\",\"running\":%d,\"waiting\":%d,\"plot_height\":%d,\"pixels_per_div\":%.9g,\"time_divisions\":10,",
+        capture_pipeline?"raw":"demo",demo.screen.running,demo.screen.waiting_for_trigger,SCOPE_PLOT_HEIGHT,SCOPE_PLOT_HEIGHT/8.0);
+    for(channel=0;channel<2;++channel){
+        fprintf(response,"\"ch%d_enabled\":%d,\"ch%d_coupling\":%d,\"ch%d_probe_ten\":%d,\"ch%d_scale_index\":%d,\"ch%d_position\":%d,\"ch%d_filter\":%d,",
+            channel+1,channel?demo.screen.ch2_enabled:demo.screen.ch1_enabled,channel+1,demo.coupling[channel],
+            channel+1,demo.probe_ten[channel],channel+1,demo.scale_index[channel],channel+1,demo.channel_position[channel],channel+1,demo.filter_level[channel]);
+    }
+    fprintf(response,"\"time_index\":%d,\"time_position\":%d,\"zoom\":%d,\"trigger_mode\":%d,\"trigger_source\":%d,\"trigger_edge\":%d,\"trigger_holdoff\":%d,\"trigger_level\":%.9g,\"time_scales_us\":[",
+        demo.screen.zoom_enabled?demo.zoom_time_index:demo.time_index,demo.time_position,demo.screen.zoom_enabled,
+        demo.trigger_mode_index,demo.trigger_source_index,demo.trigger_edge_index,demo.trigger_holdoff_index,demo.trigger_voltage);
+    for(i=0;demo_signal_time_scale_us(i)>0;++i)fprintf(response,"%s%.9g",i?",":"",demo_signal_time_scale_us(i));
+    fputs("],\"channel_scales_mv\":[",response);
+    for(i=0;demo_signal_scale_mv(i)>0;++i)fprintf(response,"%s%d",i?",":"",demo_signal_scale_mv(i));
+    fprintf(response,"],\"uart_baud\":%u,\"pc_active\":%d}\n",console_baud,demo.pc_active);
+}
+
+static int remote_set(const char *key,double number)
+{
+    static const struct {const char *key;DemoMenu kind;int item;} options[]={
+        {"ch1_enabled",DEMO_MENU_CH1,0},{"ch2_enabled",DEMO_MENU_CH2,0},
+        {"ch1_coupling",DEMO_MENU_CH1,1},{"ch2_coupling",DEMO_MENU_CH2,1},
+        {"ch1_probe_ten",DEMO_MENU_CH1,2},{"ch2_probe_ten",DEMO_MENU_CH2,2},
+        {"ch1_scale_index",DEMO_MENU_CH1,3},{"ch2_scale_index",DEMO_MENU_CH2,3},
+        {"ch1_filter",DEMO_MENU_PROCESSING,0},{"ch2_filter",DEMO_MENU_PROCESSING,1},
+        {"time_index",DEMO_MENU_TIME,0},{"trigger_mode",DEMO_MENU_TRIGGER,0},
+        {"trigger_source",DEMO_MENU_TRIGGER,1},{"trigger_edge",DEMO_MENU_TRIGGER,2},
+        {"trigger_holdoff",DEMO_MENU_TRIGGER,3}
+    };
+    size_t i;int value;
+    if(!isfinite(number)||number < -1000000||number>1000000)return 0;
+    if(!strcmp(key,"trigger_level")){demo_signal_set_trigger_voltage(&demo,number);return 1;}
+    if(floor(number)!=number)return 0;value=(int)number;
+    for(i=0;i<sizeof(options)/sizeof(options[0]);++i)if(!strcmp(key,options[i].key))
+        return demo_signal_set_option(&demo,options[i].kind,options[i].item,value);
+    if((!strcmp(key,"ch1_position")||!strcmp(key,"ch2_position"))&&value>=-180&&value<=180){
+        int channel=key[2]=='2';demo_signal_move_channel(&demo,channel,value-demo.channel_position[channel]);return 1;}
+    if(!strcmp(key,"time_position")&&value>=-420&&value<=420&&!demo.screen.zoom_enabled){
+        demo_signal_ui_pan_time(&demo,demo.time_position-value);return 1;}
+    return 0;
+}
+
+static int remote_command(const char *command, FILE *response, void *context)
+{
+    char key[64];double value;int n=0;
+    (void)context;
+    pc_activity_until = now_ms() + 10000;
+    demo_signal_pc_status(&demo, demo.pc_available, console_baud, 1);
+    invalidate();
+    if(!strcmp(command,"ping")){fputs("OSCILL REMOTE 1\n",response);return 1;}
+    if(!strcmp(command,"state")){remote_state(response);return !ferror(response);}
+    if(!strcmp(command,"csv")||!strcmp(command,"window")){
+        DemoWaveCapture wave;
+        if(!strcmp(command,"window"))remote_state(response);
+        demo_signal_export_wave(&demo,&wave);return wave_file_write(response,&wave);
+    }
+    if(sscanf(command,"set %63s %lf%n",key,&value,&n)==2&&command[n]=='\0'&&remote_set(key,value)){}
+    else if(!strcmp(command,"run")){if(!demo.screen.running)demo_signal_ui_toggle_run(&demo);}
+    else if(!strcmp(command,"stop")){if(demo.screen.running)demo_signal_ui_toggle_run(&demo);}
+    else if(!strcmp(command,"single")){demo_signal_set_option(&demo,DEMO_MENU_TRIGGER,0,2);if(!demo.screen.running)demo_signal_ui_toggle_run(&demo);}
+    else if(!strcmp(command,"force"))demo_signal_force_trigger(&demo);
+    else{fputs("Invalid remote command or setting\n",response);return 0;}
+    invalidate();draw_all();fputs("OK\n",response);return 1;
+}
+
 int main(int argc, char **argv)
 {
     struct sigaction stop_action={0};
     SDL_Window *lcd_window=NULL,*panel_window=NULL;SDL_Renderer *lcd_renderer=NULL,*panel_renderer=NULL;
     SDL_Texture *lcd_texture=NULL,*panel_texture=NULL;uint32_t lcd_id,panel_id;
-    const char *snapshot_path=NULL,*serial_device=NULL,*raw_file=NULL;unsigned serial_baud=115200;
+    const char *snapshot_path=NULL,*serial_device=NULL,*raw_file=NULL,*remote_path=NULL;unsigned serial_baud=115200;
+    RemoteControl *remote=NULL;
     int panel_snapshot=0,raw_demo=0,diagnostics=0;uint64_t diagnostic_time=0,render_time=0,render_frames=0;
     int running=1,windowed=0,kiosk=0,i,exit_status=0;
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
@@ -856,6 +952,7 @@ int main(int argc, char **argv)
     panel_pixels=malloc((size_t)PANEL_WIDTH*PANEL_HEIGHT*4);
     if(!screen_pixels||!panel_pixels){fprintf(stderr,"Out of memory.\n");free(screen_pixels);free(panel_pixels);return 1;}
     determine_application_dir(argc?argv[0]:"scope_preview");demo_signal_init(&demo);
+    demo_signal_update_time(&demo,now_ms());
     for(i=1;i<argc;++i) {
         if(strcmp(argv[i],"--windowed")==0){windowed=1;kiosk=0;}
         else if(strcmp(argv[i],"--kiosk")==0){kiosk=1;windowed=0;}
@@ -866,6 +963,8 @@ int main(int argc, char **argv)
         else if(strcmp(argv[i],"--raw-demo")==0)raw_demo=1;
         else if(strcmp(argv[i],"--capture")==0&&i+1<argc)raw_file=argv[++i];
         else if(strcmp(argv[i],"--diagnostics")==0)diagnostics=1;
+        else if(strcmp(argv[i],"--remote-socket")==0&&i+1<argc)remote_path=argv[++i];
+        else if(strcmp(argv[i],"--console")==0&&i+1<argc)console_path=argv[++i];
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
         else if(strcmp(argv[i],"--drm")==0&&i+1<argc){drm_device=argv[++i];kiosk=1;windowed=0;}
         else if(strcmp(argv[i],"--fb")==0&&i+1<argc){fb_device=argv[++i];kiosk=1;windowed=0;}
@@ -894,9 +993,14 @@ int main(int argc, char **argv)
         free(screen_pixels);free(panel_pixels);return result?0:1;
     }
     panel_enabled=!kiosk;
+    {
+        int available = console_path && linux_serial_get_baud(console_path,&console_baud);
+        demo_signal_pc_status(&demo,available,console_baud,0);
+    }
     control_queue_init(&controls);keyboard_controls.queue=&controls;
     if(serial_device&&!serial_control_start(&serial_controls,&controls,serial_device,serial_baud)){
         fprintf(stderr,"Cannot start serial transport\n");exit_status=1;goto cleanup;}
+    if(serial_device)demo_signal_bind_scale_control(&demo,request_panel_scale,&serial_controls);
     if(raw_demo||raw_file){capture_pipeline=capture_pipeline_create(raw_file);if(!capture_pipeline){fprintf(stderr,"Cannot open raw capture source\n");exit_status=1;goto cleanup;}}
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"0");
 #ifdef SDL_HINT_TOUCH_MOUSE_EVENTS
@@ -943,7 +1047,12 @@ int main(int argc, char **argv)
 #endif
        (!lcd_renderer||!lcd_texture||(!kiosk&&(!panel_renderer||!panel_texture)))){fprintf(stderr,"Cannot create renderers: %s\n",SDL_GetError());running=0;exit_status=1;}
     lcd_id=lcd_window?SDL_GetWindowID(lcd_window):0;panel_id=panel_window?SDL_GetWindowID(panel_window):0;
+    draw_all();
+    if(remote_path){remote=remote_control_open(remote_path,remote_command,NULL);
+        if(!remote){perror("Remote socket");running=0;exit_status=1;}}
     while(running&&!stop_requested){SDL_Event event;uint64_t now;
+        if(demo.screen.status_visible)invalidate();
+        demo_signal_update_time(&demo,now_ms());
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
         if((drm_device||fb_device)&&touch_device){uint64_t input_now=now_ms();
             if(!usb_touch&&input_now>=touch_retry){usb_touch=linux_touch_open(touch_device,touch_rotation);touch_retry=input_now+500;if(usb_touch)++touch_connections;}
@@ -951,6 +1060,7 @@ int main(int argc, char **argv)
                 memset(contacts,0,sizeof(contacts));touch.active=pinch_block=0;}}
 #endif
         if(SDL_WaitEventTimeout(&event,16))do{
+            demo_signal_update_time(&demo,now_ms());
             if(event.type==SDL_QUIT)running=0;
             else if(event.type==SDL_WINDOWEVENT&&event.window.event==SDL_WINDOWEVENT_CLOSE)running=0;
             else if(event.type==SDL_KEYDOWN&&event.key.keysym.sym==SDLK_ESCAPE)running=0;
@@ -977,10 +1087,20 @@ int main(int argc, char **argv)
         drain_controls(now);fire_long_press(&mouse_hold,now);
         for(i=0;i<CONTROL_ID_COUNT;++i)fire_long_press(&key_holds[i],now);
         fire_lcd_touch_hold(now);
+        update_pc_console(now);
+        if(serial_device){
+            SerialControlMetrics panel;
+            serial_control_set_run(&serial_controls,demo.screen.running);
+            for(i=0;i<2;++i)serial_control_set_encoder_mode(&serial_controls,(unsigned)i,demo.position_mode[i]||demo.waveform_loaded);
+            serial_control_metrics(&serial_controls,&panel);
+            if(!demo.waveform_loaded)for(i=0;i<2;++i)if((panel.scale_valid&(1U<<i))&&
+                demo_signal_scale_mv(demo.scale_index[i])!=panel.scale_mv[i]){
+                demo_signal_accept_scale(&demo,(unsigned)i,panel.scale_mv[i]);invalidate();}
+        }
         if(capture_pipeline){CaptureRequest request;capture_request_from_demo(&demo,&request);
             capture_pipeline_request(capture_pipeline,&request);
             if(capture_pipeline_frame(capture_pipeline,&capture_frame)){capture_frame_valid=1;if(raw_file)demo.screen.running=0;invalidate();}}
-        if(demo.screen.running||demo.notice_ticks>0||mouse_hold.active||key_holds[0].active||key_holds[1].active){demo_signal_advance(&demo);invalidate();}
+        if(demo.screen.running||demo.screen.status_visible||mouse_hold.active||key_holds[0].active||key_holds[1].active){demo_signal_advance(&demo);invalidate();}
         if(dirty&&running){uint64_t render_begin=scope_clock_ns();draw_all();render_time+=scope_clock_ns()-render_begin;++render_frames;
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
             if(drm_display){int submitted=linux_display_present(drm_display,screen_pixels);if(submitted<0){running=0;exit_status=1;}else dirty=!submitted;}
@@ -988,14 +1108,18 @@ int main(int argc, char **argv)
 #endif
             {SDL_UpdateTexture(lcd_texture,NULL,screen_pixels,SCOPE_WIDTH*4);SDL_RenderClear(lcd_renderer);SDL_RenderCopy(lcd_renderer,lcd_texture,NULL,NULL);SDL_RenderPresent(lcd_renderer);
             if(panel_texture){SDL_UpdateTexture(panel_texture,NULL,panel_pixels,PANEL_WIDTH*4);SDL_RenderClear(panel_renderer);SDL_RenderCopy(panel_renderer,panel_texture,NULL,NULL);SDL_RenderPresent(panel_renderer);}dirty=0;}}
+        remote_control_pump(remote);
         if(diagnostics&&now-diagnostic_time>=1000){CaptureMetrics m={0};SerialControlMetrics uart={0};if(capture_pipeline)capture_pipeline_metrics(capture_pipeline,&m);
             serial_control_metrics(&serial_controls,&uart);
             fprintf(stderr,"render_ms=%.3f frames=%llu processing_ms=%.3f blocks=%llu dropped=%llu overwritten=%llu occupancy=%zu source_error=%d\n",
                 render_frames?render_time/1e6/render_frames:0,(unsigned long long)render_frames,m.processing_ns/1e6,
                 (unsigned long long)m.blocks,(unsigned long long)m.dropped,(unsigned long long)m.overwritten,m.occupancy,m.source_error);
-            if(serial_device)fprintf(stderr,"uart_link=%d packets=%llu crc_errors=%llu format_errors=%llu gaps=%llu duplicates=%llu read_errors=%llu reconnects=%llu\n",
-                uart.connected,(unsigned long long)uart.packets,(unsigned long long)uart.crc_errors,(unsigned long long)uart.format_errors,
+            if(serial_device)fprintf(stderr,"uart_link=%d uart_device=%s packets=%llu crc_errors=%llu format_errors=%llu gaps=%llu duplicates=%llu read_errors=%llu reconnects=%llu\n",
+                uart.connected,uart.device[0]?uart.device:"none",(unsigned long long)uart.packets,(unsigned long long)uart.crc_errors,(unsigned long long)uart.format_errors,
                 (unsigned long long)uart.sequence_gaps,(unsigned long long)uart.duplicates,(unsigned long long)uart.read_errors,(unsigned long long)uart.reconnects);
+            if(serial_device&&uart.power_received_ms)fprintf(stderr,"panel_power_mv=%d age_ms=%llu uart_write_errors=%llu\n",
+                uart.power_mv,(unsigned long long)(now>=uart.power_received_ms?now-uart.power_received_ms:0),
+                (unsigned long long)uart.write_errors);
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
             if(touch_device){LinuxTouchStats stats;linux_touch_stats(usb_touch,&stats);
                 fprintf(stderr,"touch_connected=%d connections=%llu reports=%llu events=%llu overflows=%llu\n",
@@ -1005,6 +1129,7 @@ int main(int argc, char **argv)
             diagnostic_time=now;}
     }
 cleanup:
+    remote_control_close(remote);
     capture_pipeline_destroy(capture_pipeline);serial_control_stop(&serial_controls);control_queue_destroy(&controls);
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
     linux_touch_close(usb_touch);linux_display_close(drm_display);
@@ -1018,6 +1143,6 @@ cleanup:
     SDL_Quit();
     free(panel_pixels);free(screen_pixels);return exit_status;
 invalid_options:
-    fprintf(stderr,"Invalid option or argument. Use --windowed, --kiosk, --serial DEVICE, --baud RATE, --data-dir DIR, --require-data-device, --raw-demo, --capture FILE, --diagnostics, --snapshot BMP or --panel-snapshot BMP.\n");
+    fprintf(stderr,"Invalid option or argument. Use --windowed, --kiosk, --serial DEVICE, --baud RATE, --console TTY, --data-dir DIR, --require-data-device, --raw-demo, --capture FILE, --diagnostics, --remote-socket PATH, --snapshot BMP or --panel-snapshot BMP.\n");
     free(panel_pixels);free(screen_pixels);return 2;
 }

@@ -14,10 +14,16 @@ grep -q "^export BR2_VERSION := $VERSION$" "$SOURCE/Makefile" || { echo "Buildro
 make -C "$SOURCE" O="$OUTPUT" BR2_EXTERNAL="$SCRIPT_DIR" oscill_zynq_defconfig
 # Local packages are not refreshed automatically by an incremental Buildroot build.
 make -C "$SOURCE" O="$OUTPUT" BR2_EXTERNAL="$SCRIPT_DIR" oscill-dirclean
+# Board DTS files are copied during compilation, not tracked as dependencies.
+make -C "$SOURCE" O="$OUTPUT" BR2_EXTERNAL="$SCRIPT_DIR" linux-rebuild uboot-rebuild
 make -C "$SOURCE" O="$OUTPUT" BR2_EXTERNAL="$SCRIPT_DIR"
+# The host package also caches boot.scr across incremental builds.
+"$OUTPUT/host/bin/mkimage" -C none -A arm -T script \
+    -d "$SCRIPT_DIR/board/boot.cmd" "$OUTPUT/images/boot.scr"
 for OPTION in CONFIG_FB_SIMPLE CONFIG_FB_DEVICE CONFIG_VT_CONSOLE \
     CONFIG_INPUT_EVDEV CONFIG_USB_CHIPIDEA_HOST CONFIG_USB_CHIPIDEA_GENERIC \
-    CONFIG_USB_ULPI CONFIG_USB_HID CONFIG_HID_MULTITOUCH; do
+    CONFIG_USB_ULPI CONFIG_USB_HID CONFIG_HID_MULTITOUCH \
+    CONFIG_USB_SERIAL_CH341 CONFIG_USB_SERIAL_CP210X CONFIG_USB_ACM; do
     grep -qx "$OPTION=y" "$OUTPUT/build/linux-custom/.config" || {
         echo "Required kernel option missing: $OPTION=y" >&2
         exit 1

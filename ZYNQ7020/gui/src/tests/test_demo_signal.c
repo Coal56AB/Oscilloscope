@@ -886,18 +886,22 @@ int main(void)
     demo_signal_notify(&demo, "SCREENSHOT SAVED");
     assert(demo.screen.status_visible);
     assert(!demo.screen.status_warning && demo.screen.status_alpha == 255);
-    for (i = 0; i < 45; ++i) demo_signal_advance(&demo);
+    for (i = 0; i < 200; ++i) demo_signal_advance(&demo);
+    assert(demo.screen.status_visible);
+    demo_signal_update_time(&demo, 2999);
+    assert(demo.screen.status_visible);
+    demo_signal_update_time(&demo, 3000);
     assert(!demo.screen.status_visible);
     demo_signal_notify(&demo, "MEASUREMENT LIST FULL / REMOVE ONE");
     assert(demo.screen.status_warning && demo.screen.status_alpha == 255);
     scope_screen_render(pixels, SCOPE_WIDTH, &demo.screen);
     previous = (int)pixels[65 * SCOPE_WIDTH + 300];
     assert((previous >> 16 & 255) > (previous >> 8 & 255));
-    for (i = 0; i < 35; ++i) demo_signal_advance(&demo);
+    demo_signal_update_time(&demo, 5750);
     assert(demo.screen.status_visible && demo.screen.status_alpha < 255);
     scope_screen_render(pixels, SCOPE_WIDTH, &demo.screen);
     assert((int)pixels[65 * SCOPE_WIDTH + 300] != previous);
-    for (i = 0; i < 10; ++i) demo_signal_advance(&demo);
+    demo_signal_update_time(&demo, 6000);
     assert(!demo.screen.status_visible);
     assert(demo.screen.measurement_horizontal);
     assert(demo.screen.measurement_x == 0 &&
@@ -1163,7 +1167,14 @@ int main(void)
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.menu_kind == DEMO_MENU_PC);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
-    assert(demo.pc_mode == 1 && !demo.screen.menu_editing);
+    assert(demo.pc_baud_index == 5 && !demo.screen.menu_editing);
+    assert(strcmp(demo.screen.menu_labels[0], "UART BAUD") == 0);
+    assert(strcmp(demo.screen.menu_values[0], "230400") == 0);
+    demo_signal_pc_status(&demo, 1, 1000000, 0);
+    assert(strcmp(demo.screen.menu_values[0], "1000000") == 0);
+    assert(strcmp(demo.screen.menu_values[1], "USB-UART READY") == 0);
+    demo_signal_pc_status(&demo, 1, 1000000, 1);
+    assert(strcmp(demo.screen.menu_values[1], "PC ACTIVE") == 0);
 
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_MEASURE);

@@ -35,17 +35,21 @@ C:/Xilinx/SDK/2019.1/bin/program_flash.bat -f ZYNQ7020/output/linux/qspi.bin -of
   -flash_type qspi-x4-single -fsbl ZYNQ7020/output/linux/fsbl.elf -verify -url tcp:localhost:3121
 ```
 
-Имена параметров проверены по `program_flash -help`; запись на плату не выполнялась. Команда заменяет всю QSPI, включая область настроек. Для готового ZIP пути задаются к распакованным `qspi.bin` и `fsbl.elf`.
+В окне SDK Program Flash выбрать `Image File` — `ZYNQ7020/output/linux/qspi.bin`,
+`FSBL File` — `ZYNQ7020/output/linux/fsbl.elf`, offset `0`, тип `qspi-x4-single`.
+Имена параметров проверены по `program_flash -help`; запись на плату не выполнялась. Команда заменяет всю QSPI, включая область настроек.
 
 6. После успешной верификации выбрать QSPI кодом SW1 `10` по схеме, убрать карту из TF1 и перезапустить питание. Проверить загрузку, HDMI, USB Host/multitouch и UART по [BRINGUP.md](BRINGUP.md). Для восстановления используется тот же JTAG способ с сохранённым `qspi-backup.bin`.
 
 ## STM32
 
-Проект STM32F103RCT6 — `STM32/oscill_controls.ioc` и `STM32/MDK-ARM/oscill_controls.uvprojx`. Настройки, распиновка и регенерация — [STM32.md](STM32.md). После успешного Rebuild в Keil HEX создаётся в `STM32/output/oscill_controls.hex`. В текущем окружении завершение сборки Keil блокирует ошибка лицензии — [TESTING.md](TESTING.md). Начальная настройка использует HSI/PLL 64 МГц, не зависит от неизвестного кварца модуля.
+Проект STM32F103RCT6 — `STM32/oscill_controls.ioc` и `STM32/MDK-ARM/oscill_controls.uvprojx`. Настройки, распиновка и регенерация — [STM32.md](STM32.md). После успешного Rebuild в Keil HEX создаётся в `STM32/output/oscill_controls.hex`; фактические сборки — [TESTING.md](TESTING.md). Начальная настройка использует HSI/PLL 64 МГц, не зависит от неизвестного кварца модуля.
 
-Подключить SWDIO к PA13, SWCLK к PA14 и общий GND; при необходимости NRST к RST модуля. В символе PBD это контакты 46, 43 и 30 соответственно, GND — 28/55. Перед подключением сверить маркировку и ориентацию фактического модуля. В проекте выбран ST-Link/SWD и STM32F103RC, Flash 256 КиБ с адреса `0x08000000`; запись на устройство автоматически не выполняется.
+Подключить ST-Link: SWDIO → PA13, SWCLK → PA14, GND → GND. В Keil выбран ST-Link/SWD и STM32F103RC; записать прошивку командой Download.
 
 Перед первой записью сохранить читаемую исходную прошивку и настройки option bytes; не менять read protection/option bytes без необходимости. Проверить DOWN/UP, быстрые вращения, одновременно нажатые кнопки, удержания и UART. Первый тест связи: PA9 → RX USB–UART 3,3 В и GND, 115200 8N1; раз в секунду отправляется heartbeat. Состояние GPIO и алгоритмов на физической плате ещё не проверено.
+
+Для автономной отладки собрать с `STM32_STANDALONE_DEBUG=1`: без связи с GUI энкодеры CH1/CH2 меняют масштабы и реле, RUN переключает местный LED. При связи с GUI работают штатные команды в обеих конфигурациях. Проверить каждую аппаратную ступень и напряжение питания сравнением с мультиметром; при двустороннем обмене проверить итоговый масштаб и следование LED состоянию RUN/STOP.
 
 ## Артефакты релиза
 

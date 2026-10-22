@@ -1,5 +1,17 @@
 #include "control_protocol.h"
 #include <string.h>
+static const int scale_mv[CONTROL_SCALE_COUNT] = {100, 200, 500, 1000, 2000, 5000};
+int control_scale_mv(unsigned index)
+{
+    return index < CONTROL_SCALE_COUNT ? scale_mv[index] : 0;
+}
+int control_scale_index(int millivolts)
+{
+    unsigned i;
+    for (i = 0; i < CONTROL_SCALE_COUNT; ++i)
+        if (scale_mv[i] == millivolts) return (int)i;
+    return -1;
+}
 static void put16(uint8_t *p, uint16_t n)
 {
     p[0] = (uint8_t)n;
@@ -26,6 +38,14 @@ uint16_t control_crc16(const uint8_t *p, size_t bytes)
 }
 static int valid(const ControlEvent *e)
 {
+    if (e->type == CONTROL_SET_RUN)
+        return e->control == 255 && (e->value == 0 || e->value == 1);
+    if (e->type == CONTROL_SET_SCALE || e->type == CONTROL_SCALE)
+        return e->control < 2 && control_scale_index(e->value) >= 0;
+    if (e->type == CONTROL_POWER)
+        return e->control == 255 && e->value >= 0 && e->value <= 7200;
+    if (e->type == CONTROL_SET_ENCODER_MODE)
+        return e->control < 2 && (e->value == 0 || e->value == 1);
     if (e->type == CONTROL_HEARTBEAT)
         return e->control == 255 && e->value == 0;
     if (e->control >= CONTROL_ID_COUNT)

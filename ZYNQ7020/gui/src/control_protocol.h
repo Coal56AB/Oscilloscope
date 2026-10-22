@@ -9,7 +9,12 @@ typedef enum {
     CONTROL_ROTATE = 1,
     CONTROL_DOWN = 2,
     CONTROL_UP = 3,
-    CONTROL_HEARTBEAT = 4
+    CONTROL_HEARTBEAT = 4,
+    CONTROL_SET_RUN = 5,
+    CONTROL_SET_SCALE = 6,
+    CONTROL_SCALE = 7,
+    CONTROL_POWER = 8,
+    CONTROL_SET_ENCODER_MODE = 9
 } ControlEventType;
 typedef struct {
     ControlEventType type;
@@ -26,6 +31,10 @@ typedef struct {
     int have_sequence;
 } ControlParser;
 uint16_t control_crc16(const uint8_t *data, size_t bytes);
+/* Panel and GUI use the same supported input scales, in mV/div (before probe). */
+#define CONTROL_SCALE_COUNT 6
+int control_scale_mv(unsigned index);
+int control_scale_index(int millivolts);
 int control_encode(uint8_t packet[CONTROL_PACKET_SIZE], const ControlEvent *event);
 void control_parser_init(ControlParser *parser);
 /* Feed one byte; returns 1 only for a valid new packet. */

@@ -24,6 +24,7 @@ DDR frozen record → storage worker → removable microSD
 - `capture_file.h/c`: бинарная запись с метаданными и CRC; `FileCaptureSource` отдаёт проверенную полную запись. Заголовок читается при открытии, большой payload — в acquisition worker.
 - `capture_adapter.h/c`: связывает подготовленный кадр с существующим `DemoSignal`/`ScopeScreen`. Предметный processor не зависит от этого адаптера.
 - `control_protocol.h/c`, `control_transport.h/c`, `control_serial.c`: общий кодек, ограниченная очередь событий, keyboard/serial producers и отдельный UART worker.
+- `STM32/Core/Oscill/panel_state.c`: владелец масштабов CH1/CH2 и выбора реле. GUI получает абсолютный масштаб, а сенсорный экран отправляет запрос изменения. GPIO/ADC отделены в `board_outputs.c`; режим позиции каналов и RUN синхронизируются обратным UART-каналом.
 - `linux_display.c`, `linux_touch.c`: Linux framebuffer/DRM и evdev adapters; отключены по умолчанию в настольной сборке.
 
 Демонстрационный настольный режим по умолчанию сохранён. SDL frontend дополнительно позволяет `--raw-demo` и `--capture file.oscraw`; новые raw источники не подменяют существующие BMP/CSV. Windows frontend сохраняет WinAPI и прежние операции; переносимые источники и кольцо собираются и тестируются на Windows отдельно от frontend.

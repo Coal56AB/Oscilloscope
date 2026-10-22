@@ -35,28 +35,24 @@ function Invoke-Linux {
 $LinuxDevice = ((Invoke-Linux -Arguments @('wslpath', '-a', '-u', $Device.Replace('\','/'))) -join "`n").Trim()
 if (!$LinuxDevice.StartsWith('/')) { throw 'Cannot resolve the project path in WSL' }
 Invoke-Linux -Arguments @('grep', '-Fxq', 'export BR2_VERSION := 2025.02.12', "$($Settings.buildroot)/Makefile")
-Invoke-Linux -Arguments @('which', 'make', 'cmake', 'python3', 'mkdosfs', 'mcopy')
+Invoke-Linux -Arguments @('which', 'make', 'cmake', 'python3')
 
-Write-Host '[1/5] FPGA and FSBL'
+Write-Host '[1/4] FPGA and FSBL'
 & "$Device/build.ps1" -Output $Output -XilinxRoot $Settings.xilinx_root
 
-Write-Host '[2/5] Linux and GUI'
+Write-Host '[2/4] Linux and GUI'
 Invoke-Linux -Arguments @('sh', "$LinuxDevice/linux/build.sh", $Settings.buildroot, $Settings.linux_output)
 
-Write-Host '[3/5] BOOT.BIN'
+Write-Host '[3/4] BOOT.BIN and image.bin'
 $Images = "\\wsl.localhost\$($Settings.distribution)$($Settings.linux_output.Replace('/','\'))\images"
 & "$PSScriptRoot/package.ps1" -Images $Images -Output $Output -XilinxRoot $Settings.xilinx_root
 
-Write-Host '[4/5] SD and QSPI images'
-Invoke-Linux -Arguments @('make', '-C', $Settings.buildroot, "O=$($Settings.linux_output)", 'host-genimage')
+Write-Host '[4/4] QSPI image'
 $LinuxRelease = "$LinuxDevice/output/linux"
-Invoke-Linux -Arguments @('env', "PATH=$($Settings.linux_output)/host/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    'sh', "$LinuxDevice/linux/assemble-sd.sh", "$($Settings.linux_output)/images", "$LinuxRelease/BOOT.BIN", $LinuxRelease)
 Invoke-Linux -Arguments @('python3', "$LinuxDevice/linux/assemble-qspi.py", $LinuxRelease)
 Invoke-Linux -Arguments @('python3', "$LinuxDevice/linux/tests/verify_release.py", $LinuxRelease)
 
-Write-Host '[5/5] Release archive'
-& "$PSScriptRoot/release.ps1" -Output $Output
+Write-Host "Ready: $Output/linux/BOOT.BIN"
+Write-Host "Ready: $Output/linux/image.bin"
 Write-Host "Ready: $Output/linux/qspi.bin"
-Write-Host "Ready: $Output/linux/sdcard.img"
-Write-Host "Ready: $Output/linux/oscill-linux-gui.zip"
+Write-Host "Ready: $Output/linux/fsbl.elf"

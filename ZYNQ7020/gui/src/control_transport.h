@@ -16,8 +16,14 @@ typedef struct {
 typedef ControlTransport KeyboardControlTransport;
 typedef struct {
     int connected;
+    char device[256];
     uint64_t reconnects, read_errors, last_received_ms;
     uint64_t packets, crc_errors, format_errors, sequence_gaps, duplicates;
+    uint64_t write_errors;
+    uint64_t power_received_ms;
+    int power_mv;
+    int scale_mv[2];
+    uint8_t scale_valid;
 } SerialControlMetrics;
 typedef struct {
     ControlTransport transport;
@@ -28,6 +34,9 @@ typedef struct {
     int stop, started;
     SerialControlMetrics metrics;
     ControlParser parser;
+    int requested_scale[2];
+    uint8_t run, run_valid, position_mode[2], mode_valid[2];
+    unsigned command_dirty;
 } SerialControlTransport;
 void control_queue_init(ControlQueue *queue);
 void control_queue_destroy(ControlQueue *queue);
@@ -42,4 +51,8 @@ int serial_control_start(SerialControlTransport *transport, ControlQueue *queue,
                          unsigned baud);
 void serial_control_stop(SerialControlTransport *transport);
 void serial_control_metrics(SerialControlTransport *transport, SerialControlMetrics *metrics);
+/* Absolute requests are applied by STM32; GUI waits for CONTROL_SCALE. */
+int serial_control_set_scale(SerialControlTransport *transport, unsigned channel, int millivolts);
+void serial_control_set_run(SerialControlTransport *transport, int running);
+void serial_control_set_encoder_mode(SerialControlTransport *transport, unsigned channel, int position);
 #endif

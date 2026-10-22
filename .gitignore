@@ -2,6 +2,7 @@
 /ZYNQ7020/output/
 /ZYNQ7020/gui/output/
 /STM32/output/
+/TERMINAL/output/
 /ZYNQ7020/fpga/.Xil/
 /ZYNQ7020/fpga/*.jou
 /ZYNQ7020/fpga/*.log

@@ -5,6 +5,7 @@ set here [file dirname [file normalize [info script]]]
 set hardware [file normalize [lindex $argv 0]]
 set output [file normalize [lindex $argv 1]]
 file mkdir $output
+file mkdir $output/linux $output/diagnostic
 set root [file dirname $here]
 set workspace $root/oscill.sdk
 sdk setws $workspace
@@ -65,13 +66,12 @@ foreach application {fsbl diagnostic} {
     file delete -force $workspace/$application/Debug/$application.elf
 }
 sdk projects -build -type all
-foreach application {fsbl diagnostic} {
-    file copy -force $workspace/$application/Debug/$application.elf $output/$application.elf
-}
-set stream [open $output/diagnostic.bif w]
-puts $stream "image: {\n  \[bootloader\] \"$output/fsbl.elf\"\n  \"$hardware/system.bit\"\n  \"$output/diagnostic.elf\"\n}"
+file copy -force $workspace/fsbl/Debug/fsbl.elf $output/linux/fsbl.elf
+file copy -force $workspace/diagnostic/Debug/diagnostic.elf $output/diagnostic/diagnostic.elf
+set stream [open $output/diagnostic/diagnostic.bif w]
+puts $stream "image: {\n  \[bootloader\] \"$output/linux/fsbl.elf\"\n  \"$hardware/system.bit\"\n  \"$output/diagnostic/diagnostic.elf\"\n}"
 close $stream
-puts "Run bootgen -arch zynq -image $output/diagnostic.bif -o $output/BOOT.BIN -w on"
+puts "Run bootgen -arch zynq -image $output/diagnostic/diagnostic.bif -o $output/diagnostic/BOOT.BIN -w on"
 } message]} {
     puts stderr "Standalone build failed: $message"
     exit 1

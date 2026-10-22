@@ -47,9 +47,20 @@ def check_project():
         "RCC.PLLSourceVirtual": "RCC_PLLSOURCE_HSI_DIV2",
         "RCC.PLLMUL": "RCC_PLL_MUL16",
         "RCC.APB1CLKDivider": "RCC_HCLK_DIV2",
+        "PB1.Signal": "ADCx_IN9",
+        "PB1.GPIO_Label": "ANALOG_VBAT",
+        "SH.ADCx_IN9.0": "ADC1_IN9,IN9",
+        "ADC1.SamplingTime-0\\#ChannelRegularConversion": "ADC_SAMPLETIME_239CYCLES_5",
     }
     for key, value in expected.items():
         require(config.get(key) == value, f"CubeMX: {key} must be {value}")
+    for pin, label, high in (("PA3", "RELAY_A1", False), ("PA4", "RELAY_A2", True),
+                             ("PA5", "RELAY_A3", True), ("PA2", "RELAY_B1", False),
+                             ("PA1", "RELAY_B2", True), ("PA0-WKUP", "RELAY_B3", True)):
+        require(config.get(pin + ".GPIO_Label") == label, f"Relay mapping lost: {label}")
+        require(config.get(pin + ".Signal") == "GPIO_Output", f"Relay output lost: {pin}")
+        require(config.get(pin + ".PinState") == ("GPIO_PIN_SET" if high else "GPIO_PIN_RESET"),
+                f"Relay initial state changed: {pin}")
     require(config.get("NVIC.USART1_IRQn", "").startswith("true"), "USART1 IRQ disabled")
 
     target = ET.parse(PROJECT).find("./Targets/Target")
@@ -64,10 +75,15 @@ def check_project():
         require(resolved.is_file(), f"Keil source missing: {item.text}")
         paths.add(resolved)
 
-    for name in ("controls.c", "board_controls.c", "controls_uart.c", "oscill_main.c"):
+    for name in ("controls.c", "board_controls.c", "controls_uart.c", "oscill_main.c",
+                 "panel_state.c", "board_outputs.c"):
         require((STM32 / "Core/Oscill" / name).resolve() in paths, f"Application source lost: {name}")
     require((ROOT / "ZYNQ7020/gui/src/control_protocol.c").resolve() in paths,
             "Shared codec source lost")
+    require((STM32 / "Core/Src/adc.c").resolve() in paths, "ADC initialization source lost")
+    for name in ("stm32f1xx_hal_adc.c", "stm32f1xx_hal_adc_ex.c"):
+        require((STM32 / "Drivers/STM32F1xx_HAL_Driver/Src" / name).resolve() in paths,
+                f"ADC driver source lost: {name}")
     for name in ("general_gpio.c", "general_encoder.c"):
         require((STM32 / "AllLibs/PeriphGeneral/Src" / name).resolve() in paths,
                 f"Library source lost: {name}")
@@ -91,6 +107,9 @@ def check_project():
     sections = user_sections((STM32 / "Core/Src/main.c").read_text(encoding="utf-8-sig"))
     require('#include "oscill_main.h"' in sections.get("Includes", ""), "Application include lost")
     require("Oscill_Init();" in sections.get("2", ""), "Application initialization lost")
+    main_source = (STM32 / "Core/Src/main.c").read_text(encoding="utf-8-sig")
+    require(main_source.index("MX_ADC1_Init();") < main_source.index("Oscill_Init();"),
+            "ADC must be initialized before application calibration")
     require("Oscill_Process();" in sections.get("3", ""), "Application loop lost")
     require("__HAL_AFIO_REMAP_SWJ_NOJTAG();" in
             (STM32 / "Core/Src/stm32f1xx_hal_msp.c").read_text(encoding="utf-8-sig"),

@@ -1,6 +1,7 @@
 #include "demo_signal.h"
 #include "spectrum_bins.h"
 #include "waveform_view.h"
+#include "control_protocol.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -18,11 +19,18 @@
 #define DEMO_ENABLE_GENERATOR 1
 #endif
 
-static const int scale_mv[] = {100, 200, 500, 1000, 2000, 5000};
 static const double time_us[] = {
     0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000,
     10000, 20000, 50000, 100000, 200000, 500000, 1000000
 };
+double demo_signal_time_scale_us(int index)
+{
+    return index>=0&&index<(int)(sizeof(time_us)/sizeof(time_us[0]))?time_us[index]:0;
+}
+int demo_signal_scale_mv(int index)
+{
+    return index >= 0 ? control_scale_mv((unsigned)index) : 0;
+}
 #define TIME_SCALE_COUNT ((int)(sizeof(time_us) / sizeof(time_us[0])))
 #define DEFAULT_TIME_INDEX 7
 static const char *coupling_names[] = {"DC", "AC"};
@@ -65,8 +73,15 @@ static const char *trigger_labels[] = {
     "MODE", "SOURCE", "EDGE", "HOLDOFF", "FORCE", "RESET LEVEL", "LEVEL"
 };
 static const char *cursor_labels[] = {"MODE"};
-static const char *pc_labels[] = {"MODE", "STATUS"};
-static const char *pc_mode_names[] = {"OFF", "USB", "NETWORK"};
+static const char *pc_labels[] = {"UART BAUD", "STATUS"};
+static const char *pc_baud_names[] = {"9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1000000"};
+static const unsigned pc_bauds[] = {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000};
+#define PC_BAUD_COUNT ((int)(sizeof(pc_bauds) / sizeof(pc_bauds[0])))
+
+unsigned demo_signal_pc_baud(int index)
+{
+    return index >= 0 && index < PC_BAUD_COUNT ? pc_bauds[index] : 0;
+}
 static const char *time_labels[] = {"TIME / DIV", "RESET POSITION"};
 static const char *processing_labels[] = {
     "CH1 FILTER", "CH2 FILTER", "COLORING", "PERSISTENCE", "FFT"
@@ -110,13 +125,13 @@ static void uppercase_filename(char destination[DEMO_BROWSE_NAME], const char *s
 
 static double volts_per_div(const DemoSignal *demo, int channel)
 {
-    return scale_mv[demo->scale_index[channel]] *
+    return demo_signal_scale_mv(demo->scale_index[channel]) *
            (demo->probe_ten[channel] ? 10.0 : 1.0) / 1000.0;
 }
 
 static void format_scale(char *buffer, size_t size, int scale_index, int probe_ten)
 {
-    int mv = scale_mv[scale_index] * (probe_ten ? 10 : 1);
+    int mv = demo_signal_scale_mv(scale_index) * (probe_ten ? 10 : 1);
     if (mv < 1000) snprintf(buffer, size, "%d mV", mv);
     else snprintf(buffer, size, "%d V", mv / 1000);
 }
@@ -876,7 +891,7 @@ static int current_menu_value(const DemoSignal *demo)
         return demo->screen.cursor_mode;
     if (demo->menu_kind == DEMO_MENU_DISPLAY)
         return demo->screen.grid_enabled;
-    if (demo->menu_kind == DEMO_MENU_PC) return demo->pc_mode;
+    if (demo->menu_kind == DEMO_MENU_PC) return demo->pc_baud_index;
     if (demo->menu_kind == DEMO_MENU_TIME)
         return demo->screen.zoom_enabled ? demo->zoom_time_index : demo->time_index;
     if (demo->menu_kind == DEMO_MENU_PROCESSING)
@@ -906,7 +921,7 @@ static int menu_value_count(const DemoSignal *demo)
         return item < 2 ? DEMO_WAVE_COUNT :
                           (int)(sizeof(generator_period_us) /
                                 sizeof(generator_period_us[0]));
-    if (demo->menu_kind == DEMO_MENU_PC) return 3;
+    if (demo->menu_kind == DEMO_MENU_PC) return PC_BAUD_COUNT;
     return 2;
 }
 
@@ -976,9 +991,9 @@ static void refresh_menu(DemoSignal *demo)
     } else if (demo->menu_kind == DEMO_MENU_PC) {
         screen->menu_title = "PC CONNECTION";
         for (i = 0; i < 2; ++i) screen->menu_labels[i] = pc_labels[i];
-        screen->menu_values[0] = pc_mode_names[demo->pc_mode];
-        screen->menu_values[1] = "NO LINK";
-        set_menu_options(screen, 0, pc_mode_names, 3, demo->pc_mode);
+        screen->menu_values[0] = pc_baud_names[demo->pc_baud_index];
+        screen->menu_values[1] = !demo->pc_available ? "UART UNAVAILABLE" : demo->pc_active ? "PC ACTIVE" : "USB-UART READY";
+        screen->menu_stepper[0] = 1;
     } else if (demo->menu_kind == DEMO_MENU_CH1 || demo->menu_kind == DEMO_MENU_CH2) {
         int channel = demo->menu_kind == DEMO_MENU_CH2;
         screen->menu_title = channel ? "CHANNEL 2" : "CHANNEL 1";
@@ -1114,7 +1129,7 @@ static void refresh_menu(DemoSignal *demo)
             screen->menu_values[i] = i < 2 ? generator_wave_names[demo->edit_value] :
                                               generator_frequency_names[demo->edit_value];
         else if (demo->menu_kind == DEMO_MENU_PC)
-            screen->menu_values[i] = pc_mode_names[demo->edit_value];
+            screen->menu_values[i] = pc_baud_names[demo->edit_value];
     }
 }
 
@@ -1275,9 +1290,32 @@ void demo_signal_move_channel(DemoSignal *demo, int channel, int delta)
 
 void demo_signal_zoom_channel(DemoSignal *demo, int channel, int steps)
 {
+    int next;
     if (channel < 0 || channel > 1 || steps == 0) return;
-    demo->scale_index[channel] = clamp(demo->scale_index[channel] + steps, 0, 5);
+    next = clamp(demo->scale_index[channel] + steps, 0, CONTROL_SCALE_COUNT - 1);
+    if (demo->request_scale && !demo->waveform_loaded) {
+        if (!demo->request_scale(demo->scale_context, (unsigned)channel, demo_signal_scale_mv(next)))
+            demo_signal_notify(demo, "STM32 SCALE UNAVAILABLE");
+        return;
+    }
+    demo->scale_index[channel] = next;
     demo_signal_notify(demo, channel ? "CH2 VOLTS / DIV" : "CH1 VOLTS / DIV");
+    update_text(demo, 1);
+}
+
+void demo_signal_bind_scale_control(DemoSignal *demo,
+    int (*request)(void *, unsigned, int), void *context)
+{
+    demo->request_scale = request;
+    demo->scale_context = context;
+}
+
+void demo_signal_accept_scale(DemoSignal *demo, unsigned channel, int millivolts)
+{
+    int index = control_scale_index(millivolts);
+    if (channel >= 2 || index < 0 || demo->waveform_loaded) return;
+    if (demo->scale_index[channel] == index) return;
+    demo->scale_index[channel] = index;
     update_text(demo, 1);
 }
 
@@ -1348,6 +1386,7 @@ void demo_signal_notify(DemoSignal *demo, const char *message)
         "SCREENSHOT SAVED", "WAVEFORM SAVED", "SCREEN AND WAVE SAVED",
         "SAVE FAILED", "NO DATA CARD", "OPEN FAILED", "FILE DELETED", "DELETE FAILED",
         "TRIGGER FORCED", "SINGLE CAPTURE COMPLETE",
+        "UART BAUD APPLIED", "UART BAUD FAILED",
         "MEASUREMENT LIST FULL / REMOVE ONE",
         "DEMO CALIBRATION / POSITION CENTERED"
     };
@@ -1356,7 +1395,7 @@ void demo_signal_notify(DemoSignal *demo, const char *message)
         if (strcmp(message, events[i]) == 0) break;
     if (i == sizeof(events) / sizeof(events[0])) return;
     snprintf(demo->status_text, sizeof(demo->status_text), "%s", message);
-    demo->notice_ticks = 45;
+    demo->notice_until_ms = demo->now_ms + 3000;
     demo->screen.status_visible = 1;
     demo->screen.status_alpha = 255;
     demo->screen.status_warning = (uint8_t)(
@@ -1364,6 +1403,7 @@ void demo_signal_notify(DemoSignal *demo, const char *message)
         strcmp(message, "NO DATA CARD") == 0 ||
         strcmp(message, "OPEN FAILED") == 0 ||
         strcmp(message, "DELETE FAILED") == 0 ||
+        strcmp(message, "UART BAUD FAILED") == 0 ||
         strcmp(message, "MEASUREMENT LIST FULL / REMOVE ONE") == 0);
 }
 
@@ -1376,6 +1416,7 @@ void demo_signal_init(DemoSignal *demo)
     demo->scale_index[0] = 2;
     demo->scale_index[1] = 3;
     demo->time_index = DEFAULT_TIME_INDEX;
+    demo->pc_baud_index = 4;
     demo->generator_wave[0] = DEMO_WAVE_SQUARE;
     demo->generator_wave[1] = DEMO_WAVE_SQUARE;
     demo->generator_frequency_index = 3;
@@ -1408,14 +1449,22 @@ void demo_signal_init(DemoSignal *demo)
     update_text(demo, 1);
 }
 
+void demo_signal_update_time(DemoSignal *demo, uint64_t now_ms)
+{
+    demo->now_ms = now_ms;
+    if (demo->screen.status_visible) {
+        if (now_ms >= demo->notice_until_ms) {
+            demo->screen.status_visible = 0;
+            demo->screen.status_alpha = 0;
+        } else {
+            uint64_t remaining = demo->notice_until_ms - now_ms;
+            demo->screen.status_alpha = remaining < 500 ? (uint8_t)(remaining * 255 / 500) : 255;
+        }
+    }
+}
+
 void demo_signal_advance(DemoSignal *demo)
 {
-    if (demo->notice_ticks > 0) {
-        --demo->notice_ticks;
-        if (demo->notice_ticks == 0) demo->screen.status_visible = 0;
-        else if (demo->notice_ticks < 20)
-            demo->screen.status_alpha = (uint8_t)(demo->notice_ticks * 255 / 20);
-    }
     if (!demo->screen.running) return;
     if (demo->holdoff_ticks > 0) {
         --demo->holdoff_ticks;
@@ -1462,57 +1511,62 @@ void demo_signal_move_trigger(DemoSignal *demo, int delta)
 static int measurements_docked_at_bottom(const DemoSignal *demo);
 static void redock_measurements(DemoSignal *demo);
 
-static void apply_edit(DemoSignal *demo)
+static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
 {
-    int item = demo->screen.menu_selected;
     int calibrated = 0;
     int measurement_docked = 0;
-    if (demo->menu_kind == DEMO_MENU_CH1 || demo->menu_kind == DEMO_MENU_CH2) {
-        int channel = demo->menu_kind == DEMO_MENU_CH2;
+    if (kind == DEMO_MENU_CH1 || kind == DEMO_MENU_CH2) {
+        int channel = kind == DEMO_MENU_CH2;
         if (item == 0) {
-            if (channel) demo->screen.ch2_enabled = (uint8_t)demo->edit_value;
-            else demo->screen.ch1_enabled = (uint8_t)demo->edit_value;
+            if (channel) demo->screen.ch2_enabled = (uint8_t)value;
+            else demo->screen.ch1_enabled = (uint8_t)value;
         }
-        else if (item == 1) demo->coupling[channel] = demo->edit_value;
-        else if (item == 2) demo->probe_ten[channel] = demo->edit_value;
-        else if (item == 3) demo->scale_index[channel] = demo->edit_value;
+        else if (item == 1) demo->coupling[channel] = value;
+        else if (item == 2) demo->probe_ten[channel] = value;
+        else if (item == 3) {
+            if (demo->request_scale && !demo->waveform_loaded) {
+                if (!demo->request_scale(demo->scale_context, (unsigned)channel,
+                                         demo_signal_scale_mv(value)))
+                    demo_signal_notify(demo, "STM32 SCALE UNAVAILABLE");
+            } else demo->scale_index[channel] = value;
+        }
         else {
             demo->channel_position[channel] = centered_channel_position(channel);
             ++demo->calibration_count[channel];
             calibrated = 1;
             demo_signal_notify(demo, "DEMO CALIBRATION / POSITION CENTERED");
         }
-    } else if (demo->menu_kind == DEMO_MENU_TRIGGER) {
-        if (item == 0) demo->trigger_mode_index = demo->edit_value;
+    } else if (kind == DEMO_MENU_TRIGGER) {
+        if (item == 0) demo->trigger_mode_index = value;
         else if (item == 1) {
             int trigger_y = demo->screen.trigger_y;
-            demo->trigger_source_index = demo->edit_value;
+            demo->trigger_source_index = value;
             demo->trigger_voltage =
                 (source_zero(demo) - trigger_y) *
                 volts_per_div(demo, demo->trigger_source_index) / PIXELS_PER_DIV;
             demo->trigger_preview_voltage = demo->trigger_voltage;
             demo->screen.trigger_preview = 0;
         }
-        else if (item == 2) demo->trigger_edge_index = demo->edit_value;
+        else if (item == 2) demo->trigger_edge_index = value;
         else if (item == 6) {
             demo->trigger_voltage = demo->trigger_preview_voltage;
             demo->screen.trigger_preview = 0;
         }
-        else demo->trigger_holdoff_index = demo->edit_value;
-    } else if (demo->menu_kind == DEMO_MENU_CURSOR) {
+        else demo->trigger_holdoff_index = value;
+    } else if (kind == DEMO_MENU_CURSOR) {
         if (item == 0) {
             measurement_docked = measurements_docked_at_bottom(demo);
-            demo->screen.cursor_mode = (uint8_t)demo->edit_value;
+            demo->screen.cursor_mode = (uint8_t)value;
             demo->screen.cursor_selected = 0;
-            demo->screen.cursor_a = demo->edit_value == SCOPE_CURSOR_VOLTAGE ? 125 : 240;
-            demo->screen.cursor_b = demo->edit_value == SCOPE_CURSOR_VOLTAGE ? 305 : 720;
+            demo->screen.cursor_a = value == SCOPE_CURSOR_VOLTAGE ? 125 : 240;
+            demo->screen.cursor_b = value == SCOPE_CURSOR_VOLTAGE ? 305 : 720;
         }
-    } else if (demo->menu_kind == DEMO_MENU_DISPLAY) {
-        demo->screen.grid_enabled = (uint8_t)demo->edit_value;
-    } else if (demo->menu_kind == DEMO_MENU_TIME) {
-        if (demo->screen.zoom_enabled) demo->zoom_time_index = clamp(demo->edit_value, 0, demo->time_index);
+    } else if (kind == DEMO_MENU_DISPLAY) {
+        demo->screen.grid_enabled = (uint8_t)value;
+    } else if (kind == DEMO_MENU_TIME) {
+        if (demo->screen.zoom_enabled) demo->zoom_time_index = clamp(value, 0, demo->time_index);
         else demo->time_index = demo->waveform_loaded ?
-            clamp(demo->edit_value, 0, demo->loaded_wave.time_index) : demo->edit_value;
+            clamp(value, 0, demo->loaded_wave.time_index) : value;
         if (demo->waveform_loaded) {
             int limit = loaded_pan_limit(demo);
             if (demo->screen.zoom_enabled) demo->zoom_offset = clamp_position(demo->zoom_offset, limit);
@@ -1521,25 +1575,62 @@ static void apply_edit(DemoSignal *demo)
             demo->zoom_offset = clamp_position(demo->zoom_offset,
                 SCOPE_PLOT_WIDTH / 2.0 - SCOPE_PLOT_WIDTH / (2 * zoom_ratio(demo)));
         }
-    } else if (demo->menu_kind == DEMO_MENU_PROCESSING) {
-        if (item < 2) demo->filter_level[item] = demo->edit_value;
-        else if (item == 2) demo->intensity_coloring = demo->edit_value;
-        else if (item == 3) demo->persistence_index = demo->edit_value;
+    } else if (kind == DEMO_MENU_PROCESSING) {
+        if (item < 2) demo->filter_level[item] = value;
+        else if (item == 2) demo->intensity_coloring = value;
+        else if (item == 3) demo->persistence_index = value;
         else {
-            demo->fft_enabled = demo->edit_value;
+            demo->fft_enabled = value;
             if (demo->fft_enabled && demo->screen.zoom_enabled)
                 demo_signal_ui_toggle_zoom(demo);
         }
-    } else if (demo->menu_kind == DEMO_MENU_PC && item == 0) {
-        demo->pc_mode = demo->edit_value;
-    } else if (demo->menu_kind == DEMO_MENU_GENERATOR) {
-        if (item < 2) demo->generator_wave[item] = demo->edit_value;
-        else demo->generator_frequency_index = demo->edit_value;
+    } else if (kind == DEMO_MENU_PC && item == 0) {
+        demo->pc_baud_index = value;
+    } else if (kind == DEMO_MENU_GENERATOR) {
+        if (item < 2) demo->generator_wave[item] = value;
+        else demo->generator_frequency_index = value;
     }
-    demo->screen.menu_editing = 0;
     if (!calibrated) demo_signal_notify(demo, "SETTING APPLIED");
     update_text(demo, 1);
     if (measurement_docked) redock_measurements(demo);
+}
+
+static void apply_edit(DemoSignal *demo)
+{
+    demo->screen.menu_editing = 0;
+    apply_option(demo,demo->menu_kind,demo->screen.menu_selected,demo->edit_value);
+}
+
+int demo_signal_set_option(DemoSignal *demo, DemoMenu kind, int item, int value)
+{
+    int count=0;
+    if(!demo||item<0||value<0)return 0;
+    if((kind==DEMO_MENU_CH1||kind==DEMO_MENU_CH2)&&item<4)count=item==3?6:2;
+    else if(kind==DEMO_MENU_TRIGGER&&item<4)count=item==0||item==2?3:item==3?4:2;
+    else if(kind==DEMO_MENU_TIME&&item==0)count=demo->screen.zoom_enabled?demo->time_index+1:TIME_SCALE_COUNT;
+    else if(kind==DEMO_MENU_PROCESSING&&item<5)count=item<2?4:item==3?3:2;
+    else if(kind==DEMO_MENU_CURSOR&&item==0)count=3;
+    else if(kind==DEMO_MENU_PC&&item==0)count=PC_BAUD_COUNT;
+    if(!count||value>=count)return 0;
+    apply_option(demo,kind,item,value);return 1;
+}
+
+void demo_signal_pc_status(DemoSignal *demo, int available, unsigned baud, int active)
+{
+    int i;
+    demo->pc_available = !!available;
+    demo->pc_active = !!active;
+    for (i = 0; i < PC_BAUD_COUNT; ++i)
+        if (pc_bauds[i] == baud) { demo->pc_baud_index = i; break; }
+    refresh_menu(demo);
+}
+
+void demo_signal_set_trigger_voltage(DemoSignal *demo, double voltage)
+{
+    if(!demo||!isfinite(voltage))return;
+    demo_signal_set_trigger_preview_y(demo,(int)lround(source_zero(demo)-
+        voltage*PIXELS_PER_DIV/volts_per_div(demo,demo->trigger_source_index)));
+    demo_signal_ui_apply_trigger(demo);
 }
 
 static void toggle_measurement(DemoSignal *demo)
@@ -1667,7 +1758,7 @@ void demo_signal_ui_menu_adjust(DemoSignal *demo, int steps)
     update_text(demo, 0);
 }
 
-static void force_trigger(DemoSignal *demo)
+void demo_signal_force_trigger(DemoSignal *demo)
 {
     if (demo->waveform_loaded) return;
     demo->phase = (demo->phase + 48) % SCOPE_PLOT_WIDTH;
@@ -1757,7 +1848,7 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
     } else if (demo->menu_kind == DEMO_MENU_PC && item == 1) {
         return DEMO_ACTION_NONE;
     } else if (demo->menu_kind == DEMO_MENU_TRIGGER && item == 4) {
-        force_trigger(demo);
+        demo_signal_force_trigger(demo);
     } else if (demo->menu_kind == DEMO_MENU_TRIGGER && item == 5) {
         reset_trigger_level(demo);
     } else if (demo->menu_kind == DEMO_MENU_TIME && item == 1) {
@@ -1842,7 +1933,11 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
         apply_edit(demo);
         return DEMO_ACTION_NONE;
     } else if (demo->menu_kind == DEMO_MENU_PC) {
-        small_choice = index == 0;
+        if (index == 0) {
+            demo->edit_value = (current_menu_value(demo) + (direction < 0 ? PC_BAUD_COUNT - 1 : 1)) % PC_BAUD_COUNT;
+            apply_edit(demo);
+            return DEMO_ACTION_NONE;
+        }
     }
     if (small_choice) {
         count = menu_value_count(demo);
@@ -2060,7 +2155,7 @@ void demo_signal_export_wave(const DemoSignal *demo, DemoWaveCapture *wave)
     memcpy(wave->ch2, demo->ch2, sizeof(wave->ch2));
     for (channel = 0; channel < 2; ++channel) {
         wave->zero_y[channel] = demo->screen.channel_zero_y[channel];
-        wave->mv_per_div[channel] = scale_mv[demo->scale_index[channel]] *
+        wave->mv_per_div[channel] = demo_signal_scale_mv(demo->scale_index[channel]) *
                                     (demo->probe_ten[channel] ? 10 : 1);
         wave->scale_index[channel] = demo->scale_index[channel];
         wave->probe_ten[channel] = demo->probe_ten[channel];
@@ -2099,7 +2194,7 @@ void demo_signal_ui_show_wave(DemoSignal *demo, const char *name,
         if (demo->loaded_wave.mv_per_div[channel] <= 0 ||
             demo->loaded_wave.mv_per_div[channel] > 50000)
             demo->loaded_wave.mv_per_div[channel] =
-                scale_mv[demo->loaded_wave.scale_index[channel]] *
+                demo_signal_scale_mv(demo->loaded_wave.scale_index[channel]) *
                 (demo->loaded_wave.probe_ten[channel] ? 10 : 1);
         demo->scale_index[channel] = demo->loaded_wave.scale_index[channel];
         demo->probe_ten[channel] = demo->loaded_wave.probe_ten[channel];
@@ -2311,7 +2406,7 @@ DemoAction demo_signal_press_at(DemoSignal *demo, DemoControl control,
         if (demo->waveform_loaded) {
             if (!long_press) action = DEMO_ACTION_BROWSE_CLOSE;
         } else if (long_press) {
-            force_trigger(demo);
+            demo_signal_force_trigger(demo);
             forced_frame = 1;
         } else demo_signal_ui_toggle_run(demo);
     }

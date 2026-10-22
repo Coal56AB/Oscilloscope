@@ -1023,12 +1023,15 @@ static void release_buffers(void)
 
 static LRESULT CALLBACK controls_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
+    int notice_was_visible = demo.screen.status_visible;
+    demo_signal_update_time(&demo, GetTickCount64());
+    if (notice_was_visible && !demo.screen.status_visible) invalidate_windows();
     switch (message) {
         case WM_CREATE:
             SetTimer(window, 1, 25, NULL);
             return 0;
         case WM_TIMER: {
-            int refresh = demo.screen.running || demo.notice_ticks > 0;
+            int refresh = demo.screen.running || demo.screen.status_visible;
             int i;
             ULONGLONG now = GetTickCount64();
             if (splash_until) {
@@ -1297,6 +1300,9 @@ static int mouse_from_touch(void)
 
 static LRESULT CALLBACK lcd_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
+    int notice_was_visible = demo.screen.status_visible;
+    demo_signal_update_time(&demo, GetTickCount64());
+    if (notice_was_visible && !demo.screen.status_visible) invalidate_windows();
     switch (message) {
         case WM_POINTERDOWN:
         case WM_POINTERUPDATE:
@@ -1363,6 +1369,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
 
     SetProcessDPIAware();
     demo_signal_init(&demo);
+    demo_signal_update_time(&demo, GetTickCount64());
     if (!create_buffers() || !panel_init()) {
         MessageBoxW(NULL, L"Cannot create preview buffers.", L"Oscill LCD", MB_ICONERROR);
         release_buffers();

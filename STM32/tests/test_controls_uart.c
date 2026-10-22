@@ -19,6 +19,35 @@ static uint8_t *active_data;
 static unsigned starts;
 static unsigned aborts;
 static unsigned complete_inside_start;
+static uint8_t *receive_byte;
+
+/** Предоставить тесту назначенный HAL буфер приёма одного байта. */
+HAL_StatusTypeDef HAL_UART_Receive_IT(UART_HandleTypeDef *uart, uint8_t *data, uint16_t size)
+{
+  assert(uart == &panel_uart && size == 1U);
+  receive_byte = data;
+  return HAL_OK;
+}
+
+/** Имитировать остановку приёма при восстановлении после HAL error. */
+HAL_StatusTypeDef HAL_UART_AbortReceive(UART_HandleTypeDef *uart)
+{
+  assert(uart == &panel_uart);
+  receive_byte = NULL;
+  return HAL_OK;
+}
+
+/** Пропустить байты через настоящий callback транспорта. */
+static void receive(const uint8_t *bytes, unsigned size)
+{
+  unsigned i;
+  for (i = 0; i < size; ++i)
+  {
+    assert(receive_byte);
+    *receive_byte = bytes[i];
+    controls_uart_rx_complete(&panel_uart);
+  }
+}
 
 /**
  * @brief   Заменить запуск аппаратного TX управляемым результатом HAL.
@@ -167,10 +196,54 @@ static void test_timeout_and_callback_order(void)
 /**
  * @brief   Выполнить сценарии, которые нельзя проверить одной компиляцией HAL.
  */
+static void test_receive_commands(void)
+{
+  Stm32Controls controls;
+  ControlEvent command = {CONTROL_SET_SCALE, 1, 100, 0, 2000};
+  ControlEvent received;
+  uint8_t packet[CONTROL_PACKET_SIZE];
+  uint8_t garbage[128] = {0};
+  prepare(&controls);
+  assert(control_encode(packet, &command));
+  receive(packet, 9);
+  assert(!controls_uart_command(&received, 10));
+  receive(packet + 9, sizeof(packet) - 9);
+  assert(controls_uart_command(&received, 11));
+  assert(received.type == CONTROL_SET_SCALE && received.value == 2000 && received.control == 1);
+  receive(packet, sizeof(packet));
+  assert(!controls_uart_command(&received, 12));
+  packet[12] ^= 1;
+  receive(packet, sizeof(packet));
+  assert(!controls_uart_command(&received, 13));
+  command.sequence = 101;
+  assert(control_encode(packet, &command));
+  receive(packet, sizeof(packet));
+  assert(controls_uart_command(&received, 14));
+  command.sequence = 0;
+  assert(control_encode(packet, &command));
+  receive(packet, sizeof(packet));
+  assert(!controls_uart_command(&received, 15));
+  receive(packet, sizeof(packet));
+  assert(controls_uart_command(&received, 2014));
+  receive(garbage, sizeof(garbage));
+  assert(!controls_uart_command(&received, 2015));
+  assert(controls_uart_metrics()->rx_overflows == 1);
+  receive(packet, sizeof(packet));
+  assert(controls_uart_command(&received, 2016));
+  controls_uart_error(&panel_uart);
+  assert(!controls_uart_command(&received, 2017));
+  controls_uart_poll(&controls, 2017);
+  receive(packet, sizeof(packet));
+  assert(controls_uart_command(&received, 2018));
+  assert(controls_uart_metrics()->rx_errors == 1);
+}
+
+/** Выполнить сценарии передачи и приёма с независимым восстановлением. */
 int main(void)
 {
   test_busy_and_completion();
   test_error_retry();
   test_timeout_and_callback_order();
+  test_receive_commands();
   return 0;
 }

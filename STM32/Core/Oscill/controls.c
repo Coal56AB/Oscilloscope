@@ -41,6 +41,22 @@ int stm32_controls_init(Stm32Controls *controls)
 }
 
 /**
+ * @brief   Передать рассчитанный параметр с общей нумерацией событий.
+ * @details Кодек проверяет тип, диапазон и идентификатор до занятия очереди.
+ *          Вызывать только из главного цикла после применения состояния.
+ */
+void stm32_controls_report(Stm32Controls *controls, ControlEventType type, unsigned id,
+                           int value, uint32_t timestamp_ms)
+{
+  ControlEvent event = {type, (uint8_t)id, 0, timestamp_ms, value};
+  uint8_t packet[CONTROL_PACKET_SIZE];
+  if (controls && control_encode(packet, &event))
+  {
+    enqueue(controls, type, id, value, timestamp_ms);
+  }
+}
+
+/**
  * @brief   Сохранить готовое событие кнопки или энкодера.
  * @details Принимает время фактического изменения входа, до задержки фильтра.
  *          Неверные идентификаторы и типы не должны попадать в общий протокол.

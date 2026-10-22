@@ -28,24 +28,23 @@ Push-Location $Output
 try {
     & $Vivado -mode batch -log "$Output/logs/vivado.log" -journal "$Output/logs/vivado.jou" -source "$PSScriptRoot/fpga/build.tcl" -tclargs "$Output/hardware" $Dependency $Part
     if ($LASTEXITCODE -ne 0) { throw 'Vivado build failed' }
-    $StandaloneFiles = @('fsbl.elf', 'diagnostic.elf', 'diagnostic.bif')
+    $StandaloneFiles = @('linux/fsbl.elf', 'diagnostic/diagnostic.elf', 'diagnostic/diagnostic.bif')
     foreach ($Name in $StandaloneFiles) {
-        if (Test-Path -LiteralPath "$Output/diagnostic/$Name") {
-            Remove-Item -LiteralPath "$Output/diagnostic/$Name" -Force
+        if (Test-Path -LiteralPath "$Output/$Name") {
+            Remove-Item -LiteralPath "$Output/$Name" -Force
         }
     }
-    & $Xsct "$PSScriptRoot/standalone/build.tcl" "$Output/hardware" "$Output/diagnostic"
+    & $Xsct "$PSScriptRoot/standalone/build.tcl" "$Output/hardware" $Output
     if ($LASTEXITCODE -ne 0) { throw 'Standalone build failed' }
     # SDK 2019.1 xsct.bat can return zero even when its Tcl script fails.
     foreach ($Name in $StandaloneFiles) {
-        if (!(Test-Path -LiteralPath "$Output/diagnostic/$Name" -PathType Leaf) -or
-            (Get-Item -LiteralPath "$Output/diagnostic/$Name").Length -eq 0) {
+        if (!(Test-Path -LiteralPath "$Output/$Name" -PathType Leaf) -or
+            (Get-Item -LiteralPath "$Output/$Name").Length -eq 0) {
             throw "Standalone build did not produce $Name; check SDK output"
         }
     }
     & $Bootgen -arch zynq -image "$Output/diagnostic/diagnostic.bif" -o "$Output/diagnostic/BOOT.BIN" -w on
     if ($LASTEXITCODE -ne 0) { throw 'Boot image creation failed' }
-    & "$PSScriptRoot/standalone/package.ps1" -Output $Output -IpRepository $Dependency -Part $Part
     Write-Host "SD test firmware: $Output/diagnostic/BOOT.BIN"
     Write-Host "Vivado project: $PSScriptRoot/oscill.xpr"
     Write-Host "SDK workspace: $PSScriptRoot/oscill.sdk"

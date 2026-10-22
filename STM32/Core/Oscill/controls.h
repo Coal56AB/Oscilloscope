@@ -32,4 +32,7 @@ void stm32_controls_poll(Stm32Controls *controls, uint32_t now_ms);
 int stm32_controls_peek(const Stm32Controls *controls, uint8_t packet[CONTROL_PACKET_SIZE]);
 /** Освободить старейшее событие после отправки; вызывает только главный цикл. */
 void stm32_controls_sent(Stm32Controls *controls);
+/** Поставить проверенный итоговый параметр в ту же очередь, что события панели. */
+void stm32_controls_report(Stm32Controls *controls, ControlEventType type, unsigned id,
+                           int value, uint32_t timestamp_ms);
 #endif

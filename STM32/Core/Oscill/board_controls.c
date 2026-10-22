@@ -77,7 +77,7 @@ void board_controls_init(void)
  * @details Общая библиотека владеет debounce и декодером фаз. Время DOWN/UP
  *          берётся до фильтрации; направление и детенты не вычисляются повторно.
  */
-void board_controls_poll(Stm32Controls *controls, uint32_t now_ms)
+void board_controls_poll(PanelState *state, uint32_t now_ms)
 {
   unsigned i;
   for (i = 0; i < CONTROL_ID_COUNT; ++i)
@@ -87,7 +87,7 @@ void board_controls_poll(Stm32Controls *controls, uint32_t now_ms)
     int pressed = GPIO_Read_Switch(&switches[i]);
     if (pressed >= 0 && (uint32_t)pressed != previous)
     {
-      stm32_controls_input(controls, pressed ? CONTROL_DOWN : CONTROL_UP, i, 0,
+      panel_state_input(state, pressed ? CONTROL_DOWN : CONTROL_UP, i, 0,
                            changed_ms ? changed_ms : now_ms);
     }
   }
@@ -95,10 +95,10 @@ void board_controls_poll(Stm32Controls *controls, uint32_t now_ms)
   {
     uint32_t invalid = encoders[i].invalid_transitions;
     int step = Encoder_Update(&encoders[i]);
-    controls->invalid_transitions += (uint32_t)(encoders[i].invalid_transitions - invalid);
+    state->events->invalid_transitions += (uint32_t)(encoders[i].invalid_transitions - invalid);
     if (step)
     {
-      stm32_controls_input(controls, CONTROL_ROTATE, i, step, now_ms);
+      panel_state_input(state, CONTROL_ROTATE, i, step, now_ms);
     }
   }
   GPIO_LED_Dynamic_Handle(&run_led);

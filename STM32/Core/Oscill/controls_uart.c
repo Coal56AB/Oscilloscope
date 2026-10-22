@@ -21,6 +21,26 @@ static uint8_t retry_pending;
 static uint32_t tx_started_ms;
 static uint32_t retry_started_ms;
 static ControlsUartMetrics metrics;
+#define UART_RX_BYTES 128U
+static uint8_t rx_byte;
+static uint8_t rx_data[UART_RX_BYTES];
+static volatile unsigned rx_head;
+static volatile unsigned rx_tail;
+static volatile uint8_t rx_armed;
+static volatile uint8_t rx_failed;
+static volatile uint8_t rx_overflow;
+static ControlParser rx_parser;
+static uint32_t last_command_ms;
+
+/**
+ * @brief   Перевзвести побайтовый RX, не меняя очередь приложения.
+ * @details HAL вызывает завершение после освобождения RxState; при ошибке
+ *          повтор произойдёт из главного цикла. TX имеет независимое состояние.
+ */
+static void start_receive(void)
+{
+  rx_armed = HAL_UART_Receive_IT(control_uart, &rx_byte, 1U) == HAL_OK;
+}
 
 /**
  * @brief   Подготовить транспорт к работе с единственным UART панели.
@@ -36,6 +56,14 @@ void controls_uart_init(UART_HandleTypeDef *uart)
   tx_active = 0U;
   retry_pending = 0U;
   memset(&metrics, 0, sizeof(metrics));
+  rx_head = rx_tail = 0U;
+  rx_failed = rx_overflow = rx_armed = 0U;
+  last_command_ms = 0U;
+  control_parser_init(&rx_parser);
+  if (uart != NULL)
+  {
+    start_receive();
+  }
 }
 
 /**
@@ -53,6 +81,19 @@ void controls_uart_poll(Stm32Controls *controls, uint32_t now_ms)
   if (control_uart == NULL)
   {
     return;
+  }
+  if (rx_failed)
+  {
+    HAL_UART_AbortReceive(control_uart);
+    rx_failed = 0U;
+    rx_armed = 0U;
+    rx_tail = rx_head;
+    control_parser_init(&rx_parser);
+    ++metrics.rx_errors;
+  }
+  if (!rx_armed)
+  {
+    start_receive();
   }
 
   if (tx_active)
@@ -137,7 +178,71 @@ void controls_uart_error(UART_HandleTypeDef *uart)
   if (uart == control_uart)
   {
     tx_error = 1U;
+    rx_failed = 1U;
   }
+}
+
+/**
+ * @brief   Перенести байт из HAL в ограниченный SPSC буфер.
+ * @details IRQ изменяет только head; tail принадлежит главному циклу.
+ *          Барьер публикует содержимое до head. Переполнение отменяет фрагмент.
+ */
+void controls_uart_rx_complete(UART_HandleTypeDef *uart)
+{
+  if (uart == control_uart)
+  {
+    unsigned next = (rx_head + 1U) % UART_RX_BYTES;
+    if (next == rx_tail)
+    {
+      rx_overflow = 1U;
+    }
+    else
+    {
+      rx_data[rx_head] = rx_byte;
+      __DMB();
+      rx_head = next;
+    }
+    start_receive();
+  }
+}
+
+/**
+ * @brief   Разобрать команду вне IRQ с проверкой CRC и sequence.
+ * @details После 2 с без принятых пакетов разрешается новая эпоха отправителя,
+ *          поэтому перезапуск GUI не требует перезапуска STM32.
+ */
+int controls_uart_command(ControlEvent *command, uint32_t now_ms)
+{
+  if (rx_failed)
+  {
+    return 0;
+  }
+  if (rx_overflow)
+  {
+    rx_overflow = 0U;
+    rx_tail = rx_head;
+    control_parser_init(&rx_parser);
+    ++metrics.rx_overflows;
+  }
+  if (rx_parser.have_sequence && (uint32_t)(now_ms - last_command_ms) >= 2000U)
+  {
+    control_parser_init(&rx_parser);
+  }
+  while (rx_tail != rx_head)
+  {
+    uint8_t byte;
+    __DMB();
+    byte = rx_data[rx_tail];
+    __DMB();
+    rx_tail = (rx_tail + 1U) % UART_RX_BYTES;
+    if (control_parser_feed(&rx_parser, byte, command))
+    {
+      last_command_ms = now_ms;
+      ++metrics.received;
+      return 1;
+    }
+  }
+  return 0;
 }
 
 /**

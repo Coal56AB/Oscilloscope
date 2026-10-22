@@ -22,6 +22,7 @@
 
 - [`ZYNQ7020/`](ZYNQ7020/README.md) — приложение осциллографа, Linux и FPGA.
 - [`STM32/`](STM32/README.md) — контроллер кнопок и энкодеров.
+- [`TERMINAL/`](TERMINAL/README.md) — ПК-приложение для USB–UART, управления осциллографом и просмотра SD.
 - [`PCB/`](PCB/) — схемы, печатная плата и файлы изготовления.
 
 Описание интерфейса — в [README GUI](ZYNQ7020/gui/README.md), устройство платы — в [README PCB](https://github.com/Coal56AB/OscilPCB/blob/5c4f6dd616d461db2b3ec94a01ae66af5781a7e2/README.md), сборка — в [документации разработчика](docs/BUILD.md).

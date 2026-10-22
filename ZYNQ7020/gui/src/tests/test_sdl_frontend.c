@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -5,6 +6,63 @@
 #include "../preview_sdl.c"
 #undef main
 #include <assert.h>
+#include <fcntl.h>
+
+static void test_console_baud_and_status(void)
+{
+    unsigned actual;
+    int master = open("/dev/ptmx", O_RDWR | O_NOCTTY);
+    assert(master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0);
+    console_path = ptsname(master);
+    assert(console_path && linux_serial_set_baud(console_path, 115200));
+    demo_signal_init(&demo);
+    demo_signal_pc_status(&demo, 1, 115200, 0);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_PC);
+    assert(demo_signal_set_option(&demo, DEMO_MENU_PC, 0, 8));
+    update_pc_console(100);
+    assert(linux_serial_get_baud(console_path, &actual) && actual == 1000000);
+    assert(strcmp(demo.screen.menu_values[1], "USB-UART READY") == 0);
+    assert(!linux_serial_set_baud(console_path, 12345));
+    assert(linux_serial_get_baud(console_path, &actual) && actual == 1000000);
+    console_path = "/no/such/tty";
+    assert(demo_signal_set_option(&demo, DEMO_MENU_PC, 0, 4));
+    update_pc_console(101);
+    assert(demo_signal_pc_baud(demo.pc_baud_index) == 1000000);
+    assert(strcmp(demo.screen.status_message, "UART BAUD FAILED") == 0);
+    close(master);
+    console_path = NULL;
+    console_baud = 115200;
+}
+
+static int scale_request_count, scale_request_mv;
+static int test_scale_request(void *context, unsigned channel, int millivolts)
+{
+    assert(context == &demo && channel == 0);
+    ++scale_request_count;
+    scale_request_mv = millivolts;
+    return 1;
+}
+
+static void test_panel_owned_scale(void)
+{
+    demo_signal_init(&demo);
+    demo_signal_bind_scale_control(&demo, test_scale_request, &demo);
+    demo_signal_zoom_channel(&demo, 0, 1);
+    assert(scale_request_count == 1 && scale_request_mv == 1000);
+    assert(demo.scale_index[0] == 2);
+    demo_signal_accept_scale(&demo, 0, 1000);
+    assert(demo.scale_index[0] == 3 && scale_request_count == 1);
+    demo_signal_set_option(&demo, DEMO_MENU_CH1, 3, 5);
+    assert(scale_request_count == 2 && scale_request_mv == 5000);
+    assert(demo.scale_index[0] == 3);
+    demo_signal_accept_scale(&demo, 0, 5000);
+    assert(demo.scale_index[0] == 5);
+    demo_signal_set_option(&demo, DEMO_MENU_CH1, 2, 1);
+    assert(demo.probe_ten[0] == 1 && scale_request_count == 2);
+    demo_signal_accept_scale(&demo, 0, 123);
+    assert(demo.scale_index[0] == 5);
+    demo_signal_bind_scale_control(&demo, NULL, NULL);
+}
 
 static void test_fft_fine_touch(void)
 {
@@ -38,6 +96,23 @@ static void test_fft_fine_touch(void)
     }
 }
 
+static void test_remote_commands(void)
+{
+    FILE *response;int previous=demo.time_index;char header[32];
+    response=tmpfile();assert(response);
+    assert(remote_command("set time_index 4",response,NULL));
+    assert(demo.time_index!=previous);fclose(response);
+    previous=demo.time_index;response=tmpfile();assert(response);
+    assert(!remote_command("set time_index 4 trailing",response,NULL));
+    assert(!remote_command("set time_index 5000",response,NULL));
+    assert(!remote_command("set trigger_mode 3",response,NULL));
+    assert(demo.time_index==previous);fclose(response);
+    response=tmpfile();assert(response);assert(remote_command("csv",response,NULL));
+    rewind(response);assert(fgets(header,sizeof(header),response));assert(!strcmp(header,"#oscill_wave=2\n"));fclose(response);
+    response=tmpfile();assert(response);assert(remote_command("state",response,NULL));
+    rewind(response);assert(fread(header,1,1,response)==1);assert(header[0]=='{');fclose(response);
+}
+
 int main(void)
 {
     char directory[]="/dev/shm/oscill-export-XXXXXX", path[PATH_MAX];
@@ -48,7 +123,10 @@ int main(void)
     expected=malloc(SCOPE_WIDTH*SCOPE_HEIGHT*sizeof(*expected));
     assert(screen_pixels && expected);
     panel_enabled=0;
+    test_console_baud_and_status();
     test_fft_fine_touch();
+    test_remote_commands();
+    test_panel_owned_scale();
     demo_signal_init(&demo);
     demo_signal_zoom_time(&demo,-6); /* Default 10 kHz signal at 10 ms/div. */
     assert(strcmp(demo.screen.time_scale,"10 ms")==0);

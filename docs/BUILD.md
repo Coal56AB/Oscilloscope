@@ -2,7 +2,7 @@
 
 Команды ниже выполняются из корня репозитория. Выходные каталоги можно вынести за его пределы. Версии библиотек в выполненных проверках: SDL2 2.30.12, libdrm 2.4.124; Buildroot закреплён на 2025.02.12. Результаты — [TESTING.md](TESTING.md).
 
-Результаты Zynq находятся в `ZYNQ7020/output/`: `hardware/` — bitstream и handoff, `diagnostic/` — тест платы, `linux/` — Linux и архив релиза, `logs/` — журналы. Сборки GUI располагаются в `ZYNQ7020/gui/output/<платформа>/`, Keil и проверки STM32 — в `STM32/output/`. Общего `output/` в корне репозитория нет.
+Результаты Zynq находятся в `ZYNQ7020/output/`: `hardware/` — bitstream и handoff, `diagnostic/` — тест платы, `linux/` — `BOOT.BIN`, `image.bin`, `qspi.bin` и `fsbl.elf` для SDK Program Flash, `logs/` — журналы и промежуточный Linux BIF. Сборки GUI располагаются в `ZYNQ7020/gui/output/<платформа>/`, Keil и проверки STM32 — в `STM32/output/`. Общего `output/` в корне репозитория нет.
 
 ## Полная сборка Zynq
 
@@ -10,9 +10,9 @@
 
 1. Закрыть Vivado/SDK с этим проектом и открыть PowerShell в корне репозитория.
 2. Выполнить `./ZYNQ7020/linux/build.ps1` и дождаться `Ready`.
-3. Забрать `qspi.bin`, `sdcard.img` и `oscill-linux-gui.zip` из `ZYNQ7020/output/linux/`.
+3. Забрать `BOOT.BIN`, `image.bin`, `qspi.bin` и `fsbl.elf` из `ZYNQ7020/output/linux/`.
 
-Скрипт выполняет аппаратную сборку, FSBL, Linux с текущим GUI, упаковку BOOT, SD/QSPI и проверку образов. Для раздельной записи в том же каталоге находятся `BOOT.BIN`, `image.bin` и `fsbl.elf`. Настройки другого окружения можно передать через `-Config /путь/build-environment.json`.
+Скрипт выполняет аппаратную сборку, FSBL, Linux с текущим GUI, формирование BOOT/QSPI и проверку образов. `fsbl.elf` находится рядом с образами в `ZYNQ7020/output/linux/`. Настройки другого окружения можно передать через `-Config /путь/build-environment.json`.
 
 ## Подготовка полной сборки Zynq
 
@@ -69,7 +69,7 @@ ctest --test-dir ZYNQ7020/gui/output/linux --output-on-failure
 ./ZYNQ7020/gui/output/linux/scope_preview --capture record.oscraw
 ```
 
-Новые serial/raw/DRM параметры относятся к SDL frontend. `--serial /dev/ttyUSB0 --baud 115200` включает асинхронное управление. `--data-dir /media/scope` выбирает каталог существующего BMP/CSV хранилища. Штатный запуск дополнительно задаёт `--require-data-device`, чтобы разрешать экспорт только на файловую систему присутствующего блочного носителя. Raw-файл формируется через API `capture_file.h`; UI экспорта большого raw ещё не подключён. Демо raw не моделирует реальное поступление 400 МБ/с.
+Новые serial/raw/DRM параметры относятся к SDL frontend. `--serial auto --baud 115200` включает автоматический поиск USB-панели STM32; это штатная настройка `/etc/default/oscill`. Конкретный порт задаётся как `--serial /dev/ttyUSB0 --baud 115200`. `--data-dir /media/scope` выбирает каталог существующего BMP/CSV хранилища. Штатный запуск дополнительно задаёт `--require-data-device`, чтобы разрешать экспорт только на файловую систему присутствующего блочного носителя. Raw-файл формируется через API `capture_file.h`; UI экспорта большого raw ещё не подключён. Демо raw не моделирует реальное поступление 400 МБ/с.
 
 Параметры CMake: `SCOPE_BUILD_PREVIEW`, `SCOPE_BUILD_BENCHMARKS`, `BUILD_TESTING`; `SCOPE_ENABLE_DRM`, `SCOPE_ENABLE_FRAMEBUFFER` и `SCOPE_ENABLE_ZYNQ` выключены по умолчанию. Для прямого DRM нужны `libdrm-dev` и SDL2 с dummy video:
 
@@ -116,27 +116,13 @@ Rootfs-overlay задаёт автозапуск, настройки порто�
 ./ZYNQ7020/linux/package.ps1 -Images D:/build/oscill-linux/images
 ```
 
-Для `sdcard.img` на Linux host нужны genimage, dosfstools и mtools. Genimage можно собрать командой `make -C /absolute/buildroot-2025.02.12 O=/absolute/output/oscill-linux host-genimage` и добавить `/absolute/output/oscill-linux/host/bin` в PATH:
-
-```sh
-sh ZYNQ7020/linux/assemble-sd.sh /absolute/buildroot/images /absolute/Linux-BOOT.BIN /absolute/release
-```
-
-Для QSPI FIT с ядром, DTB и initramfs создаётся сборкой как `image.bin`. Тот же каталог релиза упаковывается:
+Для QSPI FIT с ядром, DTB и initramfs создаётся сборкой как `image.bin`. Из `BOOT.BIN` и `image.bin` формируется полный образ:
 
 ```sh
 python3 ZYNQ7020/linux/assemble-qspi.py /absolute/release
 ```
 
-Сборщик проверяет размеры и формирует `qspi.bin` на 16 МиБ: `BOOT.BIN` с адреса 0, `image.bin` с 0x520000. Лимиты файлов — 0x500000 и 0x9e0000 байт соответственно. Диапазон 0x500000–0x51ffff оставлен свободным; последние 1 МиБ от 0xf00000 отведены настройкам. U-Boot environment хранится в самом U-Boot. Это один системный слот, без A/B обновления.
-
-После переноса собранного каталога в `ZYNQ7020/output/linux`:
-
-```powershell
-./ZYNQ7020/linux/release.ps1
-```
-
-Получается `ZYNQ7020/output/linux/oscill-linux-gui.zip` с SD/QSPI образами, первым запуском, размерами и SHA-256. `source-files.json` фиксирует хеши текущих исходников, включая незакоммиченные изменения; исходные Git SHA также указаны в manifest. Порядок запуска — [BRINGUP.md](BRINGUP.md).
+Сборщик проверяет размеры и формирует `qspi.bin` на 16 МиБ: `BOOT.BIN` с адреса 0, `image.bin` с 0x520000. Лимиты файлов — 0x500000 и 0x9e0000 байт соответственно. U-Boot сначала читает 40-байтовый заголовок FIT, проверяет его и длину в границах раздела, затем читает сам образ без пустого хвоста. Диапазон 0x500000–0x51ffff оставлен свободным; последние 1 МиБ от 0xf00000 отведены настройкам. U-Boot environment хранится в самом U-Boot. Это один системный слот, без A/B обновления.
 
 Независимая проверка собранных файлов без устройства:
 
@@ -144,16 +130,16 @@ python3 ZYNQ7020/linux/assemble-qspi.py /absolute/release
 python3 ZYNQ7020/linux/tests/verify_release.py /absolute/release
 ```
 
-Проверка Linux/GUI в QEMU 10.2.0 с SD-образом:
+Проверка Linux/GUI в QEMU 10.2.0 с QSPI-образом:
 
 ```sh
-qemu-system-arm -M xilinx-zynq-a9,boot-mode=sd -m 512M -smp 1 \
+qemu-system-arm -M xilinx-zynq-a9,boot-mode=qspi -m 512M -smp 1 \
   -kernel /absolute/buildroot/images/u-boot.elf \
-  -drive file=/absolute/release/sdcard.img,if=sd,format=raw,snapshot=on \
+  -drive file=/absolute/release/qspi.bin,if=mtd,index=8,format=raw,snapshot=on \
   -display none -serial null -serial stdio -monitor none -nic none
 ```
 
-Для QSPI в той же команде задать `boot-mode=qspi` и заменить `-drive` на `file=/absolute/release/qspi.bin,if=mtd,index=8,format=raw,snapshot=on`. Эмуляция начинает загрузку с U-Boot ELF; BootROM, FSBL и PL этим способом не проверяются. Остальные границы проверки — в [TESTING.md](TESTING.md).
+Эмуляция начинает загрузку с U-Boot ELF; BootROM, FSBL и PL этим способом не проверяются. Остальные границы проверки — в [TESTING.md](TESTING.md).
 
 ## Аппаратный проект и тест платы
 
@@ -185,7 +171,7 @@ HDMI bitstream строится отдельно от packer simulation. ADC con
 
 Прошивка STM32F103RCT6: открыть `STM32/oscill_controls.ioc` в CubeMX 6.12.1, выполнить Generate Code, затем Rebuild в `STM32/MDK-ARM/oscill_controls.uvprojx` с Arm Compiler 6. HAL/CMSIS находятся в проекте, результаты Keil — в `STM32/output/`. Распиновка, настройки и сохранение приложения при генерации — [STM32.md](STM32.md), запись — [FLASHING.md](FLASHING.md#stm32).
 
-Переносимая обработка панели и UART-транспорт проверяются отдельно (`stm32_controls`, `stm32_controls_uart`):
+Переносимая обработка панели, UART, масштабы в обычном/автономном режимах и GPIO/ADC adapter проверяются отдельно:
 
 ```sh
 cmake -S STM32 -B STM32/output/tests -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -199,4 +185,7 @@ ctest --test-dir STM32/output/tests --output-on-failure
 python STM32/tests/check_project.py
 ```
 
-Фактически выполненные сборки и ограничение установленного Keil — [TESTING.md](TESTING.md).
+Для отладки без Zynq задать `STM32_STANDALONE_DEBUG=1` в `STM32/Core/Oscill/oscill_config.h`
+или Define компилятора. Обычная сборка использует `0`. Поведение — [STM32.md](STM32.md#автономная-отладка-без-zynq).
+
+Фактически выполненные сборки — [TESTING.md](TESTING.md).

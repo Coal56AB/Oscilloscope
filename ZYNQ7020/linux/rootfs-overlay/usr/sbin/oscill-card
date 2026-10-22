@@ -1,15 +1,68 @@
 #!/bin/sh
-# Explicit mount/unmount; no automatic formatting or guessed block device.
+# Remember the selected data filesystem on the medium; never format it.
 set -eu
+TARGET=/media/scope
+MARKER=.oscill-data
+DISABLED=/run/oscill-card.disabled
+
+mounted_source() {
+    awk -v target="$1" '$2 == target {print $1; exit}' /proc/mounts
+}
+
+mount_selected() {
+    mkdir -p "$TARGET"
+    current=$(mounted_source "$TARGET")
+    [ -z "$current" ] || [ "$current" = "$1" ] || {
+        echo 'Another data medium is already mounted' >&2; return 1;
+    }
+    [ -n "$current" ] || mount -o nosuid,nodev,noexec "$1" "$TARGET"
+    printf 'Oscill data\n' > "$TARGET/$MARKER"
+    sync
+    rm -f "$DISABLED"
+}
+
+auto_mount() {
+    [ ! -e "$DISABLED" ] || return 0
+    [ -z "$(mounted_source "$TARGET")" ] || return 0
+    mkdir -p /run/oscill-card-probe
+    for device in /dev/mmcblk[0-9]p[0-9]* /dev/sd[a-z][0-9]* /dev/mmcblk[0-9] /dev/sd[a-z]; do
+        [ -b "$device" ] || continue
+        # Do not touch a filesystem used elsewhere, including the boot SD.
+        if awk -v device="$device" '$1 == device {found=1} END {exit !found}' /proc/mounts; then continue; fi
+        if blkid "$device" | grep -q 'LABEL="OSCILL"'; then
+            mount_selected "$device"
+            return
+        fi
+        if mount -o ro,nosuid,nodev,noexec "$device" /run/oscill-card-probe 2>/dev/null; then
+            selected=0
+            [ ! -f "/run/oscill-card-probe/$MARKER" ] || selected=1
+            umount /run/oscill-card-probe || return 1
+            if [ "$selected" = 1 ]; then mount_selected "$device"; return; fi
+        fi
+    done
+}
+
+if [ "${1:-}" = watch ]; then
+    while :; do "$0" auto || :; sleep 2; done
+fi
+
+# Serialize explicit operations with the automatic watcher.
+if ! mkdir /run/oscill-card.lock 2>/dev/null; then
+    [ "${1:-}" = auto ] && exit 0
+    echo 'Data medium operation in progress; try again' >&2
+    exit 1
+fi
+trap 'rmdir /run/oscill-card.lock' EXIT HUP INT TERM
 case "${1:-}" in
 mount)
-    [ "$#" -eq 2 ] && [ -b "$2" ] || { echo 'Usage: oscill-card mount /dev/mmcblkXp1' >&2; exit 2; }
-    mkdir -p /media/scope
-    mount -o nosuid,nodev,noexec "$2" /media/scope
+    [ "$#" -eq 2 ] && [ -b "$2" ] || { echo 'Usage: oscill-card mount /dev/mmcblkXp1 or /dev/sdXN' >&2; exit 2; }
+    mount_selected "$2"
     ;;
 unmount)
+    touch "$DISABLED"
     sync
-    umount /media/scope
+    umount "$TARGET"
     ;;
-*) echo 'Usage: oscill-card mount DEVICE | unmount' >&2; exit 2 ;;
+auto) auto_mount ;;
+*) echo 'Usage: oscill-card mount DEVICE | unmount | auto' >&2; exit 2 ;;
 esac
