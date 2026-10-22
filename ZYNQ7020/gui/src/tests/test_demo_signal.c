@@ -484,7 +484,7 @@ int main(void)
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.trigger_source_index == 1);
     demo_signal_press(&demo, DEMO_ENC_TRIGGER, 1);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.trigger_edge_index == 1);
     assert(strcmp(demo.screen.trigger_source, "CH2 FALL") == 0);
@@ -520,6 +520,10 @@ int main(void)
 
     demo_signal_init(&demo);
     previous = demo.time_index;
+    demo_signal_rotate(&demo, DEMO_ENC_TIME, 1);
+    assert(demo.time_index == previous - 1);
+    demo_signal_rotate(&demo, DEMO_ENC_TIME, -1);
+    assert(demo.time_index == previous);
     demo_signal_press(&demo, DEMO_BTN_MENU, 1);
     assert(demo.screen.zoom_enabled && demo.screen.running);
     assert(demo.screen.zoom_window_start == 256);
@@ -534,7 +538,7 @@ int main(void)
     assert(memcmp(synchronized_ch1, demo.ch1, sizeof(synchronized_ch1)) == 0);
     demo_signal_press(&demo, DEMO_BTN_RUN, 0);
     assert(demo.screen.running);
-    demo_signal_rotate(&demo, DEMO_ENC_TIME, 2);
+    demo_signal_rotate(&demo, DEMO_ENC_TIME, -2);
     assert(demo.zoom_time_index == previous - 3 && demo.time_index == previous);
     assert(strcmp(demo.screen.time_scale, "10 us") == 0);
     assert(demo.screen.zoom_window_start == 460);
@@ -609,21 +613,21 @@ int main(void)
     demo_signal_init(&demo);
     demo_signal_press_at(&demo, DEMO_BTN_CH2, 0, 1000);
     assert(demo.menu_kind == DEMO_MENU_CH2);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(strcmp(demo.screen.ch2_input, "AC   x1") == 0);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(strcmp(demo.screen.ch2_input, "AC   x10") == 0);
     demo_signal_rotate(&demo, DEMO_ENC_CH2, 1);
     demo_signal_press(&demo, DEMO_ENC_CH2, 0);
     demo_signal_rotate(&demo, DEMO_ENC_CH2, 1);
     assert(demo.channel_position[1] == -8);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 2);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -2);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.calibration_count[1] == 1 && demo.channel_position[1] == -90);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -3);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 3);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.coupling[1] == 0 && demo.screen.menu_option_count[1] == 2);
     assert(demo.screen.channel_zero_y[1] == 240);
@@ -633,7 +637,7 @@ int main(void)
 
     demo_signal_init(&demo);
     demo_signal_press_at(&demo, DEMO_BTN_CH1, 0, 1000);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 3);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -3);
     assert(strcmp(demo.screen.menu_labels[3], "V / DIV") == 0);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
@@ -672,16 +676,16 @@ int main(void)
     assert(strcmp(demo.screen.menu_labels[8], "VPP") == 0);
     assert(strcmp(demo.screen.menu_labels[16], "REMOVE ALL") == 0);
     assert(demo.screen.menu_page == NULL);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 8);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -8);
     assert(demo.measurement_selected == DEMO_MEAS_CH2_VPP);
     assert(demo.screen.menu_selected == 8);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.measurement_count == 2);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -8);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 8);
     assert(demo.measurement_selected == DEMO_MEAS_CH1_VPP);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.measurement_count == 1);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -1);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
     assert(demo.screen.menu_selected == 16);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.measurement_count == 1);
@@ -1104,7 +1108,7 @@ int main(void)
     assert(demo.menu_kind == DEMO_MENU_DEBUG);
     demo_signal_ui_menu_back(&demo);
     assert(demo.menu_kind == DEMO_MENU_MAIN);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 4);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -4);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.menu_kind == DEMO_MENU_PROCESSING && demo.menu_parent == DEMO_MENU_MAIN);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 1);

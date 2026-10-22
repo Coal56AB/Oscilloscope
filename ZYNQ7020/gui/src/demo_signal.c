@@ -2274,7 +2274,7 @@ void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps)
                 demo->zoom_offset = clamp_position(demo->zoom_offset - delta, max_offset);
                 demo_signal_notify(demo, "ZOOM / SCROLL CAPTURE");
             } else {
-                demo_signal_zoom_time(demo, steps);
+                demo_signal_zoom_time(demo, -steps);
                 return;
             }
         } else if (demo->position_mode[2]) {
@@ -2284,7 +2284,7 @@ void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps)
                                         -limit, limit);
             demo_signal_notify(demo, "HORIZONTAL POSITION");
         } else {
-            demo->time_index = clamp(demo->time_index + steps, 0,
+            demo->time_index = clamp(demo->time_index - steps, 0,
                 demo->waveform_loaded ? demo->loaded_wave.time_index : TIME_SCALE_COUNT - 1);
             if (demo->waveform_loaded) {
                 int limit = loaded_pan_limit(demo);
@@ -2297,7 +2297,7 @@ void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps)
         return;
     } else if (control == DEMO_ENC_FUNCTION) {
         if (demo->screen.menu_open) {
-            demo_signal_ui_menu_adjust(demo, steps);
+            demo_signal_ui_menu_adjust(demo, demo->screen.menu_editing ? steps : -steps);
             return;
         } else if (demo->fft_enabled && demo->screen.cursor_selected == SCOPE_CURSOR_SELECT_FFT) {
             int value = demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE ?
