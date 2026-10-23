@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /* AD9288 AXI DMA SG receiver. Coherent memory is leased read-only to userspace. */
 #include <linux/dmaengine.h>
+#include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/fs.h>
 #include <linux/io.h>
@@ -162,6 +163,11 @@ static void stop_session(struct session *s)
     cancel_delayed_work_sync(&s->monitor);
     dmaengine_terminate_sync(s->receiver->chan);
     writel(0, s->receiver->gpio);
+    /* terminate resets AXI DMA while the old stream can still be valid.
+       S2MM accepts a few beats even with RS=0. Flush those prefetched beats
+       after the input/CDC reset has propagated, before queuing a new epoch. */
+    udelay(10);
+    dmaengine_terminate_sync(s->receiver->chan);
 }
 
 static int capture_open(struct inode *inode, struct file *file)

@@ -14,7 +14,7 @@ module axis_capture_frame #(
     output reg m_axis_tlast
 );
     wire [31:0] payload_beats=payload_bytes >> 3;
-    
+
     reg [3:0] header;
     reg [31:0] beat;
     reg [63:0] sequence, first_sample;

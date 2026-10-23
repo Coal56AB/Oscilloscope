@@ -54,7 +54,13 @@ static int run(unsigned pass, unsigned rate_index)
     while (seconds() - begin < 3) {
         int ready = poll(&p, 1, 200);
         if (ready < 0 || p.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            unsigned slot;
             fprintf(stderr, "capture poll error, revents=%x\n", p.revents);
+            for (slot=0;slot<info.buffers;++slot) {
+                volatile uint32_t *header=(volatile uint32_t *)(memory+slot*info.block_bytes);
+                fprintf(stderr,"slot=%u header=%08x %08x %08x %08x seq=%u\n",
+                    slot,header[0],header[1],header[2],header[3],header[4]);
+            }
             goto out;
         }
         if (!ready) continue;
