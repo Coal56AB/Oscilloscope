@@ -4,6 +4,10 @@ PIDFILE=/run/oscill.pid
 status_stage() { /usr/bin/oscill-status --stage "$1" --error "${2:-}" || :; }
 case "${1:-start}" in
 start)
+    if grep -qw 'oscill.update=1' /proc/cmdline; then
+        /usr/bin/oscill-update --status PREPARING 0
+        exit 0
+    fi
     [ ! -f "$PIDFILE" ] || exit 0
     . /etc/default/oscill
     status_stage starting
@@ -11,6 +15,7 @@ start)
     case "$DISPLAY_BACKEND" in fb|drm) ;; *) status_stage failed 'INVALID DISPLAY MODE'; echo 'Oscill: invalid display backend' >&2; exit 1;; esac
     set -- --kiosk "--$DISPLAY_BACKEND" "$DISPLAY_DEVICE" --data-dir "$DATA_DIR" --require-data-device --remote-socket /run/oscill-control.sock --status-socket /run/oscill-status.sock --console /dev/ttyPS0
     [ "${DIAGNOSTICS:-0}" != 1 ] || set -- "$@" --diagnostics
+    [ -z "${ADC_DEVICE:-}" ] || set -- "$@" --adc "$ADC_DEVICE"
     [ -z "$TOUCH_DEVICE" ] || set -- "$@" --touch "$TOUCH_DEVICE" --touch-rotate "$TOUCH_ROTATION"
     [ -z "$SERIAL_DEVICE" ] || set -- "$@" --serial "$SERIAL_DEVICE" --baud "$SERIAL_BAUD"
     [ "${START_DELAY:-0}" = 0 ] || sleep "$START_DELAY"

@@ -78,6 +78,33 @@ static void test_trace_width(uint32_t *pixels, int stride)
     }
 }
 
+static void test_external_without_samples(uint32_t *pixels, int stride)
+{
+    int x, y, ch;
+    static uint32_t expected[SCOPE_WIDTH * SCOPE_HEIGHT];
+    demo_signal_init(&demo);
+    demo_signal_begin_external(&demo);
+    demo.screen.running = 0; /* source error before the first DMA block */
+    demo_signal_zoom_time(&demo, 1);
+    demo_signal_move_channel(&demo, 0, 20);
+    demo_signal_ui_toggle_zoom(&demo);
+    assert(demo.external_capture && !demo.external_frame_valid && !demo.screen.history_count);
+    for(x=0;x<SCOPE_PLOT_WIDTH;++x) {
+        assert(demo.ch1[x]==WAVEFORM_NO_SAMPLE && demo.ch2[x]==WAVEFORM_NO_SAMPLE);
+        for(ch=0;ch<2;++ch)
+            assert(demo.minimum[ch][x]==WAVEFORM_NO_SAMPLE && demo.maximum[ch][x]==WAVEFORM_NO_SAMPLE);
+    }
+    demo.screen.measurement_count=0;
+    scope_screen_render(pixels,stride,&demo.screen);
+    demo.screen.ch1_enabled=demo.screen.ch2_enabled=0;
+    scope_screen_render(expected,SCOPE_WIDTH,&demo.screen);
+    for(y=SCOPE_PLOT_Y+20;y<SCOPE_PLOT_Y+SCOPE_PLOT_HEIGHT-20;++y)
+        for(x=40;x<SCOPE_PLOT_WIDTH-40;++x)
+            assert(pixels[y*stride+x]==expected[y*SCOPE_WIDTH+x]);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_MAIN);
+    assert(demo.screen.menu_open);
+}
+
 static void test_trace_gaps(uint32_t *pixels, int stride)
 {
     int mode,x;
@@ -302,6 +329,7 @@ int main(void)
     test_corner_composition();
     test_trace_width(pixels, SCOPE_WIDTH + 3);
     test_trace_gaps(pixels, SCOPE_WIDTH + 3);
+    test_external_without_samples(pixels, SCOPE_WIDTH + 3);
     test_trigger_icons(pixels, SCOPE_WIDTH + 3);
     test_lowercase_n(pixels, SCOPE_WIDTH + 3);
     test_cursor_table_and_fft_overlay(pixels, SCOPE_WIDTH + 3);

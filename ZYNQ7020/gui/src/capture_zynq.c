@@ -24,7 +24,7 @@ int zynq_capture_open(ZynqCaptureSource *s, const char *device, const double gai
     s->fd = open(device, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (s->fd < 0 || ioctl(s->fd, OSC_CAPTURE_GET_INFO, &s->info) < 0)
         goto fail;
-    if (s->info.abi_version != OSC_CAPTURE_ABI || s->info.register_version != 1 ||
+    if (s->info.abi_version != OSC_CAPTURE_ABI || s->info.register_version != 3 ||
         s->info.sample_format != OSC_CAPTURE_SAMPLE_FORMAT || !s->info.buffers ||
         s->info.buffers > CAPTURE_RING_MAX || !s->info.block_bytes || s->info.block_bytes % 2 ||
         s->info.mapping_bytes != (uint64_t)s->info.buffers * s->info.block_bytes ||
@@ -40,12 +40,17 @@ fail:
     zynq_capture_close(s);
     return 0;
 }
+int zynq_capture_configure(ZynqCaptureSource *s, unsigned rate, unsigned shift)
+{
+    struct osc_capture_config config = {rate, shift};
+    return s->fd >= 0 && !s->leased && ioctl(s->fd, OSC_CAPTURE_CONFIGURE, &config) == 0;
+}
 int zynq_capture_acquire(ZynqCaptureSource *s, CaptureBuffer *b, unsigned timeout)
 {
     struct osc_capture_block block;
     struct pollfd p = {s->fd, POLLIN, 0};
     int result;
-    if (s->fd < 0 || s->leased || timeout > INT32_MAX)
+    if (s->fd < 0 || timeout > INT32_MAX)
         return -1;
     result = poll(&p, 1, (int)timeout);
     if (result < 0)
@@ -57,16 +62,21 @@ int zynq_capture_acquire(ZynqCaptureSource *s, CaptureBuffer *b, unsigned timeou
     memset(&block, 0, sizeof(block));
     if (ioctl(s->fd, OSC_CAPTURE_DEQUEUE, &block) < 0)
         return errno == EAGAIN ? 0 : -1;
+    if (block.index >= s->info.buffers ||
+        (s->leases[block.index / 64] & (UINT64_C(1) << (block.index % 64))))
+        return -1;
     s->index = block.index;
-    s->leased = 1;
-    if (block.index >= s->info.buffers || !block.bytes || block.bytes > s->info.block_bytes ||
-        block.bytes % 2 || block.reserved) {
+    s->leases[block.index / 64] |= UINT64_C(1) << (block.index % 64);
+    ++s->leased;
+    if (!block.bytes || block.data_offset > s->info.block_bytes ||
+        block.bytes > s->info.block_bytes - block.data_offset || block.bytes % 2 ||
+        block.data_offset % 8 || (block.flags & ~OSC_CAPTURE_DISCONTINUITY)) {
         zynq_capture_release(s);
         return -1;
     }
     memset(b, 0, sizeof(*b));
-    b->data = (uint8_t *)s->mapping + (size_t)block.index * s->info.block_bytes;
-    b->capacity = s->info.block_bytes;
+    b->data = (uint8_t *)s->mapping + (size_t)block.index * s->info.block_bytes + block.data_offset;
+    b->capacity = s->info.block_bytes - block.data_offset;
     b->bytes = block.bytes;
     b->sequence = block.sequence;
     b->sample_rate_hz = block.sample_rate_hz;
@@ -87,16 +97,25 @@ int zynq_capture_release(ZynqCaptureSource *s)
 {
     if (!s->leased)
         return 1;
-    if (ioctl(s->fd, OSC_CAPTURE_RELEASE, &s->index) < 0)
+    return zynq_capture_release_index(s, s->index);
+}
+int zynq_capture_release_index(ZynqCaptureSource *s, uint32_t index)
+{
+    if (index >= s->info.buffers || !(s->leases[index / 64] & (UINT64_C(1) << (index % 64))))
         return 0;
-    s->leased = 0;
+    if (ioctl(s->fd, OSC_CAPTURE_RELEASE, &index) < 0)
+        return 0;
+    s->leases[index / 64] &= ~(UINT64_C(1) << (index % 64));
+    --s->leased;
     return 1;
 }
 void zynq_capture_close(ZynqCaptureSource *s)
 {
     if (s->fd >= 0) {
-        if (s->leased)
-            zynq_capture_release(s);
+        uint32_t i;
+        for (i = 0; i < s->info.buffers && i < CAPTURE_RING_MAX; ++i)
+            if (s->leases[i / 64] & (UINT64_C(1) << (i % 64)))
+                zynq_capture_release_index(s, i);
         if (s->mapping != MAP_FAILED)
             munmap(s->mapping, (size_t)s->info.mapping_bytes);
         close(s->fd);

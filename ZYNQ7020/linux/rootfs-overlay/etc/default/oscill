@@ -8,3 +8,4 @@ SERIAL_BAUD=115200
 DATA_DIR=/media/scope
 DIAGNOSTICS=0
 START_DELAY=0
+ADC_DEVICE=/dev/oscill-capture

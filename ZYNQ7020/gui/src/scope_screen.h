@@ -149,10 +149,12 @@ typedef struct {
     uint8_t running;
     uint8_t waiting_for_trigger;
     uint8_t trigger_locked;
+    uint8_t rolling;
 } ScopeScreen;
 
 /* Pixels use 0x00RRGGBB, with stride measured in pixels. */
 void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen);
+void scope_update_render(uint32_t *pixels, int stride, const char *phase, unsigned percent);
 int scope_screen_fft_level_at(const ScopeScreen *screen, int y);
 int scope_screen_cursor_measurement_width(const ScopeScreen *screen);
 void scope_screen_cursor_measurement_bounds(const ScopeScreen *screen, int *x, int *y,

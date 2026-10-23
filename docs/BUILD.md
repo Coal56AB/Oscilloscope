@@ -166,13 +166,13 @@ xsct ZYNQ7020/standalone/load-jtag.tcl D:/hobby/Oscill/ZYNQ7020/output
 
 ## RTL и STM32
 
-Симуляция packer с Vivado 2019.1; каталог результата должен находиться вне `ZYNQ7020/fpga`:
+Симуляция тракта АЦП с Vivado 2019.1; каталог результата должен находиться вне `ZYNQ7020/fpga`:
 
 ```sh
 vivado -mode batch -source ZYNQ7020/fpga/simulate.tcl -tclargs /absolute/output/rtl-test
 ```
 
-HDMI bitstream строится отдельно от packer simulation. ADC constraints, clock/CDC, trigger и capture DMA ещё не подключены. Part `xc7z020clg400-1` не подтверждает speed grade установленного кристалла.
+Симуляция проверяет упаковку, аппаратные заголовки, непрерывный поток с паузами DMA, приём фаз A/B и overflow. Bitstream включает HDMI и ADC → FIFO → CDC → AXI DMA/HP0; режимы приёма и DEBUG описаны в [ADC_CAPTURE.md](ADC_CAPTURE.md). Part `xc7z020clg400-1` не подтверждает speed grade установленного кристалла.
 
 Прошивка STM32F103RCT6: открыть `STM32/oscill_controls.ioc` в CubeMX 6.12.1, выполнить Generate Code, затем Rebuild в `STM32/MDK-ARM/oscill_controls.uvprojx` с Arm Compiler 6. HAL/CMSIS находятся в проекте, результаты Keil — в `STM32/output/`. Распиновка, настройки и сохранение приложения при генерации — [STM32.md](STM32.md), запись — [FLASHING.md](FLASHING.md#stm32).
 

@@ -3,6 +3,7 @@
 #include "linux_storage.h"
 #include "linux_serial.h"
 #include "capture_adapter.h"
+#include "waveform_view.h"
 #include "control_transport.h"
 #include "remote_control.h"
 #include "status_ipc.h"
@@ -878,6 +879,7 @@ static void remote_state(FILE *response)
             channel+1,channel?demo.screen.ch2_enabled:demo.screen.ch1_enabled,channel+1,demo.coupling[channel],
             channel+1,demo.probe_ten[channel],channel+1,demo.scale_index[channel],channel+1,demo.channel_position[channel],channel+1,demo.filter_level[channel]);
     }
+    fprintf(response,"\"record_depth_index\":%d,\"sample_rate_hz\":%.9g,",demo.record_depth_index,demo.acquisition_rate_hz);
     fprintf(response,"\"time_index\":%d,\"time_position\":%d,\"zoom\":%d,\"trigger_mode\":%d,\"trigger_source\":%d,\"trigger_edge\":%d,\"trigger_holdoff\":%d,\"trigger_level\":%.9g,\"time_scales_us\":[",
         demo.screen.zoom_enabled?demo.zoom_time_index:demo.time_index,demo.time_position,demo.screen.zoom_enabled,
         demo.trigger_mode_index,demo.trigger_source_index,demo.trigger_edge_index,demo.trigger_holdoff_index,demo.trigger_voltage);
@@ -895,7 +897,10 @@ static int remote_set(const char *key,double number)
         {"ch1_probe_ten",DEMO_MENU_CH1,2},{"ch2_probe_ten",DEMO_MENU_CH2,2},
         {"ch1_scale_index",DEMO_MENU_CH1,3},{"ch2_scale_index",DEMO_MENU_CH2,3},
         {"ch1_filter",DEMO_MENU_PROCESSING,0},{"ch2_filter",DEMO_MENU_PROCESSING,1},
-        {"time_index",DEMO_MENU_TIME,0},{"trigger_mode",DEMO_MENU_TRIGGER,0},
+        {"record_depth_index",DEMO_MENU_TIME,2},{"time_index",DEMO_MENU_TIME,0},{"trigger_mode",DEMO_MENU_TRIGGER,0},
+        {"generator_frequency_index",DEMO_MENU_GENERATOR,2},{"ch1_wave",DEMO_MENU_GENERATOR,0},
+        {"ch2_wave",DEMO_MENU_GENERATOR,1},{"simulation",DEMO_MENU_DEBUG,3},
+        {"fft",DEMO_MENU_PROCESSING,4},{"persistence",DEMO_MENU_PROCESSING,3},
         {"trigger_source",DEMO_MENU_TRIGGER,1},{"trigger_edge",DEMO_MENU_TRIGGER,2},
         {"trigger_holdoff",DEMO_MENU_TRIGGER,3}
     };
@@ -972,10 +977,10 @@ int main(int argc, char **argv)
     struct sigaction stop_action={0};
     SDL_Window *lcd_window=NULL,*panel_window=NULL;SDL_Renderer *lcd_renderer=NULL,*panel_renderer=NULL;
     SDL_Texture *lcd_texture=NULL,*panel_texture=NULL;uint32_t lcd_id,panel_id;
-    const char *snapshot_path=NULL,*serial_device=NULL,*raw_file=NULL,*remote_path=NULL;unsigned serial_baud=115200;
+    const char *snapshot_path=NULL,*serial_device=NULL,*raw_file=NULL,*remote_path=NULL,*adc_device=NULL;unsigned serial_baud=115200;
     RemoteControl *remote=NULL;
     const char *status_path=NULL;int status_fd=-1;uint64_t status_time=0;
-    int panel_snapshot=0,raw_demo=0,diagnostics=0;uint64_t diagnostic_time=0,render_time=0,render_frames=0;
+    int panel_snapshot=0,raw_demo=0,diagnostics=0;uint64_t diagnostic_time=0,render_time=0,render_frames=0,frame_deadline=0;
     int running=1,windowed=0,kiosk=0,i,exit_status=0;
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
     const char *drm_device=NULL,*fb_device=NULL,*touch_device=NULL;unsigned touch_rotation=0;
@@ -994,6 +999,9 @@ int main(int argc, char **argv)
         else if(strcmp(argv[i],"--data-dir")==0&&i+1<argc){if(strlen(argv[++i])>=sizeof(application_dir)||!argv[i][0])goto invalid_options;strcpy(application_dir,argv[i]);}
         else if(strcmp(argv[i],"--require-data-device")==0)require_data_device=1;
         else if(strcmp(argv[i],"--raw-demo")==0)raw_demo=1;
+#ifdef SCOPE_ENABLE_ZYNQ
+        else if(strcmp(argv[i],"--adc")==0&&i+1<argc)adc_device=argv[++i];
+#endif
         else if(strcmp(argv[i],"--capture")==0&&i+1<argc)raw_file=argv[++i];
         else if(strcmp(argv[i],"--diagnostics")==0)diagnostics=1;
         else if(strcmp(argv[i],"--remote-socket")==0&&i+1<argc)remote_path=argv[++i];
@@ -1012,7 +1020,7 @@ int main(int argc, char **argv)
         }
         else goto invalid_options;
     }
-    if(raw_demo&&raw_file)goto invalid_options;
+    if((raw_demo&&raw_file)||(adc_device&&(raw_demo||raw_file)))goto invalid_options;
     stop_action.sa_handler=request_stop;sigemptyset(&stop_action.sa_mask);
     sigaction(SIGINT,&stop_action,NULL);sigaction(SIGTERM,&stop_action,NULL);
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
@@ -1028,7 +1036,7 @@ int main(int argc, char **argv)
     }
     panel_enabled=!kiosk;
     if(status_path){status_fd=status_sender_open();
-        publish_service_status(status_fd,status_path,STATUS_STARTING,raw_file?STATUS_FILE:raw_demo?STATUS_RAW_DEMO:STATUS_DEMO,
+        publish_service_status(status_fd,status_path,STATUS_STARTING,adc_device?STATUS_ADC:raw_file?STATUS_FILE:raw_demo?STATUS_RAW_DEMO:STATUS_DEMO,
                                serial_device!=NULL,-1,0,0);}
     {
         int available = console_path && linux_serial_get_baud(console_path,&console_baud);
@@ -1039,6 +1047,14 @@ int main(int argc, char **argv)
         fprintf(stderr,"Cannot start serial transport\n");exit_status=1;goto cleanup;}
     if(serial_device)demo_signal_bind_scale_control(&demo,request_panel_scale,&serial_controls);
     if(raw_demo||raw_file){capture_pipeline=capture_pipeline_create(raw_file);if(!capture_pipeline){fprintf(stderr,"Cannot open raw capture source\n");exit_status=1;goto cleanup;}}
+#ifdef SCOPE_ENABLE_ZYNQ
+    if(adc_device){
+        const double gain[2]={0.004,0.004},zero[2]={128,128};
+        capture_pipeline=capture_pipeline_create_zynq(adc_device,gain,zero);
+        if(!capture_pipeline){fprintf(stderr,"Cannot open ADC capture: %s\n",adc_device);exit_status=1;goto cleanup;}
+        demo_signal_begin_external(&demo);
+    }
+#endif
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"0");
 #ifdef SDL_HINT_TOUCH_MOUSE_EVENTS
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS,"0");
@@ -1096,7 +1112,12 @@ int main(int argc, char **argv)
             if(usb_touch&&linux_touch_pump(usb_touch)<0){linux_touch_close(usb_touch);usb_touch=NULL;
                 memset(contacts,0,sizeof(contacts));touch.active=pinch_block=0;}}
 #endif
-        if(SDL_WaitEventTimeout(&event,16))do{
+        /* Rendering/presenting is part of the frame budget, not an extra delay. */
+        now=now_ms();
+        int event_wait=frame_deadline>now?(int)(frame_deadline-now):0;
+        if(!dirty&&!demo.screen.running)event_wait=16;
+        if(event_wait>16)event_wait=16;
+        if(SDL_WaitEventTimeout(&event,event_wait))do{
             demo_signal_update_time(&demo,now_ms());
             if(event.type==SDL_QUIT)running=0;
             else if(event.type==SDL_WINDOWEVENT&&event.window.event==SDL_WINDOWEVENT_CLOSE)running=0;
@@ -1137,11 +1158,16 @@ int main(int argc, char **argv)
                 demo_signal_scale_mv(demo.scale_index[i])!=panel.scale_mv[i]){
                 demo_signal_accept_scale(&demo,(unsigned)i,panel.scale_mv[i]);invalidate();}
         }
-        if(capture_pipeline){CaptureRequest request;capture_request_from_demo(&demo,&request);
+        if(capture_pipeline){CaptureRequest request;CaptureMetrics metrics;capture_request_from_demo(&demo,&request);
+            if(demo.waveform_loaded||demo.screen.browser_visible)request.running=0;
             capture_pipeline_request(capture_pipeline,&request);
-            if(capture_pipeline_frame(capture_pipeline,&capture_frame)){capture_frame_valid=1;if(raw_file)demo.screen.running=0;invalidate();}}
+            if(capture_pipeline_frame(capture_pipeline,&capture_frame)){capture_frame_valid=1;
+                if(raw_file||(adc_device&&demo.trigger_mode_index==2))demo.screen.running=0;invalidate();}
+            capture_pipeline_metrics(capture_pipeline,&metrics);
+            if(adc_device)demo.screen.waiting_for_trigger=metrics.waiting&&demo.screen.running;
+            if(metrics.source_error&&demo.screen.running){demo.screen.running=0;demo_signal_notify(&demo,"ADC CAPTURE ERROR");invalidate();}}
         if(demo.screen.running||demo.screen.status_visible||mouse_hold.active||key_holds[0].active||key_holds[1].active){demo_signal_advance(&demo);invalidate();}
-        if(dirty&&running){uint64_t render_begin=scope_clock_ns();draw_all();render_time+=scope_clock_ns()-render_begin;++render_frames;
+        if(dirty&&running){uint64_t render_begin=scope_clock_ns();frame_deadline=now_ms()+16;draw_all();render_time+=scope_clock_ns()-render_begin;++render_frames;
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
             if(drm_display){int submitted=linux_display_present(drm_display,screen_pixels);if(submitted<0){running=0;exit_status=1;}else dirty=!submitted;}
             else
@@ -1155,15 +1181,15 @@ int main(int argc, char **argv)
             if(touch_device)touch_status=usb_touch!=NULL;
 #endif
             publish_service_status(status_fd,status_path,STATUS_READY,
-                (raw_file||demo.waveform_loaded)?STATUS_FILE:raw_demo?STATUS_RAW_DEMO:STATUS_DEMO,
+                (raw_file||demo.waveform_loaded)?STATUS_FILE:adc_device?STATUS_ADC:raw_demo?STATUS_RAW_DEMO:STATUS_DEMO,
                 serial_device!=NULL,touch_status,render_frames,render_time);
             status_time=now;
         }
         if(diagnostics&&now-diagnostic_time>=1000){CaptureMetrics m={0};SerialControlMetrics uart={0};if(capture_pipeline)capture_pipeline_metrics(capture_pipeline,&m);
             serial_control_metrics(&serial_controls,&uart);
-            fprintf(stderr,"render_ms=%.3f frames=%llu processing_ms=%.3f blocks=%llu dropped=%llu overwritten=%llu occupancy=%zu source_error=%d\n",
+            fprintf(stderr,"render_ms=%.3f frames=%llu processing_ms=%.3f blocks=%llu dropped=%llu overwritten=%llu occupancy=%zu source_error=%d waveforms=%llu\n",
                 render_frames?render_time/1e6/render_frames:0,(unsigned long long)render_frames,m.processing_ns/1e6,
-                (unsigned long long)m.blocks,(unsigned long long)m.dropped,(unsigned long long)m.overwritten,m.occupancy,m.source_error);
+                (unsigned long long)m.blocks,(unsigned long long)m.dropped,(unsigned long long)m.overwritten,m.occupancy,m.source_error,(unsigned long long)m.waveforms);
             if(serial_device)fprintf(stderr,"uart_link=%d uart_device=%s packets=%llu crc_errors=%llu format_errors=%llu gaps=%llu duplicates=%llu read_errors=%llu reconnects=%llu\n",
                 uart.connected,uart.device[0]?uart.device:"none",(unsigned long long)uart.packets,(unsigned long long)uart.crc_errors,(unsigned long long)uart.format_errors,
                 (unsigned long long)uart.sequence_gaps,(unsigned long long)uart.duplicates,(unsigned long long)uart.read_errors,(unsigned long long)uart.reconnects);
@@ -1181,7 +1207,7 @@ int main(int argc, char **argv)
     }
 cleanup:
     if(status_path){publish_service_status(status_fd,status_path,exit_status?STATUS_FAILED:STATUS_STOPPED,
-        raw_file?STATUS_FILE:raw_demo?STATUS_RAW_DEMO:STATUS_DEMO,serial_device!=NULL,-1,
+        adc_device?STATUS_ADC:raw_file?STATUS_FILE:raw_demo?STATUS_RAW_DEMO:STATUS_DEMO,serial_device!=NULL,-1,
         render_frames,render_time);if(status_fd>=0)close(status_fd);}
     remote_control_close(remote);
     capture_pipeline_destroy(capture_pipeline);serial_control_stop(&serial_controls);control_queue_destroy(&controls);
@@ -1197,6 +1223,6 @@ cleanup:
     SDL_Quit();
     free(panel_pixels);free(screen_pixels);return exit_status;
 invalid_options:
-    fprintf(stderr,"Invalid option or argument. Use --windowed, --kiosk, --serial DEVICE, --baud RATE, --console TTY, --data-dir DIR, --require-data-device, --raw-demo, --capture FILE, --diagnostics, --remote-socket PATH, --status-socket PATH, --snapshot BMP or --panel-snapshot BMP.\n");
+    fprintf(stderr,"Invalid option or argument. Use --windowed, --kiosk, --serial DEVICE, --baud RATE, --console TTY, --data-dir DIR, --require-data-device, --adc DEVICE (Zynq build), --raw-demo, --capture FILE, --diagnostics, --remote-socket PATH, --status-socket PATH, --snapshot BMP or --panel-snapshot BMP.\n");
     free(panel_pixels);free(screen_pixels);return 2;
 }

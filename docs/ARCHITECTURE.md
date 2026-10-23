@@ -61,11 +61,24 @@ renderer не соединяет линией. Raw processor считает ст
 пересечению с памятью; отображение более длинного интервала не запускает захват.
 Генератор и CSV используют тот же механизм. Форматы BMP/CSV сохранены.
 
-Контракт будущего драйвера — `capture_uapi.h`, описание — [CAPTURE_INTERFACE.md](CAPTURE_INTERFACE.md). Драйвер выделяет DMA-safe память через DMA API, проверяет карту регистров/формат, управляет SG descriptors, публикует завершённый блок после cache sync и возвращает владение DMA только после RELEASE. `capture_zynq.c` — реальный userspace адаптер этого контракта; отсутствие устройства/драйвера возвращает ошибку, не синтетические данные.
+`capture_uapi.h` задаёт Linux ABI 3; описание — [CAPTURE_INTERFACE.md](CAPTURE_INTERFACE.md).
+Встроенный драйвер `linux/driver/oscill_capture.c` выделяет coherent DMA-память,
+проверяет аппаратный ID и заголовки, обслуживает SG и владение блоками.
+`capture_zynq.c` отображает только эту память read-only. Zynq-7000 HP не
+предоставляет автоматической coherency с ARM: здесь используется coherent
+allocation с dma_rmb перед чтением завершения, а не streaming mapping.
 
-Zynq-7000 HP не предоставляет автоматическую cache coherency с ARM. Для streaming DMA нужны `dma_sync_*_for_cpu/device`; coherent allocations/mappings возможны с соответствующей стоимостью CPU доступа. Userspace не получает произвольные физические адреса и не управляет DMA через `/dev/mem`. Выбор mmap attributes должен проверяться измерением и тестовым шаблоном.
+FPGA принимает обе ветви двух AD9288, прореживает отсчёты с выбранным шагом
+и записывает пакеты через HP0; HDMI продолжает использовать HP2. GUI сразу
+возвращает DMA-блок после копирования в историю. STOP удерживает программный
+снимок истории, поэтому масштабирование не занимает DMA-память.
+DEBUG заменяет содержимое отдельной программной записи после настоящего
+захвата, сохраняя аппаратные sequence и время. Общий `signal_generator`
+используют настольный GUI и подмена, а драйвер о ней не знает.
 
-Аппаратный trigger/pretrigger находится в PL/драйвере: абсолютный trigger sample, кольцевая глубина, posttrigger limit, holdoff, статус overflow/discontinuity. GUI получает метаданные и команды ARM/DISARM. Текущий RTL packer проверяет порядок и упаковку, а не подключение ADC/trigger/DDR. Реальный драйвер и его подключение к pipeline ещё нужны; существующий GUI демонстрирует свои режимы триггера независимо от raw экспериментального источника.
+AUTO/NORMAL/SINGLE, уровень, фронт, holdoff и FORCE обрабатываются программно
+на полученных блоках. Аппаратного кольцевого pretrigger на всю память пока нет.
+Геометрия, режимы и границы аппаратной проверки — [ADC_CAPTURE.md](ADC_CAPTURE.md).
 
 ## Хранилище и загрузка
 
@@ -75,4 +88,4 @@ TF2 предполагается съёмным хранилищем exFAT. `osc
 
 ## Версии
 
-Контракт будущего захвата: карта регистров — 1, sample format — 1, driver ABI — 1. UART protocol — 1, app version — 0.1.0. Первый HDMI bitstream идентифицируется SHA-256 в release manifest; аппаратных регистров capture identity в нём ещё нет. Manifest фиксирует Git SHA исходников, toolchain/Buildroot/kernel/U-Boot и хеши boot/bitstream/kernel/DTB/rootfs. Userspace capture adapter отвергает неверную ABI версию до доступа к payload. Миграция исходного GUI и сохранение истории описаны в [REPOSITORY.md](REPOSITORY.md).
+Контракт захвата: карта регистров и driver ABI — 3, sample format — 1. UART protocol — 1, app version — 0.1.0. Аппаратный ID захвата — `0xADC30000` без флагов ошибок. Manifest фиксирует Git SHA исходников, toolchain/Buildroot/kernel/U-Boot и хеши boot/bitstream/kernel/DTB/rootfs. Userspace capture adapter отвергает неверную ABI версию до доступа к payload. Миграция исходного GUI и сохранение истории описаны в [REPOSITORY.md](REPOSITORY.md).

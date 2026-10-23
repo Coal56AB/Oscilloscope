@@ -1,4 +1,5 @@
 #include "capture_adapter.h"
+#include "capture_settings.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -7,9 +8,31 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     DemoWaveCapture wave;
     unsigned ch;
     demo_signal_export_wave(d, &wave);
+    memset(r, 0, sizeof(*r));
     r->duration_seconds = wave.time_us_per_div * 10e-6;
+    r->overview_duration_seconds = demo_signal_time_scale_us(d->time_index) * 10e-6;
+    if (d->screen.zoom_enabled)
+        r->zoom_offset_seconds = d->zoom_offset * r->overview_duration_seconds / SCOPE_PLOT_WIDTH;
     r->running = d->screen.running;
-    r->pan_fraction = 0.5 + (double)(d->time_position + d->zoom_offset) / SCOPE_PLOT_WIDTH;
+    r->record_samples = capture_record_samples(d->record_depth_index);
+    r->roll = r->overview_duration_seconds > 1.0 && d->trigger_mode_index == 0;
+    r->spectrum_enabled = d->fft_enabled;
+    r->debug.enabled = d->adc_simulation;
+    r->debug.wave[0] = d->generator_wave[0];
+    r->debug.wave[1] = d->generator_wave[1];
+    r->debug.offset_fraction[0] = d->coupling[0] ? 0.5 : 0;
+    r->debug.offset_fraction[1] = d->coupling[1] ? 0.5 : 0;
+    r->trigger_mode = d->trigger_mode_index;
+    r->trigger_channel = d->trigger_source_index;
+    r->trigger_edge = d->trigger_edge_index;
+    r->trigger_voltage = d->trigger_voltage;
+    r->force_sequence = d->capture_sequence;
+    {
+        static const uint64_t holdoff[] = {0,2000,10000,20000};
+        r->holdoff_samples = holdoff[d->trigger_holdoff_index];
+    }
+    r->debug.frequency_hz = demo_signal_generator_hz(d->generator_frequency_index);
+    r->pan_fraction = 0.5 + (double)d->time_position / SCOPE_PLOT_WIDTH;
     if (r->pan_fraction < 0)
         r->pan_fraction = 0;
     if (r->pan_fraction > 1)
@@ -17,19 +40,30 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     for (ch = 0; ch < 2; ++ch) {
         r->zero_y[ch] = wave.zero_y[ch];
         r->pixels_per_volt[ch] = (SCOPE_PLOT_HEIGHT / 8.0) * 1000 / wave.mv_per_div[ch];
+        r->adc_volts_per_code[ch] = wave.mv_per_div[ch] * 8.0 / 256000.0;
     }
 }
 void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
 {
     int i;
+    d->acquisition_rate_hz = f->sample_rate_hz;
+    if (d->external_capture) {
+        d->screen.trigger_locked = f->trigger_sample != CAPTURE_NO_TRIGGER;
+        d->screen.trigger_marker_x = (int)lround(fmax(0, fmin(SCOPE_PLOT_WIDTH - 1, f->trigger_x)));
+        if (d->screen.zoom_enabled) {
+            d->screen.zoom_window_start = f->overview_start;
+            d->screen.zoom_window_end = f->overview_end;
+        }
+    }
     memcpy(d->ch1, f->y[0], sizeof(d->ch1));
     memcpy(d->ch2, f->y[1], sizeof(d->ch2));
     d->screen.ch1_samples = d->ch1;
     d->screen.ch2_samples = d->ch2;
-    d->screen.ch1_min_samples = f->y_min[0];
-    d->screen.ch1_max_samples = f->y_max[0];
-    d->screen.ch2_min_samples = f->y_min[1];
-    d->screen.ch2_max_samples = f->y_max[1];
+    memcpy(d->minimum, f->y_min, sizeof(d->minimum));
+    memcpy(d->maximum, f->y_max, sizeof(d->maximum));
+    memcpy(d->saved_ch1, f->overview[0], sizeof(d->saved_ch1));
+    memcpy(d->saved_ch2, f->overview[1], sizeof(d->saved_ch2));
+    demo_signal_present_external(d, f->sequence);
     memcpy(d->fft_ch1, f->fft[0], sizeof(d->fft_ch1));
     memcpy(d->fft_ch2, f->fft[1], sizeof(d->fft_ch2));
     demo_signal_set_fft_range(d, f->sample_rate_hz / 2.0);

@@ -29,6 +29,26 @@ static void test_debug_hold_threshold(void)
     assert(demo.menu_kind == DEMO_MENU_CURSOR && demo.screen.cursor_mode == SCOPE_CURSOR_TIME);
 }
 
+static void test_external_trigger_marker(void)
+{
+    DisplayFrame f={0};
+    CaptureRequest r;
+    demo_signal_init(&demo);
+    demo_signal_begin_external(&demo);
+    f.sample_rate_hz=200000000;f.trigger_sample=100;f.trigger_x=320;
+    capture_display_apply(&demo,&f);
+    assert(demo.screen.trigger_locked&&demo.screen.trigger_marker_x==320);
+    f.trigger_x=-20;capture_display_apply(&demo,&f);
+    assert(demo.screen.trigger_marker_x==0);
+    f.trigger_x=2000;capture_display_apply(&demo,&f);
+    assert(demo.screen.trigger_marker_x==SCOPE_PLOT_WIDTH-1);
+    demo.screen.zoom_enabled=1;f.trigger_x=400;f.overview_start=200;f.overview_end=700;
+    capture_display_apply(&demo,&f);
+    assert(demo.screen.trigger_marker_x==400&&demo.screen.zoom_window_start==200&&demo.screen.zoom_window_end==700);
+    demo.fft_enabled=0;capture_request_from_demo(&demo,&r);assert(!r.spectrum_enabled);
+    demo.fft_enabled=1;capture_request_from_demo(&demo,&r);assert(r.spectrum_enabled);
+}
+
 static void test_menu_button_hold_release(void)
 {
     static const DemoControl buttons[] = {
@@ -96,12 +116,15 @@ static void test_console_baud_and_status(void)
     update_pc_console(100);
     assert(linux_serial_get_baud(console_path, &actual) && actual == 1000000);
     assert(strcmp(demo.screen.menu_values[1], "USB-UART READY") == 0);
+    assert(demo_signal_set_option(&demo, DEMO_MENU_PC, 0, 9));
+    update_pc_console(101);
+    assert(linux_serial_get_baud(console_path, &actual) && actual == 2000000);
     assert(!linux_serial_set_baud(console_path, 12345));
-    assert(linux_serial_get_baud(console_path, &actual) && actual == 1000000);
+    assert(linux_serial_get_baud(console_path, &actual) && actual == 2000000);
     console_path = "/no/such/tty";
     assert(demo_signal_set_option(&demo, DEMO_MENU_PC, 0, 4));
     update_pc_console(101);
-    assert(demo_signal_pc_baud(demo.pc_baud_index) == 1000000);
+    assert(demo_signal_pc_baud(demo.pc_baud_index) == 2000000);
     assert(strcmp(demo.screen.status_message, "UART BAUD FAILED") == 0);
     close(master);
     console_path = NULL;
@@ -190,6 +213,7 @@ static void test_remote_commands(void)
 int main(void)
 {
     test_debug_hold_threshold();
+    test_external_trigger_marker();
     test_menu_button_hold_release();
     char directory[]="/dev/shm/oscill-export-XXXXXX", path[PATH_MAX];
     struct stat info;

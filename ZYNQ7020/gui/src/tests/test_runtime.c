@@ -198,6 +198,16 @@ static void processor_record_bounds_test(void)
     assert(f.y[0][0]==WAVEFORM_NO_SAMPLE && f.y[0][256]==200);
     view.display_samples=NAN;assert(!capture_process(&b,&view,&f));
     view.display_samples=8192;view.display_first=INFINITY;assert(!capture_process(&b,&view,&f));
+    b.trigger_sample=b.first_sample+2048;
+    view.display_first=0;view.display_samples=4096;
+    assert(capture_process(&b,&view,&f)&&fabs(f.trigger_x-512)<1e-9);
+    view.display_first=512;
+    assert(capture_process(&b,&view,&f)&&fabs(f.trigger_x-384)<1e-9);
+    view.display_first=1024;view.display_samples=2048;
+    assert(capture_process(&b,&view,&f)&&fabs(f.trigger_x-512)<1e-9);
+    view.skip_spectrum=1;
+    assert(capture_process(&b,&view,&f));
+    for(unsigned x=0;x<SCOPE_FFT_BINS;++x)assert(!f.fft[0][x]&&!f.fft[1][x]);
 }
 
 static void processor_short_pulse_test(void)
@@ -246,6 +256,26 @@ static void processor_zoom_source_test(void)
     for (x = 0; x < SCOPE_PLOT_WIDTH; ++x)
         assert(frame.y_min[0][x] == frame.y_max[0][x]);
     assert(!memcmp(original, data, sizeof(data)) && frame.sequence == 1);
+}
+
+static void processor_statistics_test(void)
+{
+    uint8_t data[512];
+    CaptureBuffer b={0};CaptureView view={0,256,{200,330},{100,100}};DisplayFrame f;
+    b.data=data;b.capacity=sizeof(data);fill(&b,1);view.skip_spectrum=1;
+    for(unsigned i=0;i<256;++i){data[2*i]=(uint8_t)i;data[2*i+1]=(uint8_t)(255-i);}
+    for(int sign=-1;sign<=1;++sign){
+        b.volts_per_code[0]=sign*0.02;b.zero_code[0]=127.25;
+        double sum=0,squares=0,low=INFINITY,high= -INFINITY;
+        for(unsigned i=0;i<256;++i){
+            double v=(i-127.25)*b.volts_per_code[0];
+            sum+=v;squares+=v*v;if(v<low)low=v;if(v>high)high=v;
+        }
+        assert(capture_process(&b,&view,&f));
+        assert(fabs(f.minimum[0]-low)<1e-12&&fabs(f.maximum[0]-high)<1e-12);
+        assert(fabs(f.mean[0]-sum/256)<1e-12&&fabs(f.rms[0]-sqrt(squares/256))<1e-12);
+        assert(f.duty[0]==(sign?50:100)&&f.frequency_hz[0]==0);
+    }
 }
 
 static void processor_fft_test(void)
@@ -332,6 +362,40 @@ static void pipeline_test(void)
     }
     capture_pipeline_destroy(p);
 }
+static void capture_debug_test(void)
+{
+    uint8_t raw[4096], saved[4096], generated[4096];
+    CaptureBuffer input={0}, output={0};
+    CaptureSource source;
+    DemoCaptureSource context;
+    CaptureDebug debug={1,{SIGNAL_WAVE_SQUARE,SIGNAL_WAVE_SINE},1000000};
+    unsigned wave;
+    uint64_t trigger;
+    input.data=raw;input.capacity=sizeof(raw);
+    demo_capture_source_init(&source,&context,200000000);
+    assert(source.read(&source,&input)==1);
+    input.sequence=42;input.first_sample=123000;input.hardware_ns=615000;
+    input.flags=1;input.trigger_sample=input.first_sample+123;
+    memcpy(saved,raw,sizeof(raw));
+    output.data=generated;output.capacity=sizeof(generated);
+    for(wave=0;wave<SIGNAL_WAVE_COUNT;++wave){
+        debug.wave[0]=wave;
+        assert(capture_debug_replace(&input,&output,&debug));
+        assert(output.sequence==42&&output.first_sample==123000&&output.hardware_ns==615000);
+        assert(output.flags==input.flags&&output.trigger_sample==input.trigger_sample);
+        assert(!memcmp(saved,raw,sizeof(raw))&&memcmp(raw,generated,sizeof(raw)));
+    }
+    output.capacity=sizeof(generated)-1;assert(!capture_debug_replace(&input,&output,&debug));
+    output.capacity=sizeof(generated);debug.enabled=0;
+    assert(!capture_debug_replace(&input,&output,&debug));
+    memset(raw,128,sizeof(raw));input.trigger_sample=CAPTURE_NO_TRIGGER;
+    input.first_sample=100;input.volts_per_code[0]=1;
+    raw[4]=129;raw[6]=127;raw[10]=129;
+    assert(capture_find_trigger(&input,0,0,0,100,&trigger)&&trigger==102);
+    assert(capture_find_trigger(&input,0,1,0,100,&trigger)&&trigger==103);
+    assert(capture_find_trigger(&input,0,0,0,103,&trigger)&&trigger==105);
+    assert(!capture_find_trigger(&input,0,0,200,100,&trigger));
+}
 int main(void)
 {
     protocol_test();
@@ -342,6 +406,8 @@ int main(void)
     processor_short_pulse_test();
     processor_zoom_source_test();
     processor_fft_test();
+    processor_statistics_test();
     pipeline_test();
+    capture_debug_test();
     return 0;
 }

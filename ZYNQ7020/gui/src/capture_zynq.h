@@ -7,13 +7,16 @@ typedef struct {
     void *mapping;
     struct osc_capture_info info;
     uint32_t index;
+    uint64_t leases[2];
     double volts_per_code[2], zero_code[2];
 } ZynqCaptureSource;
 /* Requires a real driver implementing capture_uapi.h; errors are not simulated. */
 int zynq_capture_open(ZynqCaptureSource *source, const char *device, const double volts_per_code[2],
                       const double zero_code[2]);
 /* 1 leased block, 0 timeout, -1 error. The driver owns the mapping. */
+int zynq_capture_configure(ZynqCaptureSource *source, unsigned rate, unsigned shift);
 int zynq_capture_acquire(ZynqCaptureSource *source, CaptureBuffer *buffer, unsigned timeout_ms);
 int zynq_capture_release(ZynqCaptureSource *source);
+int zynq_capture_release_index(ZynqCaptureSource *source, uint32_t index);
 void zynq_capture_close(ZynqCaptureSource *source);
 #endif

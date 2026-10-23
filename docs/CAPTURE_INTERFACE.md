@@ -1,48 +1,74 @@
-# Интерфейс захвата, версия 1
+# Интерфейс захвата, Linux ABI 3
 
 ## Raw samples и метаданные
 
-Формат 1: unsigned 8-bit offset binary, два канала, в памяти `CH1[t], CH2[t], CH1[t+1], CH2[t+1]`. Для двух ветвей A/B такт входа packer содержит CH1_A, CH2_A, CH1_B, CH2_B; B следует за A во времени. Перестановка и калибровка интерливинга должны быть проверены до включения ADC.
+Формат 1: unsigned 8-bit offset binary, два канала, в памяти `CH1[t], CH2[t], CH1[t+1], CH2[t+1]`. Для двух ветвей A/B такт входа packer содержит CH1_A, CH2_A, CH1_B, CH2_B; B следует за A во времени. Порядок проверен RTL-стендом; достоверность кодов и калибровка интерливинга на плате пока не измерены.
 
 `CaptureBuffer` хранит pointer/capacity/bytes, sequence, sample_rate_hz **на канал**, first_sample, trigger_sample (абсолютные индексы), аппаратное и software время, flags, volts_per_code и zero_code на канал. Нет триггера: UINT64_MAX. `volts=(code-zero_code)×volts_per_code`. Calibration аппаратного source задаёт вызывающая сторона; численные значения demo не относятся к плате.
 
 `DisplayFrame` содержит Y, min/max, FFT и измерения только для отображения. Raw запись имеет независимую глубину; при остановке она сохраняется под владением processor. Изменение view повторно обрабатывает исходные данные, не старые Y.
 
-## Предлагаемая карта PL-регистров
+## Регистры PL и аппаратный блок
 
-Это контракт будущего peripheral, не адреса существующего bitstream. AXI base/IRQ/DMA phandles назначаются реальным Vivado design.
+В текущем bitstream AXI DMA S2MM/SG находится по `0x40400000`, IRQ F2P[1]
+(GIC SPI 30), capture AXI GPIO — по `0x41210000`. OLED сохраняет `0x41200000`.
+GPIO.DATA offset 0, bit 0 включает поток; GPIO.DATA2 offset 8 содержит
+`0xADC30000 | overflow`. DATA[5:1] выбирает частоту по `capture_rates.h`,
+DATA[10:6] задаёт payload shift. Настройки меняются при выключенном потоке.
+Такты АЦП от enable не зависят. Проверка ID обязательна
+до запуска DMA. Register version=3, bitstream interface version=1;
+идентичность конкретной сборки отдельно публикуется штатным SHA-256 bitstream.
 
-| Offset | Регистр | Значение |
-|---:|---|---|
-| 00 | ID | ASCII OSCP, read-only |
-| 04 | Register version | 1 |
-| 08 | Sample format | 1 |
-| 0C | Bitstream build | Уникальная идентичность сборки |
-| 10 | Control | ARM/DISARM/RESET counters |
-| 14 | Status | Armed/triggered/stopped/FIFO overflow/sync error |
-| 18 | Channel mask | Два активных канала |
-| 1C | Trigger config | Source/edge/mode |
-| 20 | Trigger level | Raw code |
-| 24 | Pretrigger samples | Глубина на канал |
-| 28 | Posttrigger samples | Глубина на канал |
-| 2C | Holdoff samples | Интервал между триггерами |
-| 30/34 | Sample counter | 64-bit, атомарный snapshot |
-| 38/3C | Trigger sample | 64-bit, атомарный snapshot |
-| 40 | FIFO overflow count | Saturating/reset explicitly |
-| 44 | Sync error count | Saturating/reset explicitly |
-| 48 | FIFO high water | Для измерения stalls |
+Один AXIS пакет содержит 64 байта заголовка и `8 << payload_shift` байт
+отсчётов (shift 0…17), TLAST на последнем 64-битном beat.
+Первые 64 байта — little-endian заголовок:
 
-Многоразрядные значения должны читаться через snapshot/latch или согласованный high/low/high алгоритм. Предварительное выделение offsets не резервирует реальные ресурсы платы.
+| Offset | Содержимое |
+|---:|---|
+| 0 | uint32 magic `0x5043534F` (OSCP) |
+| 4 | uint32 header version 3 |
+| 8 | uint32 payload bytes |
+| 12 | uint32 effective sample rate per channel |
+| 16 | uint64 sequence |
+| 24 | uint64 first_sample |
+| 32…63 | Нули, резерв |
+
+Затем выбранные пары `CH1[t],CH2[t],CH1[t+1],CH2[t+1],…`.
+На 200 MSa/s используются A и B; на меньших частотах выбирается ветвь A
+с равномерным целым периодом. Счётчики относятся к эффективным отсчётам,
+сбрасываются при новом open и CONFIGURE;
+входные преобразования и конвейер прогреваются до его включения.
+`hardware_ns=first_sample*1e9/sample_rate_hz` — относительное время отсчётов,
+не wall clock и не время IRQ. Несовпадение заголовка завершённого DMA-блока
+возвращает ошибку. Подключение и расчёт задержек — [ADC_CAPTURE.md](ADC_CAPTURE.md).
 
 ## Linux UAPI
 
-`capture_uapi.h` задаёт fixed-width structs с __aligned_u64, одинаковыми для ARMv7 и 64-bit userspace. GET_INFO возвращает ABI/register/sample/bitstream versions и геометрию DMA ring. mmap — только выделенная драйвером память, read-only для приложения. DEQUEUE после poll возвращает completed buffer index/bytes/sequence/timestamps/trigger; RELEASE явно возвращает владение. Неверные размеры/индексы/версии отвергаются адаптером.
+`capture_uapi.h` задаёт fixed-width structs с __aligned_u64, одинаковыми для ARMv7 и 64-bit userspace. GET_INFO возвращает ABI/register/sample/bitstream versions и геометрию DMA ring. mmap — только выделенная драйвером память, read-only для приложения. DEQUEUE после poll возвращает completed buffer index/bytes/data_offset/sequence/timestamps/trigger; RELEASE явно возвращает владение. Неверные размеры/индексы/версии отвергаются адаптером.
 
-Software ceiling — 128 блоков; это допускает 256 МиБ при блоках 2 МиБ и не создаёт автоматической резервации RAM. Драйвер возвращает фактическую доступную геометрию, а размер hardware SG descriptor согласуется с TLAST.
+Software ceiling — 128 блоков. Реальный драйвер выделяет 16 блоков по 2 МиБ; GET_INFO.block_bytes — шаг между блоками, включая аппаратный заголовок. DEQUEUE.data_offset=64, bytes содержит только payload. Адаптер проверяет сумму offset+bytes, выравнивание, версии и флаги до доступа к отображению.
 
-Между DEQUEUE и RELEASE DMA не пишет в leased buffer. Драйвер публикует completion только после необходимого cache sync; после RELEASE — sync for device. При закрытии fd освобождает все leases. mmap mapping должен оставаться действительным до release последнего reference; driver не передаёт raw physical address в userspace. Ошибки DMA/overflow отражаются в status и dropped-block counters, запись с discontinuity не объявляется непрерывной.
+CONFIGURE принимает rate_index 0…19 и payload_shift 0…17. При существующем
+lease возвращает EBUSY. Драйвер завершает текущий поток, сбрасывает очередь
+и запускает новый с соответствующими длиной дескрипторов и GPIO-настройкой.
+Приложение выбирает длительность блока не более 40 мс, максимум 1 МиБ payload.
 
-`capture_zynq.h/c` реализует userspace стороны mmap/poll/ioctl и lease; сейчас в репозитории **нет** kernel driver с этим ABI и этот adapter **ещё не подключён** к demo pipeline. Он собирается по `SCOPE_ENABLE_ZYNQ=ON`, но не создаёт искусственный `/dev` source. Для интеграции нужны реальный dmaengine driver, его Device Tree и общий provider интерфейс leases; memcpy полного raw потока в demo heap запрещён.
+Между DEQUEUE и RELEASE DMA не пишет в leased buffer. coherent allocation
+обеспечивает согласование CPU/device; перед разбором завершения используется
+dma_rmb. RELEASE возвращает блок в SG-очередь. При закрытии устройства DMA
+останавливается; память удерживается до освобождения mmap references.
+Приложение не получает физический адрес, mmap read-only, повышение до записи
+через mprotect запрещено. Входное overflow и отсутствие завершений дают POLLERR;
+пропуск аппаратного sequence даёт OSC_CAPTURE_DISCONTINUITY.
+
+`ZYNQ7020/linux/driver/oscill_capture.c` встроен в ядро через Buildroot hook.
+`capture_zynq.h/c` обслуживает mmap/poll/ioctl и leases. `capture_pipeline`
+подключает его отдельным worker. `capture_history` копирует выбранную глубину
+в кешируемую историю и сразу возвращает DMA lease. Разрыв first_sample или
+смена частоты очищает накопленную историю. Отдельный снимок сохраняется для
+STOP и ожидания NORMAL/SINGLE. Программная подмена
+выполняется только после DEQUEUE; сведения о времени/sequence не генерируются.
+Отсутствие устройства возвращает ошибку без перехода на демоданные.
 
 ## Файл OSCRAW1
 

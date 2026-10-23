@@ -1,4 +1,6 @@
 #include "demo_signal.h"
+#include "capture_settings.h"
+#include "signal_generator.h"
 #include "spectrum_bins.h"
 #include "waveform_view.h"
 #include "control_protocol.h"
@@ -20,8 +22,8 @@
 #endif
 
 static const double time_us[] = {
-    0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000,
-    10000, 20000, 50000, 100000, 200000, 500000, 1000000
+    0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000,
+    10000, 20000, 50000, 100000, 200000, 500000, 1000000, 2000000, 5000000
 };
 double demo_signal_time_scale_us(int index)
 {
@@ -32,7 +34,7 @@ int demo_signal_scale_mv(int index)
     return index >= 0 ? control_scale_mv((unsigned)index) : 0;
 }
 #define TIME_SCALE_COUNT ((int)(sizeof(time_us) / sizeof(time_us[0])))
-#define DEFAULT_TIME_INDEX 7
+#define DEFAULT_TIME_INDEX 12
 static const char *coupling_names[] = {"DC", "AC"};
 static const char *probe_names[] = {"x1", "x10"};
 static const char *channel_names[] = {"CH1", "CH2"};
@@ -46,12 +48,19 @@ static const char *generator_wave_names[] = {
     "SQUARE", "SINE", "TRIANGLE", "SAW", "SINC", "NOISE"
 };
 static const char *generator_frequency_names[] = {
+    "1 Hz", "2 Hz", "5 Hz", "10 Hz", "20 Hz", "50 Hz", "100 Hz", "200 Hz", "500 Hz",
     "1 kHz", "2 kHz", "5 kHz", "10 kHz", "20 kHz", "50 kHz",
     "100 kHz", "200 kHz", "500 kHz", "1 MHz"
 };
 static const double generator_period_us[] = {
+    1000000.0, 500000.0, 200000.0, 100000.0, 50000.0, 20000.0, 10000.0, 5000.0, 2000.0,
     1000.0, 500.0, 200.0, 100.0, 50.0, 20.0, 10.0, 5.0, 2.0, 1.0
 };
+unsigned demo_signal_generator_hz(int index)
+{
+    return index >= 0 && index < (int)(sizeof(generator_period_us)/sizeof(generator_period_us[0])) ?
+           (unsigned)(1000000.0/generator_period_us[index]) : 0;
+}
 static const struct {
     const char *label;
     DemoMenu target;
@@ -65,7 +74,7 @@ static const struct {
     {"DEBUG", DEMO_MENU_DEBUG}
 #endif
 };
-static const char *debug_labels[] = {"GENERATOR", "LONG PRESS", "DOUBLE CLICK"};
+static const char *debug_labels[] = {"GENERATOR", "LONG PRESS", "DOUBLE CLICK", "SIMULATION"};
 static const char *generator_labels[] = {"CH1 WAVE", "CH2 WAVE", "FREQUENCY"};
 static const char *browse_type_labels[] = {"BMP IMAGES", "CSV WAVES"};
 static const char *channel_labels[] = {"CHANNEL", "COUPLING", "PROBE", "V / DIV", "CALIBRATE"};
@@ -74,15 +83,16 @@ static const char *trigger_labels[] = {
 };
 static const char *cursor_labels[] = {"MODE"};
 static const char *pc_labels[] = {"UART BAUD", "STATUS"};
-static const char *pc_baud_names[] = {"9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1000000"};
-static const unsigned pc_bauds[] = {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000};
+static const char *pc_baud_names[] = {"9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1000000", "2000000"};
+static const unsigned pc_bauds[] = {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 2000000};
 #define PC_BAUD_COUNT ((int)(sizeof(pc_bauds) / sizeof(pc_bauds[0])))
 
 unsigned demo_signal_pc_baud(int index)
 {
     return index >= 0 && index < PC_BAUD_COUNT ? pc_bauds[index] : 0;
 }
-static const char *time_labels[] = {"TIME / DIV", "RESET POSITION"};
+static const char *time_labels[] = {"TIME / DIV", "RESET POSITION", "RECORD LENGTH", "SAMPLE RATE"};
+static const char *record_names[] = {"10 K", "50 K", "100 K", "500 K", "1 M"};
 static const char *processing_labels[] = {
     "CH1 FILTER", "CH2 FILTER", "COLORING", "PERSISTENCE", "FFT"
 };
@@ -293,51 +303,6 @@ static void update_trigger_positions(DemoSignal *demo)
     demo->screen.trigger_preview_y = clamp(
         (int)lround(zero - demo->trigger_preview_voltage * pixels_per_volt),
         8, SCOPE_PLOT_HEIGHT - 9);
-}
-
-static uint32_t generator_noise_code(uint32_t sequence, size_t x, int channel)
-{
-    uint32_t value = (uint32_t)x * 0x9e3779b9u ^
-                     sequence * 0x85ebca6bu ^
-                     (uint32_t)(channel + 1) * 0xc2b2ae35u;
-    value ^= value >> 16;
-    value *= 0x7feb352du;
-    value ^= value >> 15;
-    return value;
-}
-
-static double generator_noise(uint32_t sequence, size_t x, int channel)
-{
-    return (generator_noise_code(sequence, x, channel) & 0xffffu) / 65535.0;
-}
-
-static double generator_value(DemoWaveShape shape, double t, double period,
-                              uint32_t sequence, size_t x, int channel)
-{
-    double p = fmod(t, period) / period;
-    if (p < 0.0) p += 1.0;
-    switch (shape) {
-        case DEMO_WAVE_SQUARE:
-            if (p < 0.02) return p / 0.02;
-            if (p < 0.50) return 1.0;
-            if (p < 0.52) return (0.52 - p) / 0.02;
-            return 0.0;
-        case DEMO_WAVE_SINE:
-            return 0.5 + 0.5 * sin(2.0 * PI * p);
-        case DEMO_WAVE_TRIANGLE:
-            return p < 0.5 ? p * 2.0 : (1.0 - p) * 2.0;
-        case DEMO_WAVE_SAW:
-            return p;
-        case DEMO_WAVE_SINC: {
-            double z = (p - 0.5) * 8.0 * PI;
-            double sinc = fabs(z) < 1e-9 ? 1.0 : sin(z) / z;
-            return 0.5 + 0.5 * sinc;
-        }
-        case DEMO_WAVE_NOISE:
-            return generator_noise(sequence, x, channel);
-        default:
-            return 0.0;
-    }
 }
 
 static void bind_envelopes(DemoSignal *demo)
@@ -586,6 +551,44 @@ static void record_history(DemoSignal *demo)
         persistence_depth[demo->persistence_index];
 }
 
+static void update_measurements(DemoSignal *demo);
+
+void demo_signal_begin_external(DemoSignal *demo)
+{
+    int x, ch;
+    demo->external_capture = 1;
+    demo->external_frame_valid = 0;
+    demo->screen.trigger_locked = 0;
+    demo->history_count = demo->screen.history_count = 0;
+    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
+        demo->ch1[x] = demo->ch2[x] = WAVEFORM_NO_SAMPLE;
+        demo->saved_ch1[x] = demo->saved_ch2[x] = WAVEFORM_NO_SAMPLE;
+        for (ch = 0; ch < 2; ++ch)
+            demo->minimum[ch][x] = demo->maximum[ch][x] = WAVEFORM_NO_SAMPLE;
+    }
+    memset(demo->fft_ch1, 0, sizeof(demo->fft_ch1));
+    memset(demo->fft_ch2, 0, sizeof(demo->fft_ch2));
+    bind_envelopes(demo);
+    update_measurements(demo);
+}
+
+void demo_signal_present_external(DemoSignal *demo, uint64_t sequence)
+{
+    int ch;
+    filter_samples(demo->ch1, demo->filter_level[0]);
+    filter_samples(demo->ch2, demo->filter_level[1]);
+    for (ch = 0; ch < 2; ++ch) {
+        filter_samples(demo->minimum[ch], demo->filter_level[ch]);
+        filter_samples(demo->maximum[ch], demo->filter_level[ch]);
+    }
+    bind_envelopes(demo);
+    if (!demo->screen.running) demo->history_count = demo->screen.history_count = 0;
+    if (!demo->external_frame_valid || demo->external_sequence != sequence) {
+        record_history(demo);
+        demo->external_sequence = sequence;
+        demo->external_frame_valid = 1;
+    }
+}
 static void apply_zoom_view(DemoSignal *demo)
 {
     double ratio = zoom_ratio(demo);
@@ -866,11 +869,11 @@ static int menu_item_count(DemoMenu kind)
     if (kind == DEMO_MENU_TRIGGER) return 7;
     if (kind == DEMO_MENU_CURSOR) return 1;
     if (kind == DEMO_MENU_DISPLAY) return 1;
-    if (kind == DEMO_MENU_TIME) return 2;
+    if (kind == DEMO_MENU_TIME) return 4;
     if (kind == DEMO_MENU_BROWSE) return DEMO_BROWSE_PAGE;
     if (kind == DEMO_MENU_PC) return 2;
     if (kind == DEMO_MENU_PROCESSING) return 5;
-    if (kind == DEMO_MENU_DEBUG) return 3;
+    if (kind == DEMO_MENU_DEBUG) return 4;
     if (kind == DEMO_MENU_GENERATOR) return 3;
     if (kind == DEMO_MENU_FONT) return SCOPE_FONT_COUNT;
     return 0;
@@ -913,7 +916,7 @@ static int current_menu_value(const DemoSignal *demo)
         return demo->screen.grid_enabled;
     if (demo->menu_kind == DEMO_MENU_PC) return demo->pc_baud_index;
     if (demo->menu_kind == DEMO_MENU_TIME)
-        return demo->screen.zoom_enabled ? demo->zoom_time_index : demo->time_index;
+        return item == 2 ? demo->record_depth_index : (demo->screen.zoom_enabled ? demo->zoom_time_index : demo->time_index);
     if (demo->menu_kind == DEMO_MENU_PROCESSING)
         return item < 2 ? demo->filter_level[item] :
                item == 2 ? demo->intensity_coloring :
@@ -922,7 +925,7 @@ static int current_menu_value(const DemoSignal *demo)
         return item < 2 ? demo->generator_wave[item] :
                           demo->generator_frequency_index;
     if (demo->menu_kind == DEMO_MENU_DEBUG)
-        return item == 1 ? (demo->hold_time_ms - 200) / 50 :
+        return item == 3 ? demo->adc_simulation : item == 1 ? (demo->hold_time_ms - 200) / 50 :
                           (demo->double_click_ms - 100) / 50;
     return 0;
 }
@@ -937,7 +940,7 @@ static int menu_value_count(const DemoSignal *demo)
                item == 6 ? SCOPE_PLOT_HEIGHT : 2;
     if (demo->menu_kind == DEMO_MENU_CURSOR) return 3;
     if (demo->menu_kind == DEMO_MENU_TIME) return item == 0 ?
-        (demo->screen.zoom_enabled ? demo->time_index + 1 : TIME_SCALE_COUNT) : 1;
+        (demo->screen.zoom_enabled ? demo->time_index + 1 : TIME_SCALE_COUNT) : item == 2 ? CAPTURE_DEPTH_COUNT : 1;
     if (demo->menu_kind == DEMO_MENU_PROCESSING)
         return item < 2 ? 4 : item == 3 ? 3 : 2;
     if (demo->menu_kind == DEMO_MENU_GENERATOR)
@@ -945,7 +948,7 @@ static int menu_value_count(const DemoSignal *demo)
                           (int)(sizeof(generator_period_us) /
                                 sizeof(generator_period_us[0]));
     if (demo->menu_kind == DEMO_MENU_PC) return PC_BAUD_COUNT;
-    if (demo->menu_kind == DEMO_MENU_DEBUG) return item == 1 ? 27 : 29;
+    if (demo->menu_kind == DEMO_MENU_DEBUG) return item == 3 ? 2 : item == 1 ? 27 : 29;
     return 2;
 }
 
@@ -1071,7 +1074,10 @@ static void refresh_menu(DemoSignal *demo)
         set_menu_options(screen, 0, on_off_names, 2, screen->grid_enabled);
     } else if (demo->menu_kind == DEMO_MENU_TIME) {
         screen->menu_title = "TIME SETTINGS";
-        for (i = 0; i < 2; ++i) screen->menu_labels[i] = time_labels[i];
+        for (i = 0; i < 4; ++i) screen->menu_labels[i] = time_labels[i];
+        screen->menu_values[2] = record_names[demo->record_depth_index];
+        set_menu_options(screen, 2, record_names, CAPTURE_DEPTH_COUNT, demo->record_depth_index);
+        screen->menu_values[3] = demo->acquisition_rate_text;
         screen->menu_values[0] = demo->time_text;
         screen->menu_values[1] = "CENTER";
         screen->menu_stepper[0] = 1;
@@ -1099,6 +1105,9 @@ static void refresh_menu(DemoSignal *demo)
             screen->menu_values[i] = demo->input_timing_text[i - 1];
             screen->menu_stepper[i] = 1;
         }
+        screen->menu_labels[3] = debug_labels[3];
+        screen->menu_values[3] = on_off_names[demo->adc_simulation];
+        screen->menu_stepper[3] = 1;
     } else if (demo->menu_kind == DEMO_MENU_GENERATOR) {
         screen->menu_title = "DEMO GENERATOR";
         for (i = 0; i < 3; ++i) {
@@ -1123,7 +1132,7 @@ static void refresh_menu(DemoSignal *demo)
                 format_scale(demo->edit_scale_text, sizeof(demo->edit_scale_text),
                              demo->edit_value, demo->probe_ten[channel]);
                 screen->menu_values[i] = demo->edit_scale_text;
-            } else {
+            } else if (i == 2) screen->menu_values[i] = record_names[demo->edit_value]; else {
                 screen->menu_values[i] = i == 0 ? demo->edit_value ? "ON" : "OFF" :
                                          i == 1 ? coupling_names[demo->edit_value] :
                                          i == 2 ? demo->edit_value ? "x10" : "x1" : "CONFIRM";
@@ -1146,7 +1155,7 @@ static void refresh_menu(DemoSignal *demo)
                 format_time_scale(demo->edit_scale_text, sizeof(demo->edit_scale_text),
                                   demo->edit_value);
                 screen->menu_values[i] = demo->edit_scale_text;
-            }
+            } else if (i == 2) screen->menu_values[i] = record_names[demo->edit_value];
         }
         else if (demo->menu_kind == DEMO_MENU_PROCESSING)
             screen->menu_values[i] = i < 2 ? filter_names[demo->edit_value] :
@@ -1157,10 +1166,12 @@ static void refresh_menu(DemoSignal *demo)
                                               generator_frequency_names[demo->edit_value];
         else if (demo->menu_kind == DEMO_MENU_PC)
             screen->menu_values[i] = pc_baud_names[demo->edit_value];
-        else if (demo->menu_kind == DEMO_MENU_DEBUG && i > 0) {
+        else if (demo->menu_kind == DEMO_MENU_DEBUG && i > 0 && i < 3) {
             snprintf(demo->input_timing_text[i - 1], sizeof(demo->input_timing_text[0]),
                      "%d ms", (i == 1 ? 200 : 100) + demo->edit_value * 50);
         }
+        else if (demo->menu_kind == DEMO_MENU_DEBUG && i == 3)
+            screen->menu_values[i] = on_off_names[demo->edit_value];
     }
 }
 
@@ -1184,6 +1195,18 @@ static void update_text(DemoSignal *demo, int regenerate)
         format_time_value(demo->time_text, sizeof(demo->time_text),
                           current_time_us_per_div(demo));
     else format_time_scale(demo->time_text, sizeof(demo->time_text), demo->time_index);
+    {
+        int roll = time_us[demo->time_index] > 100000 && demo->trigger_mode_index == 0;
+        demo->screen.rolling = roll && !demo->waveform_loaded;
+        double rate = demo->external_capture && demo->acquisition_rate_hz > 0 ? demo->acquisition_rate_hz :
+            osc_capture_rate(capture_rate_index(time_us[demo->time_index] * 1e-5,
+                capture_record_samples(demo->record_depth_index), roll));
+        snprintf(demo->acquisition_rate_text, sizeof(demo->acquisition_rate_text),
+            rate >= 1e6 ? "%.3g MSa/s AUTO" : rate >= 1e3 ? "%.3g kSa/s AUTO" : "%.3g Sa/s AUTO",
+            rate >= 1e6 ? rate / 1e6 : rate >= 1e3 ? rate / 1e3 : rate);
+        if (roll && !demo->waveform_loaded)
+            strncat(demo->time_text, " ROLL", sizeof(demo->time_text)-strlen(demo->time_text)-1);
+    }
     snprintf(demo->zoom_text, sizeof(demo->zoom_text), "ZOOM x%.7g", zoom_ratio(demo));
     snprintf(demo->horizontal_position_text, sizeof(demo->horizontal_position_text),
              "M POS %+d", demo->time_position);
@@ -1242,7 +1265,7 @@ static void update_text(DemoSignal *demo, int regenerate)
         }
     }
     refresh_menu(demo);
-    if (regenerate) {
+    if (regenerate && (!demo->external_capture || demo->waveform_loaded)) {
         if (demo->waveform_loaded) apply_loaded_view(demo);
         else if (demo->screen.zoom_enabled) apply_zoom_view(demo);
         else if (!demo->screen.running) {
@@ -1267,7 +1290,7 @@ static void update_text(DemoSignal *demo, int regenerate)
             record_history(demo);
         }
     }
-    if (regenerate) update_spectrum(demo);
+    if (regenerate && (!demo->external_capture || demo->waveform_loaded)) update_spectrum(demo);
     update_measurements(demo);
 }
 
@@ -1458,12 +1481,14 @@ void demo_signal_init(DemoSignal *demo)
     demo->scale_index[0] = 2;
     demo->scale_index[1] = 3;
     demo->time_index = DEFAULT_TIME_INDEX;
+    demo->record_depth_index = 2;
     demo->pc_baud_index = 4;
     demo->hold_time_ms = 300;
     demo->double_click_ms = 300;
     demo->generator_wave[0] = DEMO_WAVE_SQUARE;
     demo->generator_wave[1] = DEMO_WAVE_SQUARE;
-    demo->generator_frequency_index = 3;
+    demo->generator_frequency_index = 12;
+    demo->adc_simulation = 1;
     demo->screen.fft_cursor_x = SCOPE_PLOT_WIDTH / 2;
     demo->screen.fft_cursor_level = 128;
     demo->screen.cursor_a = 240;
@@ -1509,6 +1534,7 @@ void demo_signal_update_time(DemoSignal *demo, uint64_t now_ms)
 
 void demo_signal_advance(DemoSignal *demo)
 {
+    if (demo->external_capture && !demo->waveform_loaded) return;
     if (!demo->screen.running) return;
     if (demo->holdoff_ticks > 0) {
         --demo->holdoff_ticks;
@@ -1608,7 +1634,8 @@ static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     } else if (kind == DEMO_MENU_DISPLAY) {
         demo->screen.grid_enabled = (uint8_t)value;
     } else if (kind == DEMO_MENU_TIME) {
-        if (demo->screen.zoom_enabled) demo->zoom_time_index = clamp(value, 0, demo->time_index);
+        if (item == 2) demo->record_depth_index = value;
+        else if (demo->screen.zoom_enabled) demo->zoom_time_index = clamp(value, 0, demo->time_index);
         else demo->time_index = value;
         if (demo->waveform_loaded) {
             int limit = loaded_pan_limit(demo);
@@ -1634,6 +1661,7 @@ static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
         else demo->generator_frequency_index = value;
     }
     if (kind == DEMO_MENU_DEBUG) {
+        if (item == 3) demo->adc_simulation = value;
         if (item == 1) demo->hold_time_ms = 200 + value * 50;
         else if (item == 2) {
             demo->double_click_ms = 100 + value * 50;
@@ -1657,11 +1685,14 @@ int demo_signal_set_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     if(!demo||item<0||value<0)return 0;
     if((kind==DEMO_MENU_CH1||kind==DEMO_MENU_CH2)&&item<4)count=item==3?6:2;
     else if(kind==DEMO_MENU_TRIGGER&&item<4)count=item==0||item==2?3:item==3?4:2;
+    else if(kind==DEMO_MENU_TIME&&item==2)count=CAPTURE_DEPTH_COUNT;
     else if(kind==DEMO_MENU_TIME&&item==0)count=demo->screen.zoom_enabled?demo->time_index+1:TIME_SCALE_COUNT;
     else if(kind==DEMO_MENU_PROCESSING&&item<5)count=item<2?4:item==3?3:2;
     else if(kind==DEMO_MENU_CURSOR&&item==0)count=3;
     else if(kind==DEMO_MENU_PC&&item==0)count=PC_BAUD_COUNT;
-    else if(kind==DEMO_MENU_DEBUG&&item>0&&item<3)count=item==1?27:29;
+    else if(kind==DEMO_MENU_DEBUG&&item>0&&item<4)count=item==3?2:item==1?27:29;
+    else if(kind==DEMO_MENU_GENERATOR&&item<3)count=item<2?DEMO_WAVE_COUNT:
+        (int)(sizeof(generator_period_us)/sizeof(generator_period_us[0]));
     if(!count||value>=count)return 0;
     apply_option(demo,kind,item,value);return 1;
 }
@@ -1812,6 +1843,11 @@ void demo_signal_ui_menu_adjust(DemoSignal *demo, int steps)
 void demo_signal_force_trigger(DemoSignal *demo)
 {
     if (demo->waveform_loaded) return;
+    if (demo->external_capture) {
+        ++demo->capture_sequence;
+        demo_signal_notify(demo, "TRIGGER FORCED");
+        return;
+    }
     demo->phase = (demo->phase + 48) % SCOPE_PLOT_WIDTH;
     ++demo->capture_sequence;
     generate(demo, 1);
@@ -1905,6 +1941,8 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
         demo_signal_force_trigger(demo);
     } else if (demo->menu_kind == DEMO_MENU_TRIGGER && item == 5) {
         reset_trigger_level(demo);
+    } else if (demo->menu_kind == DEMO_MENU_TIME && item == 3) {
+        return DEMO_ACTION_NONE;
     } else if (demo->menu_kind == DEMO_MENU_TIME && item == 1) {
         if (demo->screen.zoom_enabled) demo->zoom_offset = 0;
         else demo->time_position = 0;
@@ -1958,6 +1996,10 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
             apply_edit(demo);
             return DEMO_ACTION_NONE;
         }
+    } else if (demo->menu_kind == DEMO_MENU_TIME && index == 3) {
+        return DEMO_ACTION_NONE;
+    } else if (demo->menu_kind == DEMO_MENU_TIME && index == 2) {
+        small_choice = 1;
     } else if (demo->menu_kind == DEMO_MENU_TIME && index == 0) {
         int step = direction < 0 ? -1 : 1;
         demo_signal_zoom_time(demo, demo->screen.zoom_enabled ? step : -step);
@@ -2237,7 +2279,7 @@ void demo_signal_ui_show_wave(DemoSignal *demo, const char *name,
     if (!isfinite(demo->loaded_wave.time_us_per_div) ||
         demo->loaded_wave.time_us_per_div <= 0.0 ||
         demo->loaded_wave.time_us_per_div > 1000000.0) {
-        int legacy = wave->time_index >= 0 && wave->time_index <= 6 ? wave->time_index + 4 : DEFAULT_TIME_INDEX;
+        int legacy = wave->time_index >= 0 && wave->time_index <= 6 ? wave->time_index + 9 : DEFAULT_TIME_INDEX;
         demo->loaded_wave.time_us_per_div = time_us[legacy];
     }
     demo->loaded_wave.time_index = 0;

@@ -6,6 +6,7 @@
 #include <assert.h>
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #define RGB(r, g, b) (((uint32_t)(r) << 16) | ((uint32_t)(g) << 8) | (uint32_t)(b))
@@ -751,6 +752,21 @@ static void status_overlay(const ScopeScreen *screen)
     }
 }
 
+void scope_update_render(uint32_t *pixels, int stride, const char *phase, unsigned percent)
+{
+    char value[16];
+    if(!pixels || stride<SCOPE_WIDTH || !phase) return;
+    if(percent>100) percent=100;
+    frame=pixels; pitch=stride; draw_alpha=255; active_font=SCOPE_FONT_INTER;
+    fill(0,0,SCOPE_WIDTH,SCOPE_HEIGHT,RGB(14,22,28));
+    text(120,180,"FIRMWARE UPDATE",3,RGB(229,240,242));
+    text(120,260,phase,2,RGB(125,150,162));
+    fill(120,330,784,24,RGB(35,49,59));
+    fill(120,330,(int)(784*percent/100),24,RGB(82,210,235));
+    snprintf(value,sizeof(value),"%u%%",percent);
+    text(120,390,value,3,RGB(229,240,242));
+}
+
 void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen)
 {
     const uint32_t yellow = RGB(255, 196, 77);
@@ -928,7 +944,7 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         }
     }
 
-    {
+    if (!screen->rolling) {
         int marker = screen->trigger_marker_x;
         int row;
         if (marker < 0) marker = 0;

@@ -2,6 +2,7 @@
 #define DEMO_SIGNAL_H
 
 #include "scope_screen.h"
+#include "signal_generator.h"
 #include <stddef.h>
 
 typedef enum {
@@ -26,8 +27,10 @@ typedef enum {
 } DemoMenu;
 
 typedef enum {
-    DEMO_WAVE_SQUARE, DEMO_WAVE_SINE, DEMO_WAVE_TRIANGLE,
-    DEMO_WAVE_SAW, DEMO_WAVE_SINC, DEMO_WAVE_NOISE, DEMO_WAVE_COUNT
+    DEMO_WAVE_SQUARE=SIGNAL_WAVE_SQUARE, DEMO_WAVE_SINE=SIGNAL_WAVE_SINE,
+    DEMO_WAVE_TRIANGLE=SIGNAL_WAVE_TRIANGLE, DEMO_WAVE_SAW=SIGNAL_WAVE_SAW,
+    DEMO_WAVE_SINC=SIGNAL_WAVE_SINC, DEMO_WAVE_NOISE=SIGNAL_WAVE_NOISE,
+    DEMO_WAVE_COUNT=SIGNAL_WAVE_COUNT
 } DemoWaveShape;
 
 #define DEMO_BROWSE_FILES 64
@@ -101,6 +104,9 @@ typedef struct {
     int coupling[2];
     int probe_ten[2];
     int time_index;
+    int record_depth_index;
+    double acquisition_rate_hz;
+    char acquisition_rate_text[32];
     int filter_level[2];
     int intensity_coloring;
     int persistence_index;
@@ -117,6 +123,9 @@ typedef struct {
     int holdoff_ticks;
     int generator_wave[2];
     int generator_frequency_index;
+    int adc_simulation, external_capture;
+    int external_frame_valid;
+    uint64_t external_sequence;
     int measurement_ids[SCOPE_MEASURE_SLOTS];
     int measurement_count;
     int measurement_selected;
@@ -163,6 +172,8 @@ typedef struct {
     double loaded_period_us[2];
     double loaded_duty_percent[2];
 } DemoSignal;
+void demo_signal_present_external(DemoSignal *demo, uint64_t sequence);
+unsigned demo_signal_generator_hz(int index);
 
 void demo_signal_init(DemoSignal *demo);
 void demo_signal_set_fft_range(DemoSignal *demo, double span_hz);
@@ -226,5 +237,6 @@ void demo_signal_ui_show_capture(DemoSignal *demo, const char *name,
                                  const uint32_t *pixels);
 void demo_signal_ui_close_capture(DemoSignal *demo);
 void demo_signal_notify(DemoSignal *demo, const char *message);
+void demo_signal_begin_external(DemoSignal *demo);
 
 #endif

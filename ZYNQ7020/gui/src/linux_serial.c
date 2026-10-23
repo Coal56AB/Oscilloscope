@@ -10,7 +10,7 @@
 static const struct { unsigned baud; speed_t speed; } speeds[] = {
     {9600, B9600}, {19200, B19200}, {38400, B38400}, {57600, B57600},
     {115200, B115200}, {230400, B230400}, {460800, B460800},
-    {921600, B921600}, {1000000, B1000000}
+    {921600, B921600}, {1000000, B1000000}, {2000000, B2000000}
 };
 
 int linux_serial_speed(unsigned baud, speed_t *speed)
