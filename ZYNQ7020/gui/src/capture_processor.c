@@ -3,6 +3,21 @@
 #include "waveform_view.h"
 #include <math.h>
 #include <string.h>
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+static unsigned minimum16(uint8x16_t values)
+{
+    uint8x8_t v = vpmin_u8(vget_low_u8(values), vget_high_u8(values));
+    v = vpmin_u8(v, v); v = vpmin_u8(v, v); v = vpmin_u8(v, v);
+    return vget_lane_u8(v, 0);
+}
+static unsigned maximum16(uint8x16_t values)
+{
+    uint8x8_t v = vpmax_u8(vget_low_u8(values), vget_high_u8(values));
+    v = vpmax_u8(v, v); v = vpmax_u8(v, v); v = vpmax_u8(v, v);
+    return vget_lane_u8(v, 0);
+}
+#endif
 static double sample_voltage(const CaptureBuffer *b, size_t sample, unsigned channel)
 {
     return ((double)b->data[2 * sample + channel] - b->zero_code[channel]) *
@@ -40,7 +55,19 @@ static void source_range(const void *context, size_t first, size_t end, unsigned
     const CaptureBuffer *b = context;
     size_t i;
     unsigned low = b->data[2 * first + channel], high = low;
-    for (i = first + 1; i < end; ++i) {
+    i = first;
+#if defined(__ARM_NEON)
+    if (end - i >= 16) {
+        uint8x16_t minimum = vdupq_n_u8(255), maximum = vdupq_n_u8(0);
+        for (; end - i >= 16; i += 16) {
+            uint8x16_t values = vld2q_u8(b->data + 2 * i).val[channel];
+            minimum = vminq_u8(minimum, values);
+            maximum = vmaxq_u8(maximum, values);
+        }
+        low = minimum16(minimum); high = maximum16(maximum);
+    }
+#endif
+    for (; i < end; ++i) {
         unsigned value = b->data[2 * i + channel];
         if (value < low) low = value;
         if (value > high) high = value;
@@ -159,7 +186,34 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         size_t i, first = 0, last = 0, crossings = 0, high = 0;
         unsigned low = 255, peak = 0;
         double gain = b->volts_per_code[ch], zero = b->zero_code[ch];
-        for (i = 0; i < v->samples; ++i) {
+        i = 0;
+#if defined(__ARM_NEON)
+        /* Bound each vector accumulator so squares cannot overflow uint32.
+           Scalar tails and non-NEON builds use the same exact code sums. */
+        while (v->samples - i >= 16) {
+            size_t end = i + ((v->samples - i) & ~(size_t)15);
+            uint8x16_t minimum = vdupq_n_u8(255), maximum = vdupq_n_u8(0);
+            uint32x4_t vector_sum = vdupq_n_u32(0), vector_squares = vdupq_n_u32(0);
+            unsigned lane;
+            uint32_t sums[4], powers[4];
+            if (end - i > 65536) end = i + 65536;
+            for (; i < end; i += 16) {
+                uint8x16_t values = vld2q_u8(b->data + 2 * (v->start + i)).val[ch];
+                minimum = vminq_u8(minimum, values);
+                maximum = vmaxq_u8(maximum, values);
+                vector_sum = vpadalq_u16(vector_sum, vpaddlq_u8(values));
+                vector_squares = vpadalq_u16(vector_squares,
+                    vmull_u8(vget_low_u8(values), vget_low_u8(values)));
+                vector_squares = vpadalq_u16(vector_squares,
+                    vmull_u8(vget_high_u8(values), vget_high_u8(values)));
+            }
+            vst1q_u32(sums, vector_sum); vst1q_u32(powers, vector_squares);
+            for (lane = 0; lane < 4; ++lane) { sum += sums[lane]; squares += powers[lane]; }
+            if (minimum16(minimum) < low) low = minimum16(minimum);
+            if (maximum16(maximum) > peak) peak = maximum16(maximum);
+        }
+#endif
+        for (; i < v->samples; ++i) {
             unsigned value = b->data[2 * (v->start + i) + ch];
             if (value < low) low = value;
             if (value > peak) peak = value;
@@ -178,16 +232,59 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
             int previous_high = v->samples ? (gain == 0 || (gain > 0 ?
                 2u * b->data[2 * v->start + ch] >= threshold :
                 2u * b->data[2 * v->start + ch] <= threshold)) : 0;
-            for (i = 0; i < v->samples; ++i) {
+            i = 0;
+#if defined(__ARM_NEON)
+            {
+                uint32x4_t highs = vdupq_n_u32(0), edges = vdupq_n_u32(0);
+                uint8x16_t bound = vdupq_n_u8((threshold + (gain > 0)) / 2);
+                uint8x16_t last_edges = vdupq_n_u8(0);
+                size_t last_base = 0;
+                int found = 0;
+                unsigned lane;
+                uint32_t counts[4];
+                for (; v->samples - i >= 16; i += 16) {
+                    uint8x16_t values = vld2q_u8(b->data + 2 * (v->start + i)).val[ch];
+                    uint8x16_t current = gain == 0 ? vdupq_n_u8(255) :
+                        gain > 0 ? vcgeq_u8(values, bound) : vcleq_u8(values, bound);
+                    uint8x16_t previous = vextq_u8(vdupq_n_u8(previous_high ? 255 : 0), current, 15);
+                    uint8x16_t rising = vbicq_u8(current, previous);
+                    uint64x2_t bits = vreinterpretq_u64_u8(rising);
+                    highs = vpadalq_u16(highs, vpaddlq_u8(vandq_u8(current, vdupq_n_u8(1))));
+                    edges = vpadalq_u16(edges, vpaddlq_u8(vandq_u8(rising, vdupq_n_u8(1))));
+                    if (vgetq_lane_u64(bits, 0) | vgetq_lane_u64(bits, 1)) {
+                        if (!found) {
+                            uint8_t flags[16];
+                            vst1q_u8(flags, rising);
+                            for (lane = 0; lane < 16 && !flags[lane]; ++lane) {}
+                            first = i + lane; found = 1;
+                        }
+                        last_edges = rising; last_base = i;
+                    }
+                    previous_high = vgetq_lane_u8(current, 15) != 0;
+                }
+                vst1q_u32(counts, highs);
+                for (lane = 0; lane < 4; ++lane) high += counts[lane];
+                vst1q_u32(counts, edges);
+                for (lane = 0; lane < 4; ++lane) crossings += counts[lane];
+                if (found) {
+                    uint8_t flags[16];
+                    vst1q_u8(flags, last_edges);
+                    for (lane = 0; lane < 16; ++lane) if (flags[lane]) last = last_base + lane;
+                }
+            }
+#endif
+            for (; i < v->samples; ++i) {
                 unsigned value = 2u * b->data[2 * (v->start + i) + ch];
                 int current_high = gain == 0 || (gain > 0 ? value >= threshold : value <= threshold);
-                if (current_high) ++high;
-                if (!previous_high && current_high) {
-                    if (!crossings)
-                        first = i;
-                    last = i;
-                    ++crossings;
-                }
+                unsigned rising = (unsigned)(!previous_high && current_high);
+                size_t mask = (size_t)0 - rising;
+                size_t first_mask = mask & ((size_t)0 - (crossings == 0));
+                /* Noise crosses the threshold unpredictably. Select positions
+                   without a branch for every crossing. */
+                first = (first & ~first_mask) | (i & first_mask);
+                last = (last & ~mask) | (i & mask);
+                crossings += rising;
+                high += current_high;
                 previous_high = current_high;
             }
         }

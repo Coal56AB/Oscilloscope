@@ -64,6 +64,11 @@ static void acquisition_worker(void *context)
             continue;
         }
         scope_mutex_lock(&p->mutex);
+        if (!p->request.running) {
+            scope_mutex_unlock(&p->mutex);
+            capture_ring_cancel(&p->ring, slot);
+            continue;
+        }
         p->bytes += p->ring.buffer[slot].bytes;
         scope_mutex_unlock(&p->mutex);
         if (!capture_ring_publish(&p->ring, slot))
@@ -154,10 +159,11 @@ static void hardware_worker(void *context)
     CaptureBuffer debug = {0}, retained = {0}, candidate = {0};
     CaptureDebug previous_debug = {0};
     double previous_gain[2] = {0};
-    uint64_t expected = 0, next_trigger = 0, forced = 0, last_display = 0;
+    uint64_t expected = 0, next_trigger = 0, forced = 0, last_display = 0, batch_started = 0;
     unsigned rate_index = UINT32_MAX, depth = 0, shift, processed_revision = UINT32_MAX;
     unsigned single_arm = UINT32_MAX;
     int have_retained = 0;
+    unsigned drained = 0;
     debug.data = p->storage[3]; debug.capacity = CAPTURE_MAX_SAMPLES * 2;
     retained.data = p->storage[1]; retained.capacity = CAPTURE_MAX_SAMPLES * 2;
     candidate.data = p->storage[2]; candidate.capacity = CAPTURE_MAX_SAMPLES * 2;
@@ -200,6 +206,7 @@ static void hardware_worker(void *context)
                 scope_mutex_lock(&p->mutex); p->source_error = 1; scope_mutex_unlock(&p->mutex);
             } else if (result > 0) {
                 uint64_t started = scope_clock_ns();
+                if (!drained) batch_started = started;
                 scope_mutex_lock(&p->mutex);
                 ++p->hardware_metrics.blocks;
                 if (received.sequence > expected) p->hardware_metrics.dropped += received.sequence - expected;
@@ -223,8 +230,15 @@ static void hardware_worker(void *context)
                     scope_mutex_lock(&p->mutex); p->source_error = 1; scope_mutex_unlock(&p->mutex);
                     continue;
                 }
-                if (force || request.trigger_mode != 0 || revision != processed_revision || started - last_display >= 40000000) {
+                /* Catch up with completed blocks before another expensive frame.
+                   Otherwise processing slower than one block starves history.
+                   Bound the batch so a continuously busy source still draws. */
+                ++drained;
+                if ((force || request.trigger_mode != 0 || drained >= 8 ||
+                     scope_clock_ns() - batch_started >= 10000000 || !zynq_capture_ready(&p->zynq)) &&
+                    (force || request.trigger_mode != 0 || revision != processed_revision || started - last_display >= 40000000)) {
                     int triggered = 0;
+                    drained = 0;
                     capture_history_snapshot(&history, &candidate);
                     if (!request.roll) {
                         double span = fmax(request.duration_seconds, request.overview_duration_seconds) * candidate.sample_rate_hz;

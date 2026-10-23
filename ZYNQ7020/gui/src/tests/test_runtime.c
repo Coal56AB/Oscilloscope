@@ -212,24 +212,28 @@ static void processor_record_bounds_test(void)
 
 static void processor_short_pulse_test(void)
 {
-    static const size_t positions[] = {0, 1, 3, 4, 127, 128, 4091, 4092};
-    uint8_t data[8192];
+    static const size_t lengths[] = {4093,32765};
+    uint8_t data[65536];
     CaptureBuffer buffer = {0};
     CaptureView view = {1, 4093, {200, 330}, {100, 100}};
     DisplayFrame frame;
-    size_t i, x;
+    size_t i, x, length;
     buffer.data = data;
     buffer.capacity = sizeof(data);
     fill(&buffer, 1);
-    for (i = 0; i < sizeof(positions) / sizeof(positions[0]); ++i) {
-        size_t pulse = positions[i];
-        size_t column = ((pulse + 1) * SCOPE_PLOT_WIDTH - 1) / view.samples;
-        memset(data, 128, sizeof(data));
-        data[2 * (view.start + pulse)] = 255;
-        assert(capture_process(&buffer, &view, &frame));
-        for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
-            assert(frame.y_min[0][x] == (x == column ? 73 : 200));
-            assert(frame.y_max[0][x] == 200);
+    for (length = 0; length < 2; ++length) {
+        view.samples = lengths[length];
+        size_t positions[] = {0,1,3,4,15,16,31,32,127,128,view.samples-2,view.samples-1};
+        for (i = 0; i < sizeof(positions) / sizeof(positions[0]); ++i) {
+            size_t pulse = positions[i];
+            size_t column = ((pulse + 1) * SCOPE_PLOT_WIDTH - 1) / view.samples;
+            memset(data, 128, sizeof(data));
+            data[2 * (view.start + pulse)] = 255;
+            assert(capture_process(&buffer, &view, &frame));
+            for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
+                assert(frame.y_min[0][x] == (x == column ? 73 : 200));
+                assert(frame.y_max[0][x] == 200);
+            }
         }
     }
 }
@@ -278,6 +282,37 @@ static void processor_statistics_test(void)
     }
 }
 
+static void processor_large_statistics_test(void)
+{
+    const size_t count=1000003;
+    CaptureBuffer b={0};CaptureView view={0};DisplayFrame f;
+    uint8_t *data=malloc((count+2)*2);assert(data);
+    b.data=data;b.capacity=(count+2)*2;fill(&b,1);
+    view.start=1;view.samples=count;view.skip_spectrum=1;
+    for(size_t i=0;i<count+2;++i)for(unsigned ch=0;ch<2;++ch)
+        data[2*i+ch]=i<65539?255:(uint8_t)generator_noise_code(37,i,ch);
+    for(int sign=-1;sign<=1;++sign){
+        b.volts_per_code[0]=sign*0.02;b.zero_code[0]=127.25;
+        uint64_t sum=0,squares=0;size_t high=0,crossings=0,first=0,last=0;
+        int previous=sign>=0;
+        for(size_t i=0;i<count;++i){
+            unsigned code=data[2*(i+1)];
+            int level=sign==0||(sign>0?code>=128:code<=127);
+            sum+=code;squares+=code*code;high+=level;
+            if(level&&!previous){if(!crossings)first=i;last=i;++crossings;}
+            previous=level;
+        }
+        assert(capture_process(&b,&view,&f));
+        double mean=(double)sum/count,zero=b.zero_code[0],gain=b.volts_per_code[0];
+        double rms=sqrt((double)squares/count-2*zero*mean+zero*zero)*fabs(gain);
+        assert(fabs(f.mean[0]-(mean-zero)*gain)<1e-12&&fabs(f.rms[0]-rms)<1e-12);
+        assert(fabs(f.duty[0]-100.0*high/count)<1e-12);
+        assert(fabs(f.frequency_hz[0]-(crossings>1?(double)(crossings-1)*b.sample_rate_hz/(last-first):0))<1e-9);
+        assert(fabs(f.minimum[0]-(gain<0?255-zero:-zero)*gain)<1e-12);
+        assert(fabs(f.maximum[0]-(gain<0?-zero:255-zero)*gain)<1e-12);
+    }
+    free(data);
+}
 static void processor_fft_test(void)
 {
     static const unsigned frequencies[] = {10, 201, 400, 511, 512};
@@ -385,6 +420,12 @@ static void capture_debug_test(void)
         assert(output.flags==input.flags&&output.trigger_sample==input.trigger_sample);
         assert(!memcmp(saved,raw,sizeof(raw))&&memcmp(raw,generated,sizeof(raw)));
     }
+    debug.wave[0]=debug.wave[1]=SIGNAL_WAVE_NOISE;
+    debug.offset_fraction[0]=0.17;debug.offset_fraction[1]=0.5;
+    assert(capture_debug_replace(&input,&output,&debug));
+    for(size_t i=0;i<input.bytes/2;++i)for(unsigned ch=0;ch<2;++ch)
+        assert(generated[2*i+ch]==(uint8_t)(128-debug.offset_fraction[ch]*(ch?80:60)+
+            generator_noise_code((uint32_t)input.sequence,input.first_sample+i,ch)%(ch?81:61)));
     output.capacity=sizeof(generated)-1;assert(!capture_debug_replace(&input,&output,&debug));
     output.capacity=sizeof(generated);debug.enabled=0;
     assert(!capture_debug_replace(&input,&output,&debug));
@@ -407,6 +448,7 @@ int main(void)
     processor_zoom_source_test();
     processor_fft_test();
     processor_statistics_test();
+    processor_large_statistics_test();
     pipeline_test();
     capture_debug_test();
     return 0;

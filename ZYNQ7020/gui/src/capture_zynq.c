@@ -45,6 +45,11 @@ int zynq_capture_configure(ZynqCaptureSource *s, unsigned rate, unsigned shift)
     struct osc_capture_config config = {rate, shift};
     return s->fd >= 0 && !s->leased && ioctl(s->fd, OSC_CAPTURE_CONFIGURE, &config) == 0;
 }
+int zynq_capture_ready(ZynqCaptureSource *s)
+{
+    struct pollfd p = {s->fd, POLLIN, 0};
+    return poll(&p, 1, 0) > 0 && (p.revents & POLLIN);
+}
 int zynq_capture_acquire(ZynqCaptureSource *s, CaptureBuffer *b, unsigned timeout)
 {
     struct osc_capture_block block;

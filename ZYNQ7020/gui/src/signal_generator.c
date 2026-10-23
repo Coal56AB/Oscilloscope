@@ -1,17 +1,6 @@
 #include "signal_generator.h"
 #include <math.h>
 #define PI 3.14159265358979323846
-uint32_t generator_noise_code(uint32_t sequence, size_t x, int channel)
-{
-    uint32_t value = (uint32_t)x * 0x9e3779b9u ^
-                     sequence * 0x85ebca6bu ^
-                     (uint32_t)(channel + 1) * 0xc2b2ae35u;
-    value ^= value >> 16;
-    value *= 0x7feb352du;
-    value ^= value >> 15;
-    return value;
-}
-
 double generator_noise(uint32_t sequence, size_t x, int channel)
 {
     return (generator_noise_code(sequence, x, channel) & 0xffffu) / 65535.0;

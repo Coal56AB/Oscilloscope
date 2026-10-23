@@ -18,6 +18,7 @@ int capture_debug_replace(const CaptureBuffer *input, CaptureBuffer *output,
         if (debug->wave[ch] < 0 || debug->wave[ch] >= SIGNAL_WAVE_COUNT ||
             !isfinite(debug->offset_fraction[ch]) || debug->offset_fraction[ch] < 0 ||
             debug->offset_fraction[ch] > 1) return 0;
+        if (debug->wave[ch] == SIGNAL_WAVE_NOISE) continue;
         for (i = 0; i < 1024; ++i) {
             double value = generator_value(debug->wave[ch], i / 1024.0 + ch * 0.2,
                                              1.0, (uint32_t)input->sequence, i, ch);
@@ -74,15 +75,23 @@ int capture_debug_replace(const CaptureBuffer *input, CaptureBuffer *output,
         }
         return 1;
     }
-    for (i = 0; i < input->bytes / 2; ++i) {
-        for (ch = 0; ch < 2; ++ch)
-            storage[2 * i + ch] = debug->wave[ch] == SIGNAL_WAVE_NOISE ?
-                (uint8_t)(128 - debug->offset_fraction[ch] * (ch ? 80 : 60) +
-                           generator_noise_code((uint32_t)input->sequence,
-                           input->first_sample + i, ch) % (ch ? 81 : 61)) : table[ch][phase >> 22];
-        phase += step;
-        residue += step_residue;
-        if (residue >= input->sample_rate_hz) { ++phase; residue -= input->sample_rate_hz; }
+    {
+        unsigned base0 = (unsigned)(128 - debug->offset_fraction[0] * 60);
+        unsigned base1 = (unsigned)(128 - debug->offset_fraction[1] * 80);
+        size_t count = input->bytes / 2, first_sample = (size_t)input->first_sample;
+        uint32_t sequence = (uint32_t)input->sequence;
+        int noise0 = debug->wave[0] == SIGNAL_WAVE_NOISE;
+        int noise1 = debug->wave[1] == SIGNAL_WAVE_NOISE;
+        for (i = 0; i < count; ++i) {
+            storage[2 * i] = noise0 ? base0 + generator_noise_code(sequence,
+                first_sample + i, 0) % 61 : table[0][phase >> 22];
+            storage[2 * i + 1] = noise1 ? base1 + generator_noise_code(sequence,
+                first_sample + i, 1) % 81 : table[1][phase >> 22];
+            if (noise0 && noise1) continue;
+            phase += step;
+            residue += step_residue;
+            if (residue >= input->sample_rate_hz) { ++phase; residue -= input->sample_rate_hz; }
+        }
     }
     return 1;
 }
