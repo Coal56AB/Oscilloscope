@@ -101,7 +101,6 @@ typedef struct {
 } DisplayLayout;
 
 #define CHORD_WINDOW_MS 90
-static int hold_time_ms = 300;
 
 static BOOL CALLBACK find_display(HMONITOR monitor, HDC dc, LPRECT bounds, LPARAM context)
 {
@@ -131,8 +130,7 @@ static void invalidate_windows(void)
 
 static int has_hold_action(DemoControl control)
 {
-    return control != DEMO_CONTROL_COUNT &&
-           control != DEMO_BTN_CH1 && control != DEMO_BTN_CH2;
+    return control != DEMO_CONTROL_COUNT;
 }
 
 static void draw_all(void)
@@ -144,11 +142,11 @@ static void draw_all(void)
     int progress = -1;
     if (held && !held->suppressed && has_hold_action(active)) {
         ULONGLONG elapsed = GetTickCount64() - held->since;
-        progress = held->long_done || elapsed >= (ULONGLONG)hold_time_ms ? 100 :
-                   (int)(elapsed * 100 / hold_time_ms);
+        progress = held->long_done || elapsed >= (ULONGLONG)demo.hold_time_ms ? 100 :
+                   (int)(elapsed * 100 / demo.hold_time_ms);
     }
     render_lcd(screen_pixels);
-    panel_draw(panel_dc, &demo, active, hovered, progress, hold_time_ms);
+    panel_draw(panel_dc, &demo, active, hovered, progress, demo.hold_time_ms);
 }
 
 static int save_bmp(const wchar_t *path, const uint32_t *pixels, int width, int height)
@@ -437,7 +435,7 @@ static void finish_press(HWND window, HeldControl *held, ULONGLONG now)
     if (!held->suppressed && !held->long_done)
         press_control_at(window, held->control,
                          has_hold_action(held->control) &&
-                         now - held->since >= (ULONGLONG)hold_time_ms,
+                         now - held->since >= (ULONGLONG)demo.hold_time_ms,
                          now);
     held->active = 0;
 }
@@ -446,7 +444,7 @@ static void fire_long_press(HWND window, HeldControl *held, ULONGLONG now)
 {
     if (!held->active || held->suppressed || held->long_done ||
         !has_hold_action(held->control) ||
-        now - held->since < (ULONGLONG)hold_time_ms)
+        now - held->since < (ULONGLONG)demo.hold_time_ms)
         return;
     held->long_done = 1;
     pending_chord = DEMO_CONTROL_COUNT;
@@ -960,7 +958,7 @@ static void touch_move(int x, int y)
 static void fire_lcd_touch_hold(ULONGLONG now)
 {
     if (!touch.active || touch.moved || touch.long_done ||
-        now - touch.since < (ULONGLONG)hold_time_ms) return;
+        now - touch.since < (ULONGLONG)demo.hold_time_ms) return;
     switch (touch.zone) {
         case TOUCH_TOP_MENU: demo_signal_ui_toggle_zoom(&demo); break;
         case TOUCH_CH1: demo_signal_ui_reset_channel_position(&demo, 0); break;
@@ -1063,9 +1061,10 @@ static LRESULT CALLBACK controls_window_proc(HWND window, UINT message, WPARAM w
             int adjustment = panel_hold_adjustment(GET_X_LPARAM(lparam),
                                                    GET_Y_LPARAM(lparam));
             if (adjustment) {
-                hold_time_ms += adjustment * 100;
-                if (hold_time_ms < 200) hold_time_ms = 200;
-                if (hold_time_ms > 1500) hold_time_ms = 1500;
+                int value = (demo.hold_time_ms - 200) / 50 + adjustment * 2;
+                if (value < 0) value = 0;
+                if (value > 26) value = 26;
+                demo_signal_set_option(&demo, DEMO_MENU_DEBUG, 1, value);
                 invalidate_windows();
                 return 0;
             }

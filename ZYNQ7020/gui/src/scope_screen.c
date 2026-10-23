@@ -2,6 +2,7 @@
 #include "scope_font_smooth.h"
 #include "rounded_box.h"
 #include "boot_splash.h"
+#include "waveform_view.h"
 #include <assert.h>
 
 #include <stddef.h>
@@ -582,26 +583,37 @@ static void trace(const int16_t *samples, uint32_t shadow, uint32_t color)
 {
     int x;
     if (!samples) return;
-    for (x = 1; x < SCOPE_PLOT_WIDTH; ++x) {
-        trace_segment(PLOT_X + x - 1, trace_y(samples[x - 1]),
-                      PLOT_X + x, trace_y(samples[x]), shadow, color);
+    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
+        if (samples[x] == WAVEFORM_NO_SAMPLE) continue;
+        if (x && samples[x - 1] != WAVEFORM_NO_SAMPLE)
+            trace_segment(PLOT_X + x - 1, trace_y(samples[x - 1]),
+                          PLOT_X + x, trace_y(samples[x]), shadow, color);
+        else {
+            int y = trace_y(samples[x]);
+            pixel(PLOT_X + x, y - 1, shadow);pixel(PLOT_X + x, y + 1, shadow);
+            pixel(PLOT_X + x, y, color);
+        }
     }
 }
 
 static void trace_envelope(const int16_t *minimum, const int16_t *maximum,
                             uint32_t shadow, uint32_t color)
 {
-    int x, previous_low = 0, previous_high = 0;
+    int x, previous_low = 0, previous_high = 0, connected = 0;
     for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
+        if (minimum[x] == WAVEFORM_NO_SAMPLE || maximum[x] == WAVEFORM_NO_SAMPLE) {
+            connected = 0; continue;
+        }
         int low = trace_y(minimum[x]), high = trace_y(maximum[x]);
         trace_segment(PLOT_X + x, low, PLOT_X + x, high, shadow, color);
         /* Connect only gaps between ranges; a midpoint trace creates false beats. */
-        if (x && previous_high < low)
+        if (connected && previous_high < low)
             trace_segment(PLOT_X + x - 1, previous_high, PLOT_X + x, low, shadow, color);
-        else if (x && previous_low > high)
+        else if (connected && previous_low > high)
             trace_segment(PLOT_X + x - 1, previous_low, PLOT_X + x, high, shadow, color);
         previous_low = low;
         previous_high = high;
+        connected = 1;
     }
 }
 
@@ -648,6 +660,8 @@ static void trace_density(const int16_t *history, const int16_t *minimum,
             int high = maximum ? maximum[index] : samples[x];
             int previous = x ? samples[x - 1] : samples[x];
             int offset;
+            if (low == WAVEFORM_NO_SAMPLE || high == WAVEFORM_NO_SAMPLE) continue;
+            if (previous == WAVEFORM_NO_SAMPLE) previous = low;
             if (low < 3) low = 3;
             if (low > SCOPE_PLOT_HEIGHT - 4) low = SCOPE_PLOT_HEIGHT - 4;
             if (high < 3) high = 3;
@@ -686,6 +700,7 @@ static void overview_trace(const int16_t *samples, int start, int end,
     if (start < 1) start = 1;
     if (end > SCOPE_PLOT_WIDTH) end = SCOPE_PLOT_WIDTH;
     for (x = start; x < end; ++x) {
+        if (samples[x - 1] == WAVEFORM_NO_SAMPLE || samples[x] == WAVEFORM_NO_SAMPLE) continue;
         int a = PLOT_Y + 7 + samples[x - 1] *
                 (height - 14) / SCOPE_PLOT_HEIGHT;
         int b = PLOT_Y + 7 + samples[x] *

@@ -40,8 +40,9 @@ void panel_state_init(PanelState *state, Stm32Controls *events)
 
 /**
  * @brief   Применить шаги каналов на STM32, остальные события передать GUI.
- * @details В режиме позиции дельта остаётся событием GUI. При автономной
- *          отладке энкодеры всегда выбирают масштаб, RUN переключает LED.
+ * @details Положительный шаг уменьшает В/дел. В режиме позиции дельта остаётся
+ *          событием GUI. При автономной отладке энкодеры всегда выбирают
+ *          масштаб, RUN переключает LED.
  */
 void panel_state_input(PanelState *state, ControlEventType type, unsigned id, int value,
                        uint32_t now_ms)
@@ -49,7 +50,7 @@ void panel_state_input(PanelState *state, ControlEventType type, unsigned id, in
   if (type == CONTROL_ROTATE && id < 2 && (value == -1 || value == 1) &&
       (standalone(state, now_ms) || !state->position_mode[id]))
   {
-    int next = state->scale[id] + value;
+    int next = state->scale[id] - value;
     if (next >= 0 && next < CONTROL_SCALE_COUNT)
     {
       state->scale[id] = next;

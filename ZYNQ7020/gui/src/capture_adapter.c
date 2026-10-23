@@ -1,4 +1,5 @@
 #include "capture_adapter.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
@@ -47,6 +48,7 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
             snprintf(text, size, "OFF");
             continue;
         }
+        if (!f->view_samples) {snprintf(text, size, "--"); continue;}
         if (id <= DEMO_MEAS_CH2_MAX) {
             double value;
             switch (id % 5) {
@@ -66,7 +68,8 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
                 value = f->maximum[ch];
                 break;
             }
-            snprintf(text, size, "%.2f V", value);
+            if (isfinite(value)) snprintf(text, size, "%.2f V", value);
+            else snprintf(text, size, "--");
         } else if (id == DEMO_MEAS_CH1_FREQ || id == DEMO_MEAS_CH2_FREQ)
             snprintf(text, size, "%.2f kHz", f->frequency_hz[ch] / 1000);
         else if (id == DEMO_MEAS_CH1_PERIOD || id == DEMO_MEAS_CH2_PERIOD) {

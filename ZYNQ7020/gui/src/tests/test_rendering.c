@@ -4,6 +4,7 @@
 #include "demo_signal.h"
 #include "rounded_box.h"
 #include "boot_splash.h"
+#include "waveform_view.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,6 +75,32 @@ static void test_trace_width(uint32_t *pixels, int stride)
             }
             assert(colored == 1); /* One monitor pixel in every layout. */
         }
+    }
+}
+
+static void test_trace_gaps(uint32_t *pixels, int stride)
+{
+    int mode,x;
+    demo_signal_init(&demo);demo.screen.ch2_enabled=0;demo.screen.measurement_count=0;
+    demo.screen.channel_zero_y[0]=350;
+    for(x=0;x<SCOPE_PLOT_WIDTH;++x){
+        int16_t value=x>=256 && x<768 && !(x>=500 && x<520)?210:WAVEFORM_NO_SAMPLE;
+        demo.ch1[x]=demo.minimum[0][x]=demo.maximum[0][x]=value;
+        demo.history_ch1[0][x]=demo.history_minimum[0][0][x]=demo.history_maximum[0][0][x]=value;
+    }
+    for(mode=0;mode<3;++mode){
+        demo.screen.ch1_min_samples=mode?demo.minimum[0]:NULL;
+        demo.screen.ch1_max_samples=mode?demo.maximum[0]:NULL;
+        demo.screen.intensity_coloring=(uint8_t)(mode==2);demo.screen.history_count=1;
+        scope_screen_render(pixels,stride,&demo.screen);
+        uint32_t at_gap=pixels[(SCOPE_PLOT_Y+210)*stride+SCOPE_PLOT_X+510];
+        uint32_t outside=pixels[(SCOPE_PLOT_Y+3)*stride+SCOPE_PLOT_X+100];
+        uint32_t signal=pixels[(SCOPE_PLOT_Y+210)*stride+SCOPE_PLOT_X+300];
+        demo.screen.ch1_enabled=0;scope_screen_render(pixels,stride,&demo.screen);
+        assert(at_gap==pixels[(SCOPE_PLOT_Y+210)*stride+SCOPE_PLOT_X+510]);
+        assert(outside==pixels[(SCOPE_PLOT_Y+3)*stride+SCOPE_PLOT_X+100]);
+        assert(signal!=pixels[(SCOPE_PLOT_Y+210)*stride+SCOPE_PLOT_X+300]);
+        demo.screen.ch1_enabled=1;
     }
 }
 
@@ -274,6 +301,7 @@ int main(void)
     assert(pixels);
     test_corner_composition();
     test_trace_width(pixels, SCOPE_WIDTH + 3);
+    test_trace_gaps(pixels, SCOPE_WIDTH + 3);
     test_trigger_icons(pixels, SCOPE_WIDTH + 3);
     test_lowercase_n(pixels, SCOPE_WIDTH + 3);
     test_cursor_table_and_fft_overlay(pixels, SCOPE_WIDTH + 3);

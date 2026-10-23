@@ -94,6 +94,7 @@ typedef struct {
     char measurement_value_text[SCOPE_MEASURE_SLOTS][24];
     char cursor_measurement_value_text[SCOPE_CURSOR_ROWS][SCOPE_CURSOR_READOUTS][24];
     char menu_page_text[20];
+    char input_timing_text[2][20];
     char status_text[80];
     int scale_index[2];
     int channel_position[2];
@@ -132,7 +133,7 @@ typedef struct {
     int zoom_time_index;
     double zoom_offset;
     int saved_trigger_marker_x;
-    /* Source buffer is read, not regenerated, when ZOOM adjusts its view. */
+    /* STOP and ZOOM read this frozen record; view controls never regenerate it. */
     double capture_start_us, capture_step_us, source_step_us;
     size_t source_count;
     double source_samples[2][DEMO_CAPTURE_POINTS];
@@ -145,6 +146,9 @@ typedef struct {
     uint64_t last_channel_press_ms[2];
     uint64_t synthetic_ms;
     uint8_t channel_press_valid[2];
+    int hold_time_ms;
+    int double_click_ms;
+    int capture_trigger_x;
     double trigger_voltage;
     double trigger_preview_voltage;
     int phase;

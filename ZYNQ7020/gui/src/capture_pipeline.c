@@ -86,8 +86,9 @@ static void processing_worker(void *context)
             DisplayFrame frame;
             size_t total = b->bytes / 2;
             double samples = request.duration_seconds * b->sample_rate_hz;
-            view.samples = samples >= total ? total : samples < 1 ? 1 : (size_t)samples;
-            view.start = (size_t)((total - view.samples) * request.pan_fraction);
+            memset(&view, 0, sizeof(view));
+            view.display_samples = samples < 1 ? 1 : samples;
+            view.display_first = ((double)total - view.display_samples) * request.pan_fraction;
             memcpy(view.zero_y, request.zero_y, sizeof(view.zero_y));
             memcpy(view.pixels_per_volt, request.pixels_per_volt, sizeof(view.pixels_per_volt));
             if (capture_process(b, &view, &frame)) {

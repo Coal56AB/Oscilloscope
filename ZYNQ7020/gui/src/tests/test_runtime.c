@@ -5,6 +5,7 @@
 #include "capture_pipeline.h"
 #include "spectrum_bins.h"
 #include "control_transport.h"
+#include "waveform_view.h"
 #include <assert.h>
 #include <math.h>
 #include <stdlib.h>
@@ -174,6 +175,31 @@ static void processor_file_test(void)
     fclose(file);
 }
 
+static void processor_record_bounds_test(void)
+{
+    uint8_t data[8192];CaptureBuffer b={0};DisplayFrame f;
+    CaptureView view={0,0,{200,330},{100,100},-2048,8192};
+    b.data=data;b.capacity=sizeof(data);fill(&b,77);
+    data[2*2048]=255;
+    assert(capture_process(&b,&view,&f));
+    assert(f.sequence==77 && f.view_start==0 && f.view_samples==4096);
+    for(unsigned x=0;x<SCOPE_PLOT_WIDTH;++x){
+        if(x<256 || x>=768)assert(f.y[0][x]==WAVEFORM_NO_SAMPLE && f.y_min[0][x]==WAVEFORM_NO_SAMPLE);
+        else assert(f.y[0][x]!=WAVEFORM_NO_SAMPLE);
+    }
+    assert(f.y_min[0][512]==73); /* Pulse stays at the physical midpoint. */
+    view.display_first=-8192;
+    assert(capture_process(&b,&view,&f) && !f.view_samples && isnan(f.mean[0]));
+    for(unsigned x=0;x<SCOPE_PLOT_WIDTH;++x)assert(f.y[0][x]==WAVEFORM_NO_SAMPLE);
+    view.display_first=4096;
+    assert(capture_process(&b,&view,&f) && !f.view_samples);
+    view.display_first=-0.5;view.display_samples=2;
+    assert(capture_process(&b,&view,&f));
+    assert(f.y[0][0]==WAVEFORM_NO_SAMPLE && f.y[0][256]==200);
+    view.display_samples=NAN;assert(!capture_process(&b,&view,&f));
+    view.display_samples=8192;view.display_first=INFINITY;assert(!capture_process(&b,&view,&f));
+}
+
 static void processor_short_pulse_test(void)
 {
     static const size_t positions[] = {0, 1, 3, 4, 127, 128, 4091, 4092};
@@ -294,6 +320,16 @@ static void pipeline_test(void)
         scope_sleep_ms(5);
     }
     assert(got);
+    {
+        uint64_t sequence=f.sequence, blocks=m.blocks;
+        request.duration_seconds=0.02;capture_pipeline_request(p,&request);got=0;
+        for(i=0;i<200;++i){
+            if(capture_pipeline_frame(p,&f) && f.y[0][0]==WAVEFORM_NO_SAMPLE){got=1;break;}
+            scope_sleep_ms(5);
+        }
+        assert(got && f.sequence==sequence && f.y[0][512]!=WAVEFORM_NO_SAMPLE);
+        capture_pipeline_metrics(p,&m);assert(m.blocks==blocks);
+    }
     capture_pipeline_destroy(p);
 }
 int main(void)
@@ -302,6 +338,7 @@ int main(void)
     queue_test();
     ring_test();
     processor_file_test();
+    processor_record_bounds_test();
     processor_short_pulse_test();
     processor_zoom_source_test();
     processor_fft_test();

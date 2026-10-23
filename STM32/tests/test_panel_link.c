@@ -119,7 +119,7 @@ int main(void)
   assert(serial_control_start(&serial, &queue, device, 115200));
   expect_scale(0, 500);
   expect_scale(1, 1000);
-  panel_state_input(&panel, CONTROL_ROTATE, 0, 1, (uint32_t)(scope_clock_ns() / 1000000));
+  panel_state_input(&panel, CONTROL_ROTATE, 0, -1, (uint32_t)(scope_clock_ns() / 1000000));
   expect_scale(0, 1000);
   while (control_queue_pop(&queue, &event))
   {

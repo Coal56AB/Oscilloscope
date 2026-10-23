@@ -12,6 +12,14 @@
 #endif
 
 #define STM32_RELAY_SETTLE_MS 10U
+/* Программная граница полного шага A/B=11: оба контакта разомкнуты при pull-up.
+   Это настройка декодера, а не измерение установленного исполнения энкодера. */
+#ifndef STM32_ENCODER_DETENT_PHASE
+#define STM32_ENCODER_DETENT_PHASE 3U
+#endif
+#if STM32_ENCODER_DETENT_PHASE > 3U
+#error STM32_ENCODER_DETENT_PHASE must be between 0 and 3
+#endif
 /* Номинальная опора ADC; для калибровки задать измеренное VREF+ в мВ. */
 #define STM32_ADC_REFERENCE_MV 3300U
 /* Типовые DS5792, не индивидуальная калибровка установленного кристалла. */

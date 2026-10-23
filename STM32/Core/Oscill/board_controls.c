@@ -6,6 +6,7 @@
  */
 
 #include "board_controls.h"
+#include "oscill_config.h"
 #include "main.h"
 #include "general_gpio.h"
 #include "general_encoder.h"
@@ -61,7 +62,8 @@ void board_controls_init(void)
   for (i = 0; i < STM32_ENCODER_COUNT; ++i)
   {
     if (Encoder_Init(&encoders[i], encoder_inputs[i][0].port, encoder_inputs[i][0].pin,
-                     encoder_inputs[i][1].port, encoder_inputs[i][1].pin, 4U) != HAL_OK)
+                     encoder_inputs[i][1].port, encoder_inputs[i][1].pin, 4U,
+                     STM32_ENCODER_DETENT_PHASE) != HAL_OK)
     {
       Error_Handler();
     }

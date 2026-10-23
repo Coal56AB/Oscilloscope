@@ -55,7 +55,7 @@ int main(void)
   event = pop(&events);
   assert(event.type == CONTROL_SCALE && event.control == 1 && event.value == 1000);
 
-  panel_state_input(&panel, CONTROL_ROTATE, 0, 1, 5U);
+  panel_state_input(&panel, CONTROL_ROTATE, 0, -1, 5U);
   assert(events.count == 0 && panel.scale[0] == 3);
   panel_state_poll(&panel, 5U, write_relays);
   assert(writes == 1);
@@ -63,7 +63,7 @@ int main(void)
   panel_state_command(&panel, &command, 6U);
   panel_state_poll(&panel, 6U, write_relays);
   assert(gpio_mask == 52U && events.count == 0);
-  panel_state_input(&panel, CONTROL_ROTATE, 0, -1, 7U);
+  panel_state_input(&panel, CONTROL_ROTATE, 0, 1, 7U);
   panel_state_poll(&panel, 7U, write_relays);
   assert(gpio_mask == 54U);
   panel_state_poll(&panel, 16U, write_relays);
@@ -75,7 +75,7 @@ int main(void)
   assert(panel.scale[0] == 4);
   for (i = 0; i < 10; ++i)
   {
-    panel_state_input(&panel, CONTROL_ROTATE, 0, -1, 20U);
+    panel_state_input(&panel, CONTROL_ROTATE, 0, 1, 20U);
   }
   assert(panel.scale[0] == 0);
   panel_state_poll(&panel, 20U, write_relays);
@@ -110,7 +110,7 @@ int main(void)
   assert(panel.scale[0] == 0 && pop(&events).type == CONTROL_ROTATE);
   command.value = 1234; /* Invalid commands must not extend host liveness. */
   panel_state_command(&panel, &command, 3031U);
-  panel_state_input(&panel, CONTROL_ROTATE, 0, 1, 3032U);
+  panel_state_input(&panel, CONTROL_ROTATE, 0, -1, 3032U);
   if (STM32_STANDALONE_DEBUG)
   {
     assert(panel.scale[0] == 1 && events.count == 0);

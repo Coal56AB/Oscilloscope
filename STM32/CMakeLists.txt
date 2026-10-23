@@ -14,6 +14,12 @@ target_link_libraries(stm32_controls PUBLIC control_protocol)
 # Host checks cover normal operation independently of the firmware debug setting.
 target_compile_definitions(stm32_controls PUBLIC STM32_STANDALONE_DEBUG=0)
 if(BUILD_TESTING)
+    add_executable(stm32_encoder_test tests/test_encoder.c
+        AllLibs/PeriphGeneral/Src/general_encoder.c)
+    target_include_directories(stm32_encoder_test PRIVATE
+        tests/fakes/encoder AllLibs/PeriphGeneral/Inc)
+    add_test(NAME stm32_encoder COMMAND stm32_encoder_test)
+
     add_executable(stm32_controls_test tests/test_controls.c)
     target_link_libraries(stm32_controls_test PRIVATE stm32_controls)
     add_test(NAME stm32_controls COMMAND stm32_controls_test)

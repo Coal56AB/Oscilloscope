@@ -88,7 +88,7 @@ static DemoControl pending_chord = DEMO_CONTROL_COUNT;
 static uint64_t pending_time;
 static DemoSignal chord_snapshot;
 static int wheel_remainder;
-static int hold_time_ms = 300;
+
 
 typedef enum {
     TOUCH_NONE, TOUCH_TOP_MENU, TOUCH_TOP_SCREENSHOT, TOUCH_TOP_WAVE,
@@ -133,8 +133,7 @@ static void invalidate(void) { dirty = 1; }
 
 static int has_hold_action(DemoControl control)
 {
-    return control != DEMO_CONTROL_COUNT &&
-           control != DEMO_BTN_CH1 && control != DEMO_BTN_CH2;
+    return control != DEMO_CONTROL_COUNT;
 }
 
 static DemoControl active_control(int *progress)
@@ -145,8 +144,8 @@ static DemoControl active_control(int *progress)
     if (!held) return DEMO_CONTROL_COUNT;
     if (!held->suppressed && has_hold_action(held->control)) {
         uint64_t elapsed = now_ms() - held->since;
-        *progress = held->long_done || elapsed >= (uint64_t)hold_time_ms ? 100 :
-                    (int)(elapsed * 100 / (uint64_t)hold_time_ms);
+        *progress = held->long_done || elapsed >= (uint64_t)demo.hold_time_ms ? 100 :
+                    (int)(elapsed * 100 / (uint64_t)demo.hold_time_ms);
     }
     return held->control;
 }
@@ -165,7 +164,7 @@ static void draw_all(void)
     }
     scope_screen_render(screen_pixels, SCOPE_WIDTH, &demo.screen);
     if(panel_enabled)
-        panel_sdl_draw(panel_pixels, &demo, active, hovered, progress, hold_time_ms);
+        panel_sdl_draw(panel_pixels, &demo, active, hovered, progress, demo.hold_time_ms);
 }
 
 static void put_u16(FILE *file, uint16_t value)
@@ -390,14 +389,14 @@ static void finish_press(HeldControl *held, uint64_t now)
     if(!held->active) return;
     if(!held->suppressed&&!held->long_done)
         press_control_at(held->control,has_hold_action(held->control)&&
-                         now-held->since>=(uint64_t)hold_time_ms,now);
+                         now-held->since>=(uint64_t)demo.hold_time_ms,now);
     held->active=0;
 }
 
 static void fire_long_press(HeldControl *held, uint64_t now)
 {
     if(!held->active||held->suppressed||held->long_done||!has_hold_action(held->control)||
-       now-held->since<(uint64_t)hold_time_ms) return;
+       now-held->since<(uint64_t)demo.hold_time_ms) return;
     held->long_done=1; pending_chord=DEMO_CONTROL_COUNT;
     press_control_at(held->control,1,now);
 }
@@ -711,7 +710,7 @@ static void touch_move(int x, int y)
 
 static void fire_lcd_touch_hold(uint64_t now)
 {
-    if(!touch.active||touch.moved||touch.long_done||now-touch.since<(uint64_t)hold_time_ms)return;
+    if(!touch.active||touch.moved||touch.long_done||now-touch.since<(uint64_t)demo.hold_time_ms)return;
     switch(touch.zone) {
         case TOUCH_TOP_MENU:demo_signal_ui_toggle_zoom(&demo);break;
         case TOUCH_CH1:demo_signal_ui_reset_channel_position(&demo,0);break;
@@ -813,7 +812,7 @@ static void drain_controls(uint64_t now)
         else if(event.type==CONTROL_UP&&key_holds[event.control].active){
             /* Source duration survives UART burst delivery and uint32 timestamp wrap. */
             uint32_t duration=event.timestamp_ms-down_ms[event.control];
-            if(duration>=((uint32_t)hold_time_ms)&&has_hold_action((DemoControl)event.control)&&
+            if(duration>=((uint32_t)demo.hold_time_ms)&&has_hold_action((DemoControl)event.control)&&
                 !key_holds[event.control].long_done&&!key_holds[event.control].suppressed){
                 key_holds[event.control].long_done=1;press_control_at((DemoControl)event.control,1,now);}
             finish_press(&key_holds[event.control],now);
@@ -1112,7 +1111,10 @@ int main(int argc, char **argv)
                 else if(event.motion.windowID==lcd_id&&touch.active){logical_point(lcd_window,SCOPE_WIDTH,SCOPE_HEIGHT,&x,&y);touch_move(x,y);}}
             else if(event.type==SDL_MOUSEBUTTONDOWN&&event.button.button==SDL_BUTTON_LEFT&&event.button.which!=SDL_TOUCH_MOUSEID){int x=event.button.x,y=event.button.y;
                 if(event.button.windowID==panel_id){int adjustment;DemoControl control;logical_point(panel_window,PANEL_WIDTH,PANEL_HEIGHT,&x,&y);
-                    adjustment=panel_sdl_hold_adjustment(x,y);if(adjustment){hold_time_ms+=adjustment*100;if(hold_time_ms<200)hold_time_ms=200;if(hold_time_ms>1500)hold_time_ms=1500;invalidate();}
+                    adjustment=panel_sdl_hold_adjustment(x,y);if(adjustment){int value=(demo.hold_time_ms-200)/50+adjustment*2;
+                        if(value<0)value=0;
+                        if(value>26)value=26;
+                        demo_signal_set_option(&demo,DEMO_MENU_DEBUG,1,value);invalidate();}
                     else{control=panel_sdl_hit_test(x,y);if(control!=DEMO_CONTROL_COUNT&&!mouse_hold.active){begin_press(&mouse_hold,control,0,now_ms());SDL_CaptureMouse(SDL_TRUE);invalidate();}}}
                 else if(event.button.windowID==lcd_id){logical_point(lcd_window,SCOPE_WIDTH,SCOPE_HEIGHT,&x,&y);lcd_touch_begin(x,y);if(touch.active)SDL_CaptureMouse(SDL_TRUE);}}
             else if(event.type==SDL_MOUSEBUTTONUP&&event.button.button==SDL_BUTTON_LEFT&&event.button.which!=SDL_TOUCH_MOUSEID){int x=event.button.x,y=event.button.y;
@@ -1195,6 +1197,6 @@ cleanup:
     SDL_Quit();
     free(panel_pixels);free(screen_pixels);return exit_status;
 invalid_options:
-    fprintf(stderr,"Invalid option or argument. Use --windowed, --kiosk, --serial DEVICE, --baud RATE, --console TTY, --data-dir DIR, --require-data-device, --raw-demo, --capture FILE, --diagnostics, --remote-socket PATH, --snapshot BMP or --panel-snapshot BMP.\n");
+    fprintf(stderr,"Invalid option or argument. Use --windowed, --kiosk, --serial DEVICE, --baud RATE, --console TTY, --data-dir DIR, --require-data-device, --raw-demo, --capture FILE, --diagnostics, --remote-socket PATH, --status-socket PATH, --snapshot BMP or --panel-snapshot BMP.\n");
     free(panel_pixels);free(screen_pixels);return 2;
 }

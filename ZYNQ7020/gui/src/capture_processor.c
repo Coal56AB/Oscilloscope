@@ -87,10 +87,27 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
 {
     unsigned ch;
     WaveformSource source;
+    CaptureView overlap;
+    double display_first, display_samples;
     uint64_t start_ns = scope_clock_ns();
-    if (!capture_buffer_valid(b) || !v || !f || !v->samples || v->start >= b->bytes / 2 ||
-        v->samples > b->bytes / 2 - v->start)
+    if (!capture_buffer_valid(b) || !v || !f)
         return 0;
+    if (v->display_samples != 0) {
+        double first, end;
+        if (!isfinite(v->display_first) || !isfinite(v->display_samples) || v->display_samples <= 0)
+            return 0;
+        display_first=v->display_first;display_samples=v->display_samples;
+        first=fmax(0.0,fmin(display_first,b->bytes/2));
+        end=fmax(0.0,fmin(display_first+display_samples,b->bytes/2));
+        overlap=*v;
+        overlap.start=(size_t)floor(first);
+        overlap.samples=end>first?(size_t)ceil(end)-overlap.start:0;
+        v=&overlap;
+    } else {
+        if (!v->samples || v->start >= b->bytes / 2 || v->samples > b->bytes / 2 - v->start)
+            return 0;
+        display_first=(double)v->start;display_samples=(double)v->samples;
+    }
     for (ch = 0; ch < 2; ++ch)
         if (!isfinite(b->volts_per_code[ch]) || !isfinite(b->zero_code[ch]) ||
             !isfinite(v->pixels_per_volt[ch]) || !isfinite(v->zero_y[ch]))
@@ -106,7 +123,7 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
     for (ch = 0; ch < 2; ++ch) {
         double sum = 0, squares = 0;
         size_t i, first = 0, last = 0, crossings = 0, high = 0;
-        double first_value = sample_voltage(b, v->start, ch), previous = first_value;
+        double first_value = v->samples ? sample_voltage(b, v->start, ch) : NAN, previous = first_value;
         f->minimum[ch] = f->maximum[ch] = first_value;
         for (i = 0; i < v->samples; ++i) {
             double value = sample_voltage(b, v->start + i, ch);
@@ -117,8 +134,8 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
             sum += value;
             squares += value * value;
         }
-        f->mean[ch] = sum / v->samples;
-        f->rms[ch] = sqrt(squares / v->samples);
+        f->mean[ch] = v->samples ? sum / v->samples : NAN;
+        f->rms[ch] = v->samples ? sqrt(squares / v->samples) : NAN;
         {
             double threshold = (f->maximum[ch] + f->minimum[ch]) * 0.5;
             for (i = 0; i < v->samples; ++i) {
@@ -136,8 +153,8 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         }
         if (crossings > 1 && last > first)
             f->frequency_hz[ch] = (double)(crossings - 1) * b->sample_rate_hz / (last - first);
-        f->duty[ch] = 100.0 * high / v->samples;
-        waveform_view_reduce(&source, (double)v->start, (double)v->samples, ch,
+        f->duty[ch] = v->samples ? 100.0 * high / v->samples : NAN;
+        waveform_view_reduce(&source, display_first, display_samples, ch,
                              v->zero_y[ch], v->pixels_per_volt[ch], SCOPE_PLOT_WIDTH,
                              f->y[ch], f->y_min[ch], f->y_max[ch]);
         spectrum(b, v, ch, f->fft[ch]);

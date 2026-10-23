@@ -8,6 +8,53 @@
 #include <assert.h>
 #include <fcntl.h>
 
+static void test_debug_hold_threshold(void)
+{
+    HeldControl held = {0};
+    demo_signal_init(&demo);
+    assert(demo_signal_set_option(&demo, DEMO_MENU_DEBUG, 1, 12)); /* 800 ms */
+    begin_press(&held, DEMO_BTN_CURSOR, 0, 1000);
+    fire_long_press(&held, 1799);
+    assert(!held.long_done && !demo.screen.menu_open);
+    fire_long_press(&held, 1800);
+    assert(held.long_done && demo.menu_kind == DEMO_MENU_CURSOR);
+    finish_press(&held, 1801);
+    assert(!held.active && demo.screen.cursor_mode == SCOPE_CURSOR_OFF);
+    demo_signal_ui_dismiss_menu(&demo);
+    begin_press(&held, DEMO_BTN_CURSOR, 0, 2000);
+    finish_press(&held, 2799);
+    assert(!demo.screen.menu_open && demo.screen.cursor_mode == SCOPE_CURSOR_TIME);
+    begin_press(&held, DEMO_BTN_CURSOR, 0, 3000);
+    finish_press(&held, 3800);
+    assert(demo.menu_kind == DEMO_MENU_CURSOR && demo.screen.cursor_mode == SCOPE_CURSOR_TIME);
+}
+
+static void test_menu_button_hold_release(void)
+{
+    static const DemoControl buttons[] = {
+        DEMO_BTN_CH1, DEMO_BTN_CH2, DEMO_BTN_CURSOR, DEMO_BTN_MODE, DEMO_BTN_MENU
+    };
+    static const DemoMenu menus[] = {
+        DEMO_MENU_CH1, DEMO_MENU_CH2, DEMO_MENU_CURSOR, DEMO_MENU_TRIGGER, DEMO_MENU_MAIN
+    };
+    unsigned i;
+    for (i = 0; i < sizeof(buttons) / sizeof(buttons[0]); ++i) {
+        HeldControl held = {0};
+        demo_signal_init(&demo);
+        pending_chord = DEMO_CONTROL_COUNT;
+        demo_signal_ui_open_menu(&demo, menus[i]);
+        begin_press(&held, buttons[i], 0, 1000);
+        fire_long_press(&held, 1299);
+        assert(demo.screen.menu_open && !held.long_done);
+        fire_long_press(&held, 1300);
+        assert(!demo.screen.menu_open && held.long_done);
+        finish_press(&held, 1310);
+        assert(!demo.screen.menu_open && demo.screen.ch1_enabled && demo.screen.ch2_enabled);
+        assert(demo.screen.cursor_mode == SCOPE_CURSOR_OFF && !demo.screen.zoom_enabled);
+        assert(demo.trigger_mode_index == 0);
+    }
+}
+
 static void test_service_power_clock(void)
 {
     char directory[]="/tmp/oscill-status-frontend-XXXXXX",path[256];
@@ -142,6 +189,8 @@ static void test_remote_commands(void)
 
 int main(void)
 {
+    test_debug_hold_threshold();
+    test_menu_button_hold_release();
     char directory[]="/dev/shm/oscill-export-XXXXXX", path[PATH_MAX];
     struct stat info;
     uint32_t *expected;
