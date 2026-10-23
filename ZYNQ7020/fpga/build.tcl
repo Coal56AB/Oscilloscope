@@ -14,6 +14,7 @@ create_project oscill $root -part $part -force
 set_property ip_repo_paths [list $ip_repo/ip/rgb2dvi $ip_repo/if] [current_project]
 set_param general.maxThreads 8
 update_ip_catalog
+add_files [list $here/ad9288_input.v $here/axis_capture_frame.v $here/capture_status.v $here/capture_config.v $here/axis_capture_decimate.v]
 source $here/board.tcl
 create_bd_design system
 proc cell {name vlnv properties} {
@@ -31,7 +32,7 @@ set ps [cell ps7 xilinx.com:ip:processing_system7:5.5 {}]
 configure_board $ps
 apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 \
     -config {make_external "FIXED_IO, DDR" apply_board_preset "0" Master "Disable" Slave "Disable"} $ps
-cell control xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 3 CONFIG.NUM_SI 1}
+cell control xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 5 CONFIG.NUM_SI 1}
 cell oled_gpio xilinx.com:ip:axi_gpio:2.0 {CONFIG.C_IS_DUAL 1 CONFIG.C_GPIO_WIDTH 4 \
     CONFIG.C_ALL_OUTPUTS 1 CONFIG.C_DOUT_DEFAULT 0x00000008 \
     CONFIG.C_GPIO2_WIDTH 2 CONFIG.C_ALL_INPUTS_2 1}
@@ -61,7 +62,8 @@ cell tmds digilentinc.com:ip:rgb2dvi:1.4 {CONFIG.kGenerateSerialClk false \
     CONFIG.kRstActiveHigh false CONFIG.kClkRange 1}
 cell one xilinx.com:ip:xlconstant:1.1 {CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 1}
 cell zero xilinx.com:ip:xlconstant:1.1 {CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 0}
-cell interrupts xilinx.com:ip:xlconcat:2.1 {CONFIG.NUM_PORTS 1}
+cell interrupts xilinx.com:ip:xlconcat:2.1 {CONFIG.NUM_PORTS 2}
+source $here/capture.tcl
 bus ps7/M_AXI_GP0 control/S00_AXI
 bus control/M00_AXI vdma/S_AXI_LITE
 bus control/M01_AXI timing/ctrl
@@ -100,13 +102,22 @@ connect_bd_net [create_bd_port -dir I -from 1 -to 0 pl_key] [get_bd_pins oled_gp
 assign_bd_address
 set_property offset 0x43000000 [get_bd_addr_segs ps7/Data/SEG_vdma_Reg]
 set_property offset 0x43C00000 [get_bd_addr_segs ps7/Data/SEG_timing_Reg]
+# Free the automatically assigned GPIO address before restoring the OLED ABI.
+set_property offset 0x41220000 [get_bd_addr_segs ps7/Data/SEG_capture_gpio_Reg]
 set_property offset 0x41200000 [get_bd_addr_segs ps7/Data/SEG_oled_gpio_Reg]
+set_property offset 0x41210000 [get_bd_addr_segs ps7/Data/SEG_capture_gpio_Reg]
+set_property offset 0x40400000 [get_bd_addr_segs ps7/Data/SEG_capture_dma_Reg]
 validate_bd_design
+if {[get_property CONFIG.c_sg_include_stscntrl_strm [get_bd_cells capture_dma]] != 0} {
+    error "Capture DMA must not wait for an unconnected status stream"
+}
 save_bd_design
 set bd [get_files system.bd]
 generate_target all $bd
 add_files -norecurse [make_wrapper -files $bd -top]
 add_files -fileset constrs_1 $here/hdmi.xdc
+add_files -fileset constrs_1 $here/adc.xdc
+set_property USED_IN_SYNTHESIS false [get_files $here/adc.xdc]
 set_property top system_wrapper [current_fileset]
 launch_runs synth_1 -jobs 8
 wait_on_run synth_1

@@ -1,0 +1,17 @@
+From: Oscill project
+Subject: [PATCH] zynq: allow 1 and 2 Mbaud console settings
+
+Keep the UART console baudrate selectable at the rates exposed by the GUI.
+
+--- a/include/configs/zynq-common.h
++++ b/include/configs/zynq-common.h
+@@ -30,7 +30,8 @@
+ /* Serial drivers */
+ /* The following table includes the supported baudrates */
+ #define CFG_SYS_BAUDRATE_TABLE  \
+-	{300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400}
++	{300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, \
++	 230400, 460800, 921600, 1000000, 2000000}
+ 
+ /* Ethernet driver */
+ 

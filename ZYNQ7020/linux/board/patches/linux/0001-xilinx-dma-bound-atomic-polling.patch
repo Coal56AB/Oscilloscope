@@ -1,0 +1,19 @@
+From: Oscill project
+Subject: [PATCH] dmaengine: xilinx: bound atomic polling with a delay
+
+Linux 6.6 atomic polling without a delay charges only one nanosecond per
+iteration. A one-second timeout becomes a billion AXI register reads and
+keeps capture close in the kernel for minutes on Zynq. Charge at least a
+microsecond per failed poll, including the corresponding atomic delay.
+
+--- a/drivers/dma/xilinx/xilinx_dma.c
++++ b/drivers/dma/xilinx/xilinx_dma.c
+@@ -528,7 +528,7 @@
+ #define xilinx_dma_poll_timeout(chan, reg, val, cond, delay_us, timeout_us) \
+ 	readl_poll_timeout_atomic(chan->xdev->regs + chan->ctrl_offset + reg, \
+-				  val, cond, delay_us, timeout_us)
++				  val, cond, (delay_us) ? (delay_us) : 1, timeout_us)
+ 
+ /* IO accessors */
+ static inline u32 dma_read(struct xilinx_dma_chan *chan, u32 reg)
+ {

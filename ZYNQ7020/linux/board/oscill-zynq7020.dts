@@ -4,6 +4,28 @@
 
 /* UIO exposes only the dedicated OLED/key GPIO register bank, never DMA RAM. */
 &amba {
+    capture_dma: dma@40400000 {
+        compatible = "xlnx,axi-dma-1.00.a";
+        reg = <0x40400000 0x10000>;
+        #dma-cells = <1>;
+        xlnx,addrwidth = <32>;
+        xlnx,include-sg;
+        xlnx,sg-length-width = <23>;
+        clocks = <&clkc 15>, <&clkc 15>, <&clkc 15>;
+        clock-names = "s_axi_lite_aclk", "m_axi_sg_aclk", "m_axi_s2mm_aclk";
+        dma-channel@40400030 {
+            compatible = "xlnx,axi-dma-s2mm-channel";
+            interrupts = <0 30 4>;
+            xlnx,datawidth = <64>;
+            xlnx,device-id = <0>;
+        };
+    };
+    capture@41210000 {
+        compatible = "oscill,ad9288-capture";
+        reg = <0x41210000 0x10000>;
+        dmas = <&capture_dma 1>;
+        dma-names = "rx";
+    };
     oscill_oled: oled@41200000 {
         compatible = "oscill,oled-gpio";
         linux,uio-name = "oscill-oled";

@@ -1,0 +1,83 @@
+From: Oscill project
+Subject: [PATCH] dmaengine: xilinx: extend active AXI DMA SG queues
+
+Keep capture running while completed buffers are returned. Complete one
+block per IRQ and append pending descriptors to the active chain, preserving
+software ownership of buffers that have not been resubmitted.
+
+--- a/drivers/dma/xilinx/xilinx_dma.c
++++ b/drivers/dma/xilinx/xilinx_dma.c
+@@ -1543,7 +1543,7 @@
+ 	if (list_empty(&chan->pending_list))
+ 		return;
+ 
+-	if (!chan->idle)
++	if (!chan->idle && (!chan->has_sg || chan->cyclic))
+ 		return;
+ 
+ 	head_desc = list_first_entry(&chan->pending_list,
+@@ -1553,15 +1553,41 @@
+ 	tail_segment = list_last_entry(&tail_desc->segments,
+ 				       struct xilinx_axidma_tx_segment, node);
+ 
++	/* Extend the running SG chain before DMA reaches its previous tail. */
++	if (!chan->idle) {
++		struct xilinx_dma_tx_descriptor *active_tail;
++		struct xilinx_axidma_tx_segment *segment;
++
++		active_tail = list_last_entry(&chan->active_list,
++				struct xilinx_dma_tx_descriptor, node);
++		segment = list_last_entry(&active_tail->segments,
++				struct xilinx_axidma_tx_segment, node);
++		WRITE_ONCE(segment->hw.next_desc,
++			   lower_32_bits(head_desc->async_tx.phys));
++		WRITE_ONCE(segment->hw.next_desc_msb,
++			   upper_32_bits(head_desc->async_tx.phys));
++		dma_wmb();
++		list_splice_tail_init(&chan->pending_list, &chan->active_list);
++		chan->desc_pendingcount = 0;
++		xilinx_write(chan, XILINX_DMA_REG_TAILDESC, tail_segment->phys);
++		return;
++	}
++
+ 	reg = dma_ctrl_read(chan, XILINX_DMA_REG_DMACR);
+ 
+-	if (chan->desc_pendingcount <= XILINX_DMA_COALESCE_MAX) {
++	if (chan->has_sg && !chan->cyclic) {
++		/* Recycle completed buffers while later descriptors are running. */
++		reg &= ~XILINX_DMA_CR_COALESCE_MAX;
++		reg |= 1 << XILINX_DMA_CR_COALESCE_SHIFT;
++		dma_ctrl_write(chan, XILINX_DMA_REG_DMACR, reg);
++	} else if (chan->desc_pendingcount <= XILINX_DMA_COALESCE_MAX) {
+ 		reg &= ~XILINX_DMA_CR_COALESCE_MAX;
+ 		reg |= chan->desc_pendingcount <<
+ 				  XILINX_DMA_CR_COALESCE_SHIFT;
+ 		dma_ctrl_write(chan, XILINX_DMA_REG_DMACR, reg);
+ 	}
+ 
++	dma_wmb();
+ 	if (chan->has_sg)
+ 		xilinx_write(chan, XILINX_DMA_REG_CURDESC,
+ 			     head_desc->async_tx.phys);
+@@ -1721,8 +1747,9 @@
+ 
+ 			seg = list_last_entry(&desc->segments,
+ 					      struct xilinx_axidma_tx_segment, node);
+-			if (!(seg->hw.status & XILINX_DMA_BD_COMP_MASK) && chan->has_sg)
++			if (!(READ_ONCE(seg->hw.status) & XILINX_DMA_BD_COMP_MASK) && chan->has_sg)
+ 				break;
++			dma_rmb();
+ 		}
+ 		if (chan->has_sg && chan->xdev->dma_config->dmatype !=
+ 		    XDMA_TYPE_VDMA)
+@@ -1909,7 +1936,9 @@
+ 		      XILINX_DMA_DMASR_DLY_CNT_IRQ)) {
+ 		spin_lock(&chan->lock);
+ 		xilinx_dma_complete_descriptor(chan);
+-		chan->idle = true;
++		chan->idle = (chan->has_sg && !chan->cyclic &&
++			      chan->xdev->dma_config->dmatype == XDMA_TYPE_AXIDMA) ?
++			     list_empty(&chan->active_list) : true;
+ 		chan->start_transfer(chan);
+ 		spin_unlock(&chan->lock);
+ 	}

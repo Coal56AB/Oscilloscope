@@ -6,7 +6,7 @@ module axis_capture_pack_tb;
     wire [63:0] output_data;
     wire [7:0] keep;
     integer sent=0,received=0,cycles=0;
-    reg held=0;
+    reg held=0, passed=0;
     reg [63:0] held_data;
     reg held_last;
     axis_capture_pack #(.BLOCK_BEATS(4)) dut(clk,resetn,data,valid,input_ready,output_data,keep,output_valid,ready,last);
@@ -25,7 +25,7 @@ module axis_capture_pack_tb;
         if(output_valid&&ready)begin
             if(output_data!=={32'(received*2+1),32'(received*2)}||keep!==8'hff||last!==(received%4==3))$fatal(1,"order or TLAST");
             received=received+1;
-            if(received==32)begin $display("PASS: 32 beats, backpressure, sample order, TLAST");$finish;end
+            if(received==32)begin passed=1;$display("PASS: 32 beats, backpressure, sample order, TLAST");$finish;end
         end
     end
 endmodule

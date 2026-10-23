@@ -29,6 +29,21 @@ foreach application {fsbl diagnostic} {
     sdk configapp -app $application compiler-optimization {Optimize more (-O2)}
 }
 file copy -force $here/diagnostic.c $workspace/diagnostic/src
+file copy -force $here/console.c $here/console.h $workspace/fsbl/src
+set main $workspace/fsbl/src/main.c
+set stream [open $main r]; set content [read $stream]; close $stream
+if {[string first "#include \"console.h\"" $content] < 0} {
+    set content "#include \"console.h\"\n$content"
+}
+if {[string first "board_console_init()" $content] < 0} {
+    set init {Status = ps7_init();}
+    if {[string first $init $content] < 0} { error "FSBL PS7 initialization missing" }
+    set content [string map [list $init {
+    Status = ps7_init();
+    if (Status == FSBL_PS7_INIT_SUCCESS)
+        board_console_init();}] $content]
+}
+set stream [open $main w]; puts $stream $content; close $stream
 set linker $workspace/diagnostic/src/lscript.ld
 set stream [open $linker r]; set content [read $stream]; close $stream
 regsub {LENGTH = 0x1FF00000} $content {LENGTH = 0x01F00000} content
