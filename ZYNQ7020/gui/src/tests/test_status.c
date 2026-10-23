@@ -23,6 +23,7 @@ static void temperature_test(void)
     status_model_init(&m,0);status_packet_init(&p);p.stage=STATUS_READY;
     m.page=STATUS_TEMPERATURE_PAGE;
     status_model_lines(&m,&s,0,lines);
+    assert(!strcmp(lines[0],"8 TEMPERATURES"));
     assert(!strcmp(lines[1],"STM32") && !strcmp(lines[2],"-"));
     p.stm_temperature_valid=1;p.stm_temperature_mc=-12500;p.stm_temperature_age_ms=2000;
     assert(status_model_receive(&m,&p,sizeof(p),1000));
@@ -58,14 +59,25 @@ int main(void)
     p.frames=120;p.render_ns=240000000;
     assert(status_model_receive(&m,&p,sizeof(p),2000));assert(m.fps==60 && m.render_ms==2);
     status_model_update(&m,5001);assert(!strcmp(m.active_error,"GUI TIMEOUT"));
-    assert(m.page==STATUS_ERRORS_PAGE);
+    assert(m.page==STATUS_GUI_PAGE);
     status_model_key(&m,0,5001,&s);status_model_key(&m,1,5010,&s);
     status_model_key(&m,0,5020,&s);status_model_key(&m,1,5030,&s);
-    status_model_key(&m,1,5080,&s);assert(m.page==STATUS_TEMPERATURE_PAGE);
-    status_model_key(&m,1,9000,&s);assert(m.page==STATUS_TEMPERATURE_PAGE);
-    status_model_update(&m,9000);assert(m.page==STATUS_TEMPERATURE_PAGE); /* no repeated page stealing */
+    status_model_key(&m,1,5080,&s);assert(m.page==STATUS_CAPTURE_PAGE);
+    status_model_key(&m,1,9000,&s);assert(m.page==STATUS_CAPTURE_PAGE);
+    status_model_update(&m,9000);assert(m.page==STATUS_CAPTURE_PAGE);
     p.frames=121;assert(status_model_receive(&m,&p,sizeof(p),9001));status_model_update(&m,9001);
     assert(!*m.active_error && !strcmp(m.last_error,"GUI TIMEOUT"));
+    /* Both a recurring viewer skip and a real fault leave every page usable. */
+    for(unsigned page=0;page<status_page_count(&s);++page){
+        m.page=(int)page;++p.dropped;++p.overwritten;p.source_error=page%2;
+        assert(status_model_receive(&m,&p,sizeof(p),9010+page));
+        status_model_update(&m,9010+page);assert(m.page==(int)page);
+        assert(strcmp(m.active_error,"CAPTURE DATA LOSS"));
+        status_model_key(&m,0,10000+page*200,&s);status_model_key(&m,0,10050+page*200,&s);
+        status_model_key(&m,1,10060+page*200,&s);status_model_key(&m,1,10110+page*200,&s);
+        assert(m.page==(int)((page+1)%status_page_count(&s)));
+    }
+    p.source_error=0;
     s.temperature_count=7;assert(status_page_count(&s)==10);
     m.page=9;strcpy(s.temperature[5].name,"BATTERY PACK");s.temperature[5].celsius=-12.5;s.temperature[5].available=1;
     status_model_lines(&m,&s,9001,lines);assert(strstr(lines[2],"-12.50 C"));

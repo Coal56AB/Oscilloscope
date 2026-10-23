@@ -20,7 +20,6 @@ static void fault(StatusModel *m, const char *error)
 {
     if (*error && strcmp(m->active_error,error)) {
         snprintf(m->last_error,sizeof(m->last_error),"%s",error);
-        m->page=STATUS_ERRORS_PAGE;
     }
     snprintf(m->active_error,sizeof(m->active_error),"%s",error);
 }
@@ -44,9 +43,8 @@ int status_model_receive(StatusModel *m, const void *data, size_t size, uint64_t
         m->fps=frames*1000.0/(now-m->received_ms);
         m->render_ms=frames?(p.render_ns-m->gui.render_ns)/1e6/frames:0;
     } else m->fps=m->render_ms=0;
-    if (m->have_gui && p.pid==m->gui.pid &&
-        (p.dropped>m->gui.dropped || p.overwritten>m->gui.overwritten))
-        fault(m,"CAPTURE DATA LOSS");
+    /* A live viewer can skip READY records while DMA continues. The counters
+       are diagnostics; hardware/source failures arrive through source_error. */
     m->gui=p; m->received_ms=now; m->have_gui=1;
     return 1;
 }
@@ -129,6 +127,7 @@ void status_model_lines(const StatusModel *m, const StatusSystem *s, uint64_t no
         } else if (live) {
             line(rows,4,"BLOCKS: %llu",(unsigned long long)p->blocks);
             line(rows,5,"PROCESS: %.2f MS",p->processing_ns/1e6);
+            line(rows,6,"SKIPPED: %llu",(unsigned long long)(p->dropped+p->overwritten));
         } else {
             line(rows,4,"BLOCKS: -"); line(rows,5,"PROCESS: -");
         }
@@ -177,9 +176,7 @@ void status_model_lines(const StatusModel *m, const StatusSystem *s, uint64_t no
         line(rows,7,"K1: NEXT");
     } else {
         size_t first=(size_t)(page-STATUS_TEMPERATURE_PAGE)*3, i, count=s->temperature_count+1;
-        if(count<=3)line(rows,0,"TEMPERATURES");
-        else line(rows,0,"TEMPERATURES %u/%u",(unsigned)((first/3)+1),
-                  (unsigned)((count+2)/3));
+        line(rows,0,"%d TEMPERATURES",page+1);
         for (i=first;i<count && i<first+3;++i) {
             unsigned row=1+(unsigned)(i-first)*2;
             if(i==0){
