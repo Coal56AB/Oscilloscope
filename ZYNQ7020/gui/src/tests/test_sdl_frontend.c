@@ -8,6 +8,33 @@
 #include <assert.h>
 #include <fcntl.h>
 
+static void test_service_power_clock(void)
+{
+    char directory[]="/tmp/oscill-status-frontend-XXXXXX",path[256];
+    assert(mkdtemp(directory));
+    snprintf(path,sizeof(path),"%s/status.sock",directory);
+    int receiver=status_receiver_open(path),sender=status_sender_open();
+    assert(receiver>=0 && sender>=0);
+    demo_signal_init(&demo);
+    serial_controls.metrics.power_mv=4123;
+    serial_controls.metrics.power_received_ms=scope_clock_ns()/1000000-1500;
+    serial_controls.metrics.temperature_mc=-12500;
+    serial_controls.metrics.temperature_valid=1;
+    serial_controls.metrics.temperature_received_ms=scope_clock_ns()/1000000-500;
+    publish_service_status(sender,path,STATUS_READY,STATUS_DEMO,1,1,60,120000000);
+    StatusPacket packet;
+    assert(status_receive(receiver,&packet)==1);
+    assert(packet.power_mv==4123 && packet.power_age_ms>=1500 && packet.power_age_ms<2500);
+    assert(packet.source==STATUS_DEMO && !packet.pipeline && packet.frames==60);
+    assert(packet.stm_temperature_valid && packet.stm_temperature_mc==-12500 &&
+           packet.stm_temperature_age_ms>=500 && packet.stm_temperature_age_ms<1500);
+    serial_controls.metrics.temperature_valid=0;
+    publish_service_status(sender,path,STATUS_READY,STATUS_DEMO,1,1,60,120000000);
+    assert(status_receive(receiver,&packet)==1 && !packet.stm_temperature_valid);
+    memset(&serial_controls.metrics,0,sizeof(serial_controls.metrics));
+    close(sender);close(receiver);assert(unlink(path)==0);assert(rmdir(directory)==0);
+}
+
 static void test_console_baud_and_status(void)
 {
     unsigned actual;
@@ -123,6 +150,7 @@ int main(void)
     expected=malloc(SCOPE_WIDTH*SCOPE_HEIGHT*sizeof(*expected));
     assert(screen_pixels && expected);
     panel_enabled=0;
+    test_service_power_clock();
     test_console_baud_and_status();
     test_fft_fine_touch();
     test_remote_commands();

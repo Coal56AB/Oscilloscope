@@ -210,7 +210,8 @@ static void serial_worker(void *context)
             ControlEvent e;
             if (control_parser_feed(&t->parser, data[i], &e)) {
                 if (e.type != CONTROL_ROTATE && e.type != CONTROL_DOWN && e.type != CONTROL_UP &&
-                    e.type != CONTROL_HEARTBEAT && e.type != CONTROL_SCALE && e.type != CONTROL_POWER)
+                    e.type != CONTROL_HEARTBEAT && e.type != CONTROL_SCALE && e.type != CONTROL_POWER &&
+                    e.type != CONTROL_TEMPERATURE)
                     continue;
                 if (t->parser.sequence_gaps != seen_gaps) {
                     control_queue_reset(t->transport.queue);
@@ -218,7 +219,7 @@ static void serial_worker(void *context)
                 }
                 last = now;
                 identified = 1;
-                if (e.type != CONTROL_HEARTBEAT)
+                if (e.type != CONTROL_HEARTBEAT && e.type != CONTROL_TEMPERATURE)
                     control_queue_push(t->transport.queue, &e);
                 scope_mutex_lock(&t->mutex);
                 t->metrics.last_received_ms = now;
@@ -226,6 +227,10 @@ static void serial_worker(void *context)
                 if (e.type == CONTROL_POWER) {
                     t->metrics.power_mv = e.value;
                     t->metrics.power_received_ms = now;
+                } else if (e.type == CONTROL_TEMPERATURE) {
+                    t->metrics.temperature_valid = e.value != CONTROL_TEMPERATURE_UNAVAILABLE;
+                    t->metrics.temperature_mc = t->metrics.temperature_valid ? e.value : 0;
+                    t->metrics.temperature_received_ms = now;
                 } else if (e.type == CONTROL_SCALE) {
                     t->metrics.scale_mv[e.control] = e.value;
                     t->metrics.scale_valid |= (uint8_t)(1U << e.control);
@@ -266,6 +271,8 @@ static void serial_worker(void *context)
             t->metrics.connected = 0;
             t->metrics.scale_valid = 0;
             t->metrics.power_received_ms = 0;
+            t->metrics.temperature_valid = 0;
+            t->metrics.temperature_received_ms = 0;
             t->metrics.device[0] = '\0';
             t->command_dirty &= 7U;
             if (read_failed)
@@ -342,6 +349,8 @@ void serial_control_stop(SerialControlTransport *t)
     t->metrics.connected = 0;
     t->metrics.scale_valid = 0;
     t->metrics.power_received_ms = 0;
+    t->metrics.temperature_valid = 0;
+    t->metrics.temperature_received_ms = 0;
     t->metrics.device[0] = '\0';
 }
 void serial_control_metrics(SerialControlTransport *t, SerialControlMetrics *metrics)

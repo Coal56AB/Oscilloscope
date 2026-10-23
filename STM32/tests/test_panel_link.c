@@ -145,6 +145,18 @@ int main(void)
   pump(100);
   serial_control_metrics(&serial, &metrics);
   assert(metrics.connected && metrics.power_mv == 4200 && metrics.power_received_ms);
+  stm32_controls_report(&events, CONTROL_TEMPERATURE, 255, -12500, 124);
+  pump(100);
+  serial_control_metrics(&serial, &metrics);
+  assert(metrics.temperature_valid && metrics.temperature_mc == -12500 && metrics.temperature_received_ms);
+  while (control_queue_pop(&queue, &event))
+  {
+    assert(event.type != CONTROL_TEMPERATURE);
+  }
+  stm32_controls_report(&events, CONTROL_TEMPERATURE, 255, CONTROL_TEMPERATURE_UNAVAILABLE, 125);
+  pump(100);
+  serial_control_metrics(&serial, &metrics);
+  assert(!metrics.temperature_valid);
   assert(!serial_control_set_scale(&serial, 2, 500));
   assert(!serial_control_set_scale(&serial, 0, 123));
   serial_control_stop(&serial);
@@ -154,6 +166,8 @@ int main(void)
   assert(serial_control_start(&serial, &queue, device, 115200));
   expect_scale(0, 5000);
   expect_scale(1, 1000);
+  serial_control_metrics(&serial, &metrics);
+  assert(!metrics.temperature_valid && !metrics.temperature_received_ms);
   assert(panel.scale[0] == 5 && relays == 52);
   serial_control_stop(&serial);
   control_queue_destroy(&queue);

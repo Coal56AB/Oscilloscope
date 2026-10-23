@@ -22,6 +22,9 @@ typedef struct {
     uint64_t write_errors;
     uint64_t power_received_ms;
     int power_mv;
+    uint64_t temperature_received_ms;
+    int temperature_mc;
+    int temperature_valid;
     int scale_mv[2];
     uint8_t scale_valid;
 } SerialControlMetrics;

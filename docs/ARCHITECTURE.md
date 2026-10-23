@@ -45,6 +45,14 @@ SDL2 KMSDRM требует GBM/EGL/[OpenGL либо OpenGLES](https://github.com
 
 PL video: AXI VDMA MM2S через HP2 → 32/24-bit AXIS converter → video out/VTC → Digilent rgb2dvi/OSERDES → подтверждённые HDMI pins. FCLK0 — 100 МГц, pixel clock — 50 МГц, serializer clock — 250 МГц DDR, totals — 1344×620, active — 1024×600. Получается около 60,005 Гц. XDC и проект проходят timing для `xc7z020clg400-1`. На схеме нет DDC/HPD; совместимость этого фиксированного режима с экраном проверяется на устройстве.
 
+## Служебный OLED
+
+Задний OLED обслуживает отдельная Linux-служба `oscill-status`: модель страниц,
+опрос sysfs, неблокирующая телеметрия GUI и UIO-драйвер GPIO разделены.
+Переносимый OLED renderer/SSD1306 transport используется также FSBL. K1
+переключает GUI, acquisition/processing, связь, питание, накопитель, систему,
+ошибки и все температурные страницы. Подробности — [STATUS_DISPLAY.md](STATUS_DISPLAY.md).
+
 ## DMA и триггер
 
 Контракт будущего драйвера — `capture_uapi.h`, описание — [CAPTURE_INTERFACE.md](CAPTURE_INTERFACE.md). Драйвер выделяет DMA-safe память через DMA API, проверяет карту регистров/формат, управляет SG descriptors, публикует завершённый блок после cache sync и возвращает владение DMA только после RELEASE. `capture_zynq.c` — реальный userspace адаптер этого контракта; отсутствие устройства/драйвера возвращает ошибку, не синтетические данные.

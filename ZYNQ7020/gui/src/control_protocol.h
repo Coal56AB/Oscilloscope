@@ -14,8 +14,10 @@ typedef enum {
     CONTROL_SET_SCALE = 6,
     CONTROL_SCALE = 7,
     CONTROL_POWER = 8,
-    CONTROL_SET_ENCODER_MODE = 9
+    CONTROL_SET_ENCODER_MODE = 9,
+    CONTROL_TEMPERATURE = 10
 } ControlEventType;
+#define CONTROL_TEMPERATURE_UNAVAILABLE INT32_MIN
 typedef struct {
     ControlEventType type;
     uint8_t control;

@@ -6,6 +6,12 @@
 void board_outputs_init(void);
 /** Одновременно применить шесть битов A1/A2/A3/B1/B2/B3 к GPIO. */
 void board_outputs_relays(uint8_t mask);
-/** Обслужить одиночный ADC замер; вернуть 1 и raw только при готовом результате. */
-int board_outputs_power(uint32_t now_ms, unsigned *raw);
+enum { BOARD_ADC_POWER, BOARD_ADC_TEMPERATURE, BOARD_ADC_REFERENCE, BOARD_ADC_CHANNELS };
+typedef struct
+{
+  unsigned raw[BOARD_ADC_CHANNELS];
+  uint8_t valid;
+} BoardAdcSample;
+/** Обслужить неблокирующий цикл ADC9/16/17; valid отмечает только готовые каналы. */
+int board_outputs_sample(uint32_t now_ms, BoardAdcSample *sample);
 #endif

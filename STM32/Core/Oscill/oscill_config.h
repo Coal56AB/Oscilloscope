@@ -14,6 +14,19 @@
 #define STM32_RELAY_SETTLE_MS 10U
 /* Номинальная опора ADC; для калибровки задать измеренное VREF+ в мВ. */
 #define STM32_ADC_REFERENCE_MV 3300U
+/* Типовые DS5792, не индивидуальная калибровка установленного кристалла. */
+#ifndef STM32_VREFINT_MV
+#define STM32_VREFINT_MV 1200U
+#endif
+#ifndef STM32_TEMPERATURE_V25_MV
+#define STM32_TEMPERATURE_V25_MV 1430U
+#endif
+#ifndef STM32_TEMPERATURE_SLOPE_UV_PER_C
+#define STM32_TEMPERATURE_SLOPE_UV_PER_C 4300U
+#endif
+#if STM32_VREFINT_MV == 0 || STM32_TEMPERATURE_V25_MV == 0 || STM32_TEMPERATURE_SLOPE_UV_PER_C == 0
+#error Temperature conversion coefficients must be positive
+#endif
 #if STM32_ADC_REFERENCE_MV < 2400U || STM32_ADC_REFERENCE_MV > 3600U
 #error STM32_ADC_REFERENCE_MV must be within the supported ADC reference range
 #endif

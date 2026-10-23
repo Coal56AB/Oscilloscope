@@ -11,6 +11,20 @@ option(SCOPE_ENABLE_ZYNQ "Enable the Linux Zynq capture adapter" OFF)
 option(SCOPE_BUILD_BENCHMARKS "Build synthetic capture and renderer benchmarks" ON)
 find_package(Threads REQUIRED)
 
+add_library(oled STATIC src/oled.c src/oled_font.c)
+target_include_directories(oled PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+add_library(status_model STATIC src/status_model.c)
+target_link_libraries(status_model PUBLIC oled)
+if(UNIX AND NOT APPLE)
+    add_library(status_ipc STATIC src/status_ipc.c)
+    target_link_libraries(status_ipc PUBLIC status_model)
+    add_library(status_system STATIC src/status_system.c src/linux_storage.c)
+    target_link_libraries(status_system PUBLIC status_model m)
+    add_executable(oscill-status src/status_main.c src/linux_oled.c src/linux_status_key.c)
+    target_link_libraries(oscill-status PRIVATE status_ipc status_system)
+    install(TARGETS oscill-status RUNTIME DESTINATION bin)
+endif()
+
 add_library(waveform_view STATIC src/waveform_view.c)
 target_include_directories(waveform_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(NOT MSVC)
@@ -50,6 +64,19 @@ target_include_directories(scope_screen PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src"
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(scope_status_test src/tests/test_status.c)
+    target_link_libraries(scope_status_test PRIVATE status_model)
+    add_test(NAME scope_status COMMAND scope_status_test)
+    if(UNIX AND NOT APPLE)
+        add_executable(scope_status_key_test src/tests/test_status_key.c src/linux_status_key.c)
+        target_include_directories(scope_status_key_test PRIVATE src)
+        target_link_options(scope_status_key_test PRIVATE
+            -Wl,--wrap=glob -Wl,--wrap=globfree -Wl,--wrap=open -Wl,--wrap=close -Wl,--wrap=ioctl)
+        add_test(NAME scope_status_key COMMAND scope_status_key_test)
+        add_executable(scope_status_linux_test src/tests/test_status_linux.c)
+        target_link_libraries(scope_status_linux_test PRIVATE status_ipc status_system)
+        add_test(NAME scope_status_linux COMMAND scope_status_linux_test)
+    endif()
     add_executable(scope_sim_test
         src/tests/test_demo_signal.c
         src/demo_signal.c
@@ -113,11 +140,11 @@ elseif(SCOPE_BUILD_PREVIEW AND UNIX AND NOT APPLE)
         src/capture_adapter.c
         src/remote_control.c
     )
-    target_link_libraries(scope_preview PRIVATE scope_screen scope_runtime ${SCOPE_SDL_TARGET} m)
+    target_link_libraries(scope_preview PRIVATE scope_screen scope_runtime status_ipc ${SCOPE_SDL_TARGET} m)
     if(BUILD_TESTING)
         add_executable(scope_frontend_test src/tests/test_sdl_frontend.c src/linux_storage.c
             src/panel_sdl.c src/demo_signal.c src/wave_file.c src/capture_adapter.c src/remote_control.c)
-        target_link_libraries(scope_frontend_test PRIVATE scope_screen scope_runtime ${SCOPE_SDL_TARGET} m)
+        target_link_libraries(scope_frontend_test PRIVATE scope_screen scope_runtime status_ipc ${SCOPE_SDL_TARGET} m)
         add_test(NAME scope_linux_frontend COMMAND scope_frontend_test)
     endif()
     if(SCOPE_ENABLE_DRM OR SCOPE_ENABLE_FRAMEBUFFER)

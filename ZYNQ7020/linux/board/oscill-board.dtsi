@@ -15,7 +15,7 @@
     /* Upper 16 MiB belongs to the FSBL-initialized scanout, including in U-Boot. */
     memory@0 { device_type = "memory"; reg = <0 0x1f000000>; };
     chosen {
-        bootargs = "console=ttyPS0,115200 earlycon loglevel=4 rdinit=/sbin/init usbcore.autosuspend=-1";
+        bootargs = "console=ttyPS0,115200 earlycon loglevel=4 rdinit=/sbin/init usbcore.autosuspend=-1 uio_pdrv_genirq.of_id=oscill,oled-gpio";
         stdout-path = "serial0:115200n8";
         #address-cells = <1>;
         #size-cells = <1>;

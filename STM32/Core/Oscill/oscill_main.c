@@ -47,7 +47,7 @@ void Oscill_Process(void)
 {
   uint32_t now_ms = HAL_GetTick();
   ControlEvent command;
-  unsigned power_raw;
+  BoardAdcSample sample;
 
   while (controls_uart_command(&command, now_ms))
   {
@@ -60,10 +60,21 @@ void Oscill_Process(void)
     board_controls_poll(&panel, now_ms);
     panel_state_poll(&panel, now_ms, board_outputs_relays);
     board_controls_set_run_led(panel.run);
-    if (board_outputs_power(now_ms, &power_raw))
+    if (board_outputs_sample(now_ms, &sample))
     {
-      stm32_controls_report(&controls, CONTROL_POWER, 255U,
-                             (int)panel_state_power_mv(power_raw), now_ms);
+      int temperature_mc = CONTROL_TEMPERATURE_UNAVAILABLE;
+      unsigned temperature_mask = (1U << BOARD_ADC_TEMPERATURE) | (1U << BOARD_ADC_REFERENCE);
+      if (sample.valid & (1U << BOARD_ADC_POWER))
+      {
+        stm32_controls_report(&controls, CONTROL_POWER, 255U,
+                               (int)panel_state_power_mv(sample.raw[BOARD_ADC_POWER]), now_ms);
+      }
+      if ((sample.valid & temperature_mask) == temperature_mask)
+      {
+        panel_state_temperature_mc(sample.raw[BOARD_ADC_TEMPERATURE],
+                                    sample.raw[BOARD_ADC_REFERENCE], &temperature_mc);
+      }
+      stm32_controls_report(&controls, CONTROL_TEMPERATURE, 255U, temperature_mc, now_ms);
     }
     stm32_controls_poll(&controls, now_ms);
   }

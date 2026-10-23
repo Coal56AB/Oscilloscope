@@ -43,6 +43,17 @@ static void protocol_test(void)
     assert(p.packets == 3 && p.sequence_gaps == 2);
     e.control = 9;
     assert(!control_encode(packet, &e));
+    e.type=CONTROL_TEMPERATURE;e.control=255;
+    const int values[]={-40000,0,125000,CONTROL_TEMPERATURE_UNAVAILABLE};
+    for(i=0;i<sizeof(values)/sizeof(values[0]);++i){
+        e.value=values[i];++e.sequence;got=0;
+        assert(control_encode(packet,&e));
+        for(unsigned j=0;j<sizeof(packet);++j)got+=control_parser_feed(&p,packet[j],&out);
+        assert(got==1 && out.type==CONTROL_TEMPERATURE && out.value==values[i]);
+    }
+    e.value=-40001;assert(!control_encode(packet,&e));
+    e.value=125001;assert(!control_encode(packet,&e));
+    e.value=25000;e.control=0;assert(!control_encode(packet,&e));
 }
 static void queue_test(void)
 {

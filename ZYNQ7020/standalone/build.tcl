@@ -20,6 +20,8 @@ if {![file exists $workspace/diagnostic]} {
 }
 foreach application {fsbl diagnostic} {
     file copy -force $here/video.c $here/video.h $workspace/$application/src
+    file copy -force $here/oled_boot.c $here/oled_boot.h $root/gui/src/oled.c \
+        $root/gui/src/oled.h $root/gui/src/oled_font.c $root/gui/src/oled_font.h $workspace/$application/src
     file copy -force $root/gui/logo/boot_splash.c $root/gui/logo/boot_splash.h \
         $root/gui/logo/boot_logo_data.h $workspace/$application/src
     configbsp -bsp $workspace/${application}_bsp/system.mss stdin ps7_uart_1
@@ -61,6 +63,14 @@ if {[string first "SPLASH_EARLY" $content] < 0} {
     if {![regsub {(u32 FsblHookAfterBitstreamDload\(void\)[\s\n]*\{)} $content \
         "\\1$early" content]} { error "FSBL after-bitstream hook missing" }
 }
+# OLED shares the small portable renderer with Linux, and starts after PL reset release.
+if {[string first "#include \"oled_boot.h\"" $content] < 0} {
+    set content "#include \"oled_boot.h\"\n$content"
+}
+# Keep OLED available even if HDMI initialization fails. Migrate the earlier hook.
+regsub -all {[\t ]*board_oled_boot\(\);[\r\n]+} $content {} content
+if {![regsub {(SlcrUnlock\(\);[\s\n]*)(if \(!board_video_start\(\)\))} $content \
+    "\\1board_oled_boot();\n    \\2" content]} { error "FSBL OLED hook missing" }
 set stream [open $hooks w]; puts $stream $content; close $stream
 foreach application {fsbl diagnostic} {
     file delete -force $workspace/$application/Debug/$application.elf

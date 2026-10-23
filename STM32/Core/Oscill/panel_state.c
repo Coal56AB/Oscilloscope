@@ -155,3 +155,36 @@ unsigned panel_state_power_mv(unsigned adc_value)
   }
   return (adc_value * STM32_ADC_REFERENCE_MV * 2U + 2047U) / 4095U;
 }
+
+/**
+ * @brief   Пересчитать ADC16 в температуру кристалла с учётом ADC17/VREFINT.
+ * @details DS5792: V25=1,43 В, slope=4,3 мВ/°C, VREFINT=1,20 В типовые.
+ *          Отношение отсчётов компенсирует VDDA, но не заменяет калибровку
+ *          датчика и внутренней опоры. Отказ не перезаписывает результат.
+ */
+int panel_state_temperature_mc(unsigned sensor_raw, unsigned reference_raw, int *millicelsius)
+{
+  uint64_t vdda_mv, sensor_uv;
+  int64_t delta, result;
+  if (!millicelsius || !sensor_raw || sensor_raw >= 4095U ||
+      !reference_raw || reference_raw >= 4095U)
+  {
+    return 0;
+  }
+  vdda_mv = (4095ULL * STM32_VREFINT_MV + reference_raw / 2U) / reference_raw;
+  if (vdda_mv < 2400U || vdda_mv > 3600U)
+  {
+    return 0;
+  }
+  sensor_uv = ((uint64_t)sensor_raw * STM32_VREFINT_MV * 1000U + reference_raw / 2U) / reference_raw;
+  delta = ((int64_t)STM32_TEMPERATURE_V25_MV * 1000 - (int64_t)sensor_uv) * 1000;
+  delta += delta >= 0 ? STM32_TEMPERATURE_SLOPE_UV_PER_C / 2 :
+                       -(int64_t)(STM32_TEMPERATURE_SLOPE_UV_PER_C / 2);
+  result = 25000 + delta / STM32_TEMPERATURE_SLOPE_UV_PER_C;
+  if (result < -40000 || result > 125000)
+  {
+    return 0;
+  }
+  *millicelsius = (int)result;
+  return 1;
+}

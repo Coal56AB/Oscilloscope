@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+PIDFILE=/run/oscill-status.pid
+case "${1:-start}" in
+start)
+    [ ! -r "$PIDFILE" ] || {
+        pid=$(cat "$PIDFILE")
+        kill -0 "$pid" 2>/dev/null && exit 0
+        rm -f "$PIDFILE"
+    }
+    . /etc/default/oscill
+    start-stop-daemon -S -b -m -p "$PIDFILE" -O /dev/console \
+        -x /usr/bin/oscill-status -- --data-dir "$DATA_DIR"
+    ;;
+stop)
+    [ -r "$PIDFILE" ] || exit 0
+    pid=$(cat "$PIDFILE")
+    start-stop-daemon -K -o -p "$PIDFILE" -x /usr/bin/oscill-status
+    for attempt in 1 2 3 4 5; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+    done
+    if kill -0 "$pid" 2>/dev/null; then echo 'Oscill status: still stopping' >&2; exit 1; fi
+    rm -f "$PIDFILE"
+    ;;
+restart) "$0" stop && "$0" start ;;
+*) echo 'Usage: S20oscill-status start|stop|restart' >&2; exit 2 ;;
+esac

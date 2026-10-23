@@ -1,18 +1,22 @@
 #!/bin/sh
 set -eu
 PIDFILE=/run/oscill.pid
+status_stage() { /usr/bin/oscill-status --stage "$1" --error "${2:-}" || :; }
 case "${1:-start}" in
 start)
     [ ! -f "$PIDFILE" ] || exit 0
     . /etc/default/oscill
-    [ -e "$DISPLAY_DEVICE" ] || { echo 'Oscill: display is not ready' >&2; exit 1; }
-    case "$DISPLAY_BACKEND" in fb|drm) ;; *) echo 'Oscill: invalid display backend' >&2; exit 1;; esac
-    set -- --kiosk "--$DISPLAY_BACKEND" "$DISPLAY_DEVICE" --data-dir "$DATA_DIR" --require-data-device --remote-socket /run/oscill-control.sock --console /dev/ttyPS0
+    status_stage starting
+    [ -e "$DISPLAY_DEVICE" ] || { status_stage failed 'DISPLAY NOT READY'; echo 'Oscill: display is not ready' >&2; exit 1; }
+    case "$DISPLAY_BACKEND" in fb|drm) ;; *) status_stage failed 'INVALID DISPLAY MODE'; echo 'Oscill: invalid display backend' >&2; exit 1;; esac
+    set -- --kiosk "--$DISPLAY_BACKEND" "$DISPLAY_DEVICE" --data-dir "$DATA_DIR" --require-data-device --remote-socket /run/oscill-control.sock --status-socket /run/oscill-status.sock --console /dev/ttyPS0
     [ "${DIAGNOSTICS:-0}" != 1 ] || set -- "$@" --diagnostics
     [ -z "$TOUCH_DEVICE" ] || set -- "$@" --touch "$TOUCH_DEVICE" --touch-rotate "$TOUCH_ROTATION"
     [ -z "$SERIAL_DEVICE" ] || set -- "$@" --serial "$SERIAL_DEVICE" --baud "$SERIAL_BAUD"
     [ "${START_DELAY:-0}" = 0 ] || sleep "$START_DELAY"
-    start-stop-daemon -S -b -m -p "$PIDFILE" -O /dev/console -x /usr/bin/scope_preview -- "$@"
+    start-stop-daemon -S -b -m -p "$PIDFILE" -O /dev/console -x /usr/bin/scope_preview -- "$@" || {
+        status_stage failed 'GUI LAUNCH FAILED'; exit 1;
+    }
     ;;
 stop)
     [ -r "$PIDFILE" ] || exit 0
@@ -24,6 +28,7 @@ stop)
     done
     if kill -0 "$pid" 2>/dev/null; then echo 'Oscill: still stopping' >&2; exit 1; fi
     rm -f "$PIDFILE"
+    status_stage stopped
     ;;
 restart) "$0" stop && "$0" start ;;
 *) echo 'Usage: S99oscill start|stop|restart' >&2; exit 2 ;;

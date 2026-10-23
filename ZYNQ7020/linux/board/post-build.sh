@@ -1,7 +1,18 @@
 #!/bin/sh
 set -eu
-chmod 755 "$1/etc/init.d/S98oscill-card" "$1/etc/init.d/S99oscill" "$1/usr/sbin/oscill-card"
+chmod 755 "$1/etc/init.d/S20oscill-status" "$1/etc/init.d/S98oscill-card" "$1/etc/init.d/S99oscill" "$1/usr/sbin/oscill-card"
 mkdir -p "$1/media/scope"
+# Build identities are descriptive; they do not assert hardware verification.
+{
+    echo 'app=0.1.0'
+    BITSTREAM="$BR2_EXTERNAL_OSCILL_PATH/../output/hardware/system.bit"
+    if [ -f "$BITSTREAM" ]; then
+        printf 'fpga='
+        sha256sum "$BITSTREAM" | cut -c1-12
+    else
+        echo 'fpga=UNAVAILABLE'
+    fi
+} > "$1/etc/oscill-versions"
 # SquashFS stays read-only, including on a read-only MTD partition.
 sed -i '\|^::sysinit:/bin/mount -o remount,rw /$|d' "$1/etc/inittab"
 

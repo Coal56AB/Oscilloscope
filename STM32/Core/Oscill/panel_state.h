@@ -31,4 +31,6 @@ void panel_state_poll(PanelState *state, uint32_t now_ms, void (*write_relays)(u
 uint8_t panel_state_relays(int scale_index);
 /** Пересчитать сырой ADC9 с учётом опоры и делителя питания платы. */
 unsigned panel_state_power_mv(unsigned adc_value);
+/** Оценить температуру кристалла по ADC16/17; неверные отсчёты не дают показания. */
+int panel_state_temperature_mc(unsigned sensor_raw, unsigned reference_raw, int *millicelsius);
 #endif

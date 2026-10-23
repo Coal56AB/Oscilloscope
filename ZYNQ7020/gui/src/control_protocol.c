@@ -44,6 +44,9 @@ static int valid(const ControlEvent *e)
         return e->control < 2 && control_scale_index(e->value) >= 0;
     if (e->type == CONTROL_POWER)
         return e->control == 255 && e->value >= 0 && e->value <= 7200;
+    if (e->type == CONTROL_TEMPERATURE)
+        return e->control == 255 && (e->value == CONTROL_TEMPERATURE_UNAVAILABLE ||
+                                    (e->value >= -40000 && e->value <= 125000));
     if (e->type == CONTROL_SET_ENCODER_MODE)
         return e->control < 2 && (e->value == 0 || e->value == 1);
     if (e->type == CONTROL_HEARTBEAT)

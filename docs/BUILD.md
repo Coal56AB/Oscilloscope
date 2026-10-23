@@ -151,6 +151,11 @@ Windows, Vivado и SDK **2019.1**:
 
 Скрипт закрепляет Digilent rgb2dvi commit `f4613fff005b098065fd5d619a2b88e55720a423`, строит PS/DDR и HDMI, проверяет timing, затем собирает FSBL и тест DDR/HDMI в `ZYNQ7020/output/diagnostic/BOOT.BIN`. `-Output` меняет каталог результата, `-XilinxRoot` — корень установленного Xilinx. Выбран `xc7z020clg400-1` для консервативной проверки timing; `-Part` позволяет задать считанный с микросхемы суффикс.
 
+Аппаратный проект также включает GPIO служебного OLED и PL-кнопок K3/K2;
+служба читает K1 отдельно через PS MIO0. Общий OLED-драйвер
+собирается в FSBL и отдельную Linux-службу; для обновления служебной индикации
+нужны согласованные BOOT.BIN и image.bin. Страницы и проверка — [STATUS_DISPLAY.md](STATUS_DISPLAY.md).
+
 Vivado открывается через `ZYNQ7020/oscill.xpr`; его generated-каталоги и workspace SDK `ZYNQ7020/oscill.sdk` расположены рядом. Bitstream и HDF экспортируются в `ZYNQ7020/output/hardware`. Исходники проекта остаются в `fpga/` и `standalone/`; повторная сборка через `build.ps1` генерирует проект заново.
 
 JTAG-запуск того же теста с установленным hw_server:

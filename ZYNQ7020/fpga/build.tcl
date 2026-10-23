@@ -31,7 +31,10 @@ set ps [cell ps7 xilinx.com:ip:processing_system7:5.5 {}]
 configure_board $ps
 apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 \
     -config {make_external "FIXED_IO, DDR" apply_board_preset "0" Master "Disable" Slave "Disable"} $ps
-cell control xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 2 CONFIG.NUM_SI 1}
+cell control xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 3 CONFIG.NUM_SI 1}
+cell oled_gpio xilinx.com:ip:axi_gpio:2.0 {CONFIG.C_IS_DUAL 1 CONFIG.C_GPIO_WIDTH 4 \
+    CONFIG.C_ALL_OUTPUTS 1 CONFIG.C_DOUT_DEFAULT 0x00000008 \
+    CONFIG.C_GPIO2_WIDTH 2 CONFIG.C_ALL_INPUTS_2 1}
 cell memory xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 1 CONFIG.NUM_SI 1}
 cell reset_axi xilinx.com:ip:proc_sys_reset:5.0 {}
 cell reset_pixel xilinx.com:ip:proc_sys_reset:5.0 {}
@@ -62,6 +65,7 @@ cell interrupts xilinx.com:ip:xlconcat:2.1 {CONFIG.NUM_PORTS 1}
 bus ps7/M_AXI_GP0 control/S00_AXI
 bus control/M00_AXI vdma/S_AXI_LITE
 bus control/M01_AXI timing/ctrl
+bus control/M02_AXI oled_gpio/S_AXI
 bus vdma/M_AXI_MM2S memory/S00_AXI
 bus memory/M00_AXI ps7/S_AXI_HP2
 bus vdma/M_AXIS_MM2S video_cdc/S_AXIS
@@ -71,9 +75,9 @@ bus timing/vtiming_out video/vtiming_in
 bus video/vid_io_out tmds/RGB
 net ps7/FCLK_CLK0 ps7/M_AXI_GP0_ACLK ps7/S_AXI_HP2_ACLK control/aclk memory/aclk \
     reset_axi/slowest_sync_clk pixel_clock/clk_in1 vdma/s_axi_lite_aclk \
-    vdma/m_axi_mm2s_aclk vdma/m_axis_mm2s_aclk video_cdc/s_axis_aclk timing/s_axi_aclk
+    vdma/m_axi_mm2s_aclk vdma/m_axis_mm2s_aclk video_cdc/s_axis_aclk timing/s_axi_aclk oled_gpio/s_axi_aclk
 net ps7/FCLK_RESET0_N reset_axi/ext_reset_in reset_pixel/ext_reset_in pixel_clock/resetn
-net reset_axi/peripheral_aresetn control/aresetn memory/aresetn vdma/axi_resetn video_cdc/s_axis_aresetn timing/s_axi_aresetn
+net reset_axi/peripheral_aresetn control/aresetn memory/aresetn vdma/axi_resetn video_cdc/s_axis_aresetn timing/s_axi_aresetn oled_gpio/s_axi_aresetn
 net pixel_clock/clk_out1 reset_pixel/slowest_sync_clk video_cdc/m_axis_aclk \
     pixels/aclk video/aclk timing/clk tmds/PixelClk
 net pixel_clock/clk_out2 tmds/SerialClk
@@ -91,9 +95,12 @@ foreach {port pin width} {hdmi_clk_p TMDS_Clk_p 1 hdmi_clk_n TMDS_Clk_n 1 \
     connect_bd_net $p [get_bd_pins tmds/$pin]
 }
 connect_bd_net [create_bd_port -dir O hdmi_enable] [get_bd_pins one/dout]
+connect_bd_net [create_bd_port -dir O -from 3 -to 0 oled] [get_bd_pins oled_gpio/gpio_io_o]
+connect_bd_net [create_bd_port -dir I -from 1 -to 0 pl_key] [get_bd_pins oled_gpio/gpio2_io_i]
 assign_bd_address
 set_property offset 0x43000000 [get_bd_addr_segs ps7/Data/SEG_vdma_Reg]
 set_property offset 0x43C00000 [get_bd_addr_segs ps7/Data/SEG_timing_Reg]
+set_property offset 0x41200000 [get_bd_addr_segs ps7/Data/SEG_oled_gpio_Reg]
 validate_bd_design
 save_bd_design
 set bd [get_files system.bd]

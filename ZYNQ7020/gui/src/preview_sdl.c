@@ -5,6 +5,7 @@
 #include "capture_adapter.h"
 #include "control_transport.h"
 #include "remote_control.h"
+#include "status_ipc.h"
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
 #include "linux_display.h"
 #include "linux_touch.h"
@@ -935,6 +936,38 @@ static int remote_command(const char *command, FILE *response, void *context)
     invalidate();draw_all();fputs("OK\n",response);return 1;
 }
 
+static void publish_service_status(int fd, const char *path, unsigned stage, unsigned source,
+                                   int panel_enabled_status, int touch_status, uint64_t frames,
+                                   uint64_t render_ns)
+{
+    StatusPacket packet; CaptureMetrics capture={0}; SerialControlMetrics panel={0};
+    status_packet_init(&packet);
+    if(capture_pipeline)capture_pipeline_metrics(capture_pipeline,&capture);
+    serial_control_metrics(&serial_controls,&panel);
+    packet.stage=stage;packet.pid=(uint32_t)getpid();packet.source=source;
+    packet.running=demo.screen.running;packet.frames=frames;packet.render_ns=render_ns;
+    packet.pipeline=capture_pipeline!=NULL && !demo.waveform_loaded;
+    packet.blocks=capture.blocks;packet.bytes=capture.bytes;packet.processing_ns=capture.processing_ns;
+    packet.dropped=capture.dropped;packet.overwritten=capture.overwritten;
+    packet.occupancy=(uint32_t)capture.occupancy;packet.source_error=capture.source_error;
+    packet.panel=panel_enabled_status?panel.connected:-1;packet.touch=touch_status;
+    packet.uart_errors=panel.crc_errors+panel.format_errors+panel.read_errors+panel.write_errors;
+    packet.uart_gaps=panel.sequence_gaps;
+    /* UART timestamps use CLOCK_MONOTONIC, not SDL's time since initialization. */
+    uint64_t panel_now=scope_clock_ns()/1000000;
+    if(panel.power_received_ms && panel_now>=panel.power_received_ms) {
+        packet.power_mv=panel.power_mv;packet.power_age_ms=panel_now-panel.power_received_ms;
+    }
+    if(panel.temperature_valid && panel.temperature_received_ms && panel_now>=panel.temperature_received_ms) {
+        packet.stm_temperature_valid=1;packet.stm_temperature_mc=panel.temperature_mc;
+        packet.stm_temperature_age_ms=panel_now-panel.temperature_received_ms;
+    }
+    if(stage==STATUS_FAILED)snprintf(packet.error,sizeof(packet.error),"GUI START OR DISPLAY");
+    else if(demo.screen.status_visible && demo.screen.status_warning && demo.screen.status_message)
+        snprintf(packet.error,sizeof(packet.error),"%s",demo.screen.status_message);
+    status_send(fd,path,&packet);
+}
+
 int main(int argc, char **argv)
 {
     struct sigaction stop_action={0};
@@ -942,6 +975,7 @@ int main(int argc, char **argv)
     SDL_Texture *lcd_texture=NULL,*panel_texture=NULL;uint32_t lcd_id,panel_id;
     const char *snapshot_path=NULL,*serial_device=NULL,*raw_file=NULL,*remote_path=NULL;unsigned serial_baud=115200;
     RemoteControl *remote=NULL;
+    const char *status_path=NULL;int status_fd=-1;uint64_t status_time=0;
     int panel_snapshot=0,raw_demo=0,diagnostics=0;uint64_t diagnostic_time=0,render_time=0,render_frames=0;
     int running=1,windowed=0,kiosk=0,i,exit_status=0;
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
@@ -964,6 +998,7 @@ int main(int argc, char **argv)
         else if(strcmp(argv[i],"--capture")==0&&i+1<argc)raw_file=argv[++i];
         else if(strcmp(argv[i],"--diagnostics")==0)diagnostics=1;
         else if(strcmp(argv[i],"--remote-socket")==0&&i+1<argc)remote_path=argv[++i];
+        else if(strcmp(argv[i],"--status-socket")==0&&i+1<argc)status_path=argv[++i];
         else if(strcmp(argv[i],"--console")==0&&i+1<argc)console_path=argv[++i];
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
         else if(strcmp(argv[i],"--drm")==0&&i+1<argc){drm_device=argv[++i];kiosk=1;windowed=0;}
@@ -993,6 +1028,9 @@ int main(int argc, char **argv)
         free(screen_pixels);free(panel_pixels);return result?0:1;
     }
     panel_enabled=!kiosk;
+    if(status_path){status_fd=status_sender_open();
+        publish_service_status(status_fd,status_path,STATUS_STARTING,raw_file?STATUS_FILE:raw_demo?STATUS_RAW_DEMO:STATUS_DEMO,
+                               serial_device!=NULL,-1,0,0);}
     {
         int available = console_path && linux_serial_get_baud(console_path,&console_baud);
         demo_signal_pc_status(&demo,available,console_baud,0);
@@ -1109,6 +1147,16 @@ int main(int argc, char **argv)
             {SDL_UpdateTexture(lcd_texture,NULL,screen_pixels,SCOPE_WIDTH*4);SDL_RenderClear(lcd_renderer);SDL_RenderCopy(lcd_renderer,lcd_texture,NULL,NULL);SDL_RenderPresent(lcd_renderer);
             if(panel_texture){SDL_UpdateTexture(panel_texture,NULL,panel_pixels,PANEL_WIDTH*4);SDL_RenderClear(panel_renderer);SDL_RenderCopy(panel_renderer,panel_texture,NULL,NULL);SDL_RenderPresent(panel_renderer);}dirty=0;}}
         remote_control_pump(remote);
+        if(status_path && (!status_time || now-status_time>=1000)){
+            int touch_status=-1;
+#ifdef SCOPE_ENABLE_LINUX_DISPLAY
+            if(touch_device)touch_status=usb_touch!=NULL;
+#endif
+            publish_service_status(status_fd,status_path,STATUS_READY,
+                (raw_file||demo.waveform_loaded)?STATUS_FILE:raw_demo?STATUS_RAW_DEMO:STATUS_DEMO,
+                serial_device!=NULL,touch_status,render_frames,render_time);
+            status_time=now;
+        }
         if(diagnostics&&now-diagnostic_time>=1000){CaptureMetrics m={0};SerialControlMetrics uart={0};if(capture_pipeline)capture_pipeline_metrics(capture_pipeline,&m);
             serial_control_metrics(&serial_controls,&uart);
             fprintf(stderr,"render_ms=%.3f frames=%llu processing_ms=%.3f blocks=%llu dropped=%llu overwritten=%llu occupancy=%zu source_error=%d\n",
@@ -1117,9 +1165,10 @@ int main(int argc, char **argv)
             if(serial_device)fprintf(stderr,"uart_link=%d uart_device=%s packets=%llu crc_errors=%llu format_errors=%llu gaps=%llu duplicates=%llu read_errors=%llu reconnects=%llu\n",
                 uart.connected,uart.device[0]?uart.device:"none",(unsigned long long)uart.packets,(unsigned long long)uart.crc_errors,(unsigned long long)uart.format_errors,
                 (unsigned long long)uart.sequence_gaps,(unsigned long long)uart.duplicates,(unsigned long long)uart.read_errors,(unsigned long long)uart.reconnects);
-            if(serial_device&&uart.power_received_ms)fprintf(stderr,"panel_power_mv=%d age_ms=%llu uart_write_errors=%llu\n",
-                uart.power_mv,(unsigned long long)(now>=uart.power_received_ms?now-uart.power_received_ms:0),
-                (unsigned long long)uart.write_errors);
+            if(serial_device&&uart.power_received_ms){uint64_t uart_now=scope_clock_ns()/1000000;
+                fprintf(stderr,"panel_power_mv=%d age_ms=%llu uart_write_errors=%llu\n",
+                    uart.power_mv,(unsigned long long)(uart_now>=uart.power_received_ms?uart_now-uart.power_received_ms:0),
+                    (unsigned long long)uart.write_errors);}
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
             if(touch_device){LinuxTouchStats stats;linux_touch_stats(usb_touch,&stats);
                 fprintf(stderr,"touch_connected=%d connections=%llu reports=%llu events=%llu overflows=%llu\n",
@@ -1129,6 +1178,9 @@ int main(int argc, char **argv)
             diagnostic_time=now;}
     }
 cleanup:
+    if(status_path){publish_service_status(status_fd,status_path,exit_status?STATUS_FAILED:STATUS_STOPPED,
+        raw_file?STATUS_FILE:raw_demo?STATUS_RAW_DEMO:STATUS_DEMO,serial_device!=NULL,-1,
+        render_frames,render_time);if(status_fd>=0)close(status_fd);}
     remote_control_close(remote);
     capture_pipeline_destroy(capture_pipeline);serial_control_stop(&serial_controls);control_queue_destroy(&controls);
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY

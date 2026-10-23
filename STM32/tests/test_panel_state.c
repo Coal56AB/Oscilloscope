@@ -144,5 +144,23 @@ int main(void)
   assert(panel_state_power_mv(0) == 0);
   assert(panel_state_power_mv(2048) == 3301);
   assert(panel_state_power_mv(4095) == 6600);
+  {
+    int temperature = 123;
+    assert(panel_state_temperature_mc(2145, 1800, &temperature) && temperature == 25000);
+    assert(panel_state_temperature_mc(1859, 1560, &temperature) && temperature == 25000);
+    assert(panel_state_temperature_mc(2050, 1600, &temperature) && temperature == 0);
+    assert(panel_state_temperature_mc(1974, 1440, &temperature) && temperature == -25000);
+    assert(panel_state_temperature_mc(1250, 1500, &temperature) && temperature == 125000);
+    temperature = 123;
+    assert(!panel_state_temperature_mc(0, 1500, &temperature));
+    assert(!panel_state_temperature_mc(4095, 1500, &temperature));
+    assert(!panel_state_temperature_mc(2145, 0, &temperature));
+    assert(!panel_state_temperature_mc(2145, 4095, &temperature));
+    assert(!panel_state_temperature_mc(2145, 100, &temperature));
+    assert(!panel_state_temperature_mc(1200, 1500, &temperature));
+    assert(!panel_state_temperature_mc(2300, 1600, &temperature));
+    assert(!panel_state_temperature_mc(2145, 1800, NULL));
+    assert(temperature == 123);
+  }
   return 0;
 }
