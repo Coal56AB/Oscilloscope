@@ -12,6 +12,8 @@ class Session(QObject):
     message = Signal(str)
     progress = Signal(int)
     login_required = Signal()
+    firmware_progress = Signal(object)
+    baud_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -39,6 +41,8 @@ class Session(QObject):
         self.worker.failed.connect(self._failed)
         self.worker.disconnected.connect(self._disconnected)
         self.worker.progress.connect(self.progress)
+        self.worker.firmware_progress.connect(self.firmware_progress)
+        self.worker.baud_changed.connect(self.baud_changed)
         self.worker.finished.connect(self._finished)
         self.worker.start()
 

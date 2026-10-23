@@ -7,6 +7,7 @@ from PySide2.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, Q
 from serial.tools import list_ports
 
 from files_ui import FilesTab
+from firmware_ui import FirmwareTab
 from linux_ui import LinuxTab
 from scope_ui import ScopeTab
 from session import Session
@@ -35,8 +36,8 @@ class MainWindow(QMainWindow):
         row.addWidget(self.scan)
         row.addWidget(QLabel("Скорость:"))
         self.baud = QComboBox()
-        self.baud.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1000000"])
-        self.baud.setCurrentText(str(self.settings.value("baud", "115200")))
+        self.baud.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1000000", "2000000"])
+        self.baud.setCurrentText(str(self.settings.value("baud", "1000000")))
         row.addWidget(self.baud)
         self.connect_button = QPushButton("Подключиться")
         self.connect_button.clicked.connect(self.toggle_connection)
@@ -49,10 +50,14 @@ class MainWindow(QMainWindow):
         self.linux = LinuxTab(self.session)
         self.scope = ScopeTab(self.session)
         self.files = FilesTab(self.session)
+        self.firmware = FirmwareTab(self.session)
+        self.firmware.active_changed.connect(lambda active: self.connect_button.setEnabled(not active))
         for widget, title in [(self.terminal, "Терминал"), (self.linux, "Linux"), (self.scope, "Осциллограф"), (self.files, "SD-карта")]:
             self.tabs.addTab(widget, title)
+        self.tabs.addTab(self.firmware, "Прошивка")
         layout.addWidget(self.tabs, 1)
         self.session.changed.connect(self.connection_changed)
+        self.session.baud_changed.connect(lambda baud: self.baud.setCurrentText(str(baud)))
         self.session.login_required.connect(lambda: self.tabs.setCurrentWidget(self.terminal))
         self.session.message.connect(self.statusBar().showMessage)
         self.session.progress.connect(lambda count: self.statusBar().showMessage("Получено по UART: {} байт".format(count)))
@@ -78,6 +83,8 @@ class MainWindow(QMainWindow):
             self.port.setEditText(current)
 
     def toggle_connection(self):
+        if self.firmware.active:
+            return
         if self.session.worker is not None:
             self.session.disconnect_port()
             self.connect_button.setEnabled(False)
@@ -101,6 +108,10 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.close)
 
     def closeEvent(self, event):
+        if self.firmware.active:
+            self.statusBar().showMessage("Идёт обновление прошивки. Дождитесь завершения записи и проверки")
+            event.ignore()
+            return
         if self.session.worker is not None and self.session.worker.isRunning():
             self.closing = True
             self.scope.auto.setChecked(False)

@@ -16,6 +16,8 @@ class SerialWorker(QThread):
     failed = Signal(object, str)
     disconnected = Signal(str)
     progress = Signal(int)
+    firmware_progress = Signal(object)
+    baud_changed = Signal(int)
 
     def __init__(self, port, baud, parent=None):
         super().__init__(parent)
@@ -81,6 +83,12 @@ class SerialWorker(QThread):
                     try:
                         if key is None:
                             connection.write(command)
+                        elif hasattr(command, "run"):
+                            try:
+                                value = command.run(connection, self.transact, self.firmware_progress.emit)
+                            finally:
+                                self.baud_changed.emit(connection.baudrate)
+                            self.result.emit(key, value)
                         else:
                             self.result.emit(key, self.transact(connection, command, timeout))
                     except (TimeoutError, serial.SerialException) as error:

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide2.QtCore import Qt, QPoint, QObject, Signal
 from PySide2.QtTest import QTest
 from PySide2.QtWidgets import QApplication
+from PySide2.QtGui import QCloseEvent
 from files_ui import FilesTab
 from scope_ui import ScopeTab
 from terminal_ui import Console
@@ -72,6 +73,24 @@ class FakeSerial:
 
 
 class GuiTests(unittest.TestCase):
+    def test_update_keeps_connection_until_finished(self):
+        from app_ui import MainWindow
+        window = MainWindow()
+        window.firmware.active = True
+        window.firmware.active_changed.emit(True)
+        self.assertFalse(window.connect_button.isEnabled())
+        event = QCloseEvent()
+        window.closeEvent(event)
+        self.assertFalse(event.isAccepted())
+        with patch.object(window.session, 'disconnect_port') as disconnect:
+            window.toggle_connection()
+            disconnect.assert_not_called()
+        window.firmware.finished('OK')
+        self.assertTrue(window.connect_button.isEnabled())
+        window.closeEvent(event)
+        self.assertTrue(event.isAccepted())
+        window.close()
+
     def test_direct_settings_keep_draft_and_confirm_actual_state(self):
         class FakeSession(QObject):
             changed = Signal(bool)

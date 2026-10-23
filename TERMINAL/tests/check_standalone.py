@@ -25,7 +25,7 @@ def check(executable):
         assert result.exists(), "No startup confirmation"
         details = json.loads(result.read_text(encoding="utf-8"))
         assert details["python"] == "3.7.9", details
-        assert details["tabs"] == ["Терминал", "Linux", "Осциллограф", "SD-карта"], details
+        assert details["tabs"] == ["Терминал", "Linux", "Осциллограф", "SD-карта", "Прошивка"], details
         print(json.dumps(details, ensure_ascii=False))
 
 
