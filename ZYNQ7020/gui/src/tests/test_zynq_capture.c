@@ -187,8 +187,17 @@ int main(void)
     for(unsigned i=0;i<100&&atomic_load(&sample_rate)!=200000000;++i)scope_sleep_ms(5);
     assert(atomic_load(&sample_rate)==200000000);
     while(capture_pipeline_frame(pipeline,&frame)){}
-    atomic_store(&available,1);assert(wait_frame(pipeline,&frame));
-    assert(frame.sample_rate_hz==200000000&&frame.view_samples==20);
+    atomic_store(&available,1);
+    /* Reprojecting the retained STOP record can race with this delivery.
+       Wait for the new DMA rate, not merely the first published frame. */
+    {
+        int got_rate=0;
+        for(unsigned i=0;i<100;++i){
+            if(capture_pipeline_frame(pipeline,&frame)&&frame.sample_rate_hz==200000000){got_rate=1;break;}
+            scope_sleep_ms(5);
+        }
+        assert(got_rate&&frame.view_samples==20);
+    }
     capture_pipeline_destroy(pipeline);assert(!atomic_load(&leased));
     return 0;
 }
