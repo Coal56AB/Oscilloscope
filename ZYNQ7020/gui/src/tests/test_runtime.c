@@ -569,20 +569,78 @@ static void peak_detect_test(void)
     assert(frame.minimum[0]<0 && frame.maximum[0]>1.2);
     view.display_first=1024;view.display_samples=64;
     assert(capture_process(&out,&view,&frame));
+    unsigned marks=0;
     for(i=0;i<SCOPE_PLOT_WIDTH;++i){
-        assert(frame.y_min[0][i]==frame.y[0][i] && frame.y_max[0][i]==frame.y[0][i]);
         assert(frame.y[0][i]>=198 && frame.y[0][i]<=202);
+        if(frame.y_min[0][i]<=79 && frame.y_max[0][i]>=201)++marks;
+        else assert(frame.y_min[0][i]==frame.y[0][i] && frame.y_max[0][i]==frame.y[0][i]);
     }
+    assert(marks==32); /* One thin mark per two-sample interval, at every zoom. */
     /* The original extrema remain available when returning to the full view. */
     view.display_samples=0;
     assert(capture_process(&out,&view,&frame));
     assert(frame.y_min[0][300]<=79 && frame.y_max[0][300]>=201);
 }
 
+static void peak_zoom_continuity_test(void)
+{
+    static const unsigned spans[]={4096,2048,2000,1025,1024,1023,1000,512,128,64};
+    uint8_t data[16384],peaks[16384];
+    CaptureBuffer b={0};CaptureView v={0};static DisplayFrame f;
+    unsigned s,i,x,previous=0;
+    memset(data,128,sizeof(data));
+    for(i=0;i<sizeof(peaks);i+=4){peaks[i]=peaks[i+1]=100;peaks[i+2]=peaks[i+3]=160;}
+    b.data=data;b.peaks=peaks;b.capacity=b.bytes=sizeof(data);
+    b.sample_rate_hz=200000;b.zero_code[0]=b.zero_code[1]=128;
+    b.volts_per_code[0]=b.volts_per_code[1]=0.02;b.trigger_sample=CAPTURE_NO_TRIGGER;
+    v.zero_y[0]=v.zero_y[1]=200;v.pixels_per_volt[0]=v.pixels_per_volt[1]=100;v.skip_spectrum=1;
+    for(s=0;s<sizeof(spans)/sizeof(spans[0]);++s){
+        uint8_t expected[SCOPE_PLOT_WIDTH]={0};unsigned marks=0;
+        v.display_samples=spans[s];v.display_first=4096-spans[s]/2.0;
+        /* Project physical bucket midpoints independently of column reduction. */
+        for(i=0;i<b.bytes/4;++i){
+            double p=(2.0*i+1-v.display_first)*SCOPE_PLOT_WIDTH/spans[s];
+            if(p>=0 && p<SCOPE_PLOT_WIDTH)expected[(unsigned)p]=1;
+        }
+        assert(capture_process(&b,&v,&f));
+        assert(fabs(f.minimum[0]+0.56)<1e-12 && fabs(f.maximum[0]-0.64)<1e-12);
+        for(x=0;x<SCOPE_PLOT_WIDTH;++x){
+            assert(f.y[0][x]==200);
+            if(expected[x]){
+                assert(f.y_min[0][x]==136 && f.y_max[0][x]==256);++marks;
+            }else assert(f.y_min[0][x]==200 && f.y_max[0][x]==200);
+        }
+        if(s>=3)assert(marks<=previous && (s!=5 || previous-marks<=1));
+        previous=marks;
+        if(spans[s]==2000)assert(marks==1000);
+        if(spans[s]==1000)assert(marks==500);
+        if(spans[s]==64)assert(marks==32);
+    }
+    v.display_first=3596;v.display_samples=1000;v.density_enabled=1;
+    assert(capture_process(&b,&v,&f));
+    unsigned hits=0;
+    for(x=0;x<SCOPE_PLOT_WIDTH;++x){
+        if(f.density[0][x][200])++hits;
+        assert(f.density[0][x][136]==0 && f.density[0][x][256]==0);
+    }
+    assert(hits==1000); /* Peak marks never become invented density hits. */
+    v.density_enabled=0;
+    /* A single hidden pulse never expands horizontally when zooming in. */
+    memset(peaks,128,sizeof(peaks));peaks[4*2048+2]=255;
+    for(s=2;s<sizeof(spans)/sizeof(spans[0]);++s){
+        unsigned marks=0;
+        v.display_samples=spans[s];v.display_first=4096-spans[s]/2.0;
+        assert(capture_process(&b,&v,&f));
+        for(x=0;x<SCOPE_PLOT_WIDTH;++x)if(f.y_min[0][x]<200)++marks;
+        assert(marks==1);
+    }
+}
+
 int main(void)
 {
     processor_density_test();
     peak_detect_test();
+    peak_zoom_continuity_test();
     protocol_test();
     queue_test();
     ring_test();

@@ -86,9 +86,19 @@ static void source_range(const void *context, size_t first, size_t end, unsigned
         if (value < low) low = value;
         if (value > high) high = value;
     }
-    if(b->peaks)for(i=first/2;i<(end+1)/2;++i){
-        if(b->peaks[4*i+channel]<low)low=b->peaks[4*i+channel];
-        if(b->peaks[4*i+2+channel]>high)high=b->peaks[4*i+2+channel];
+    *minimum = (low - b->zero_code[channel]) * b->volts_per_code[channel];
+    *maximum = (high - b->zero_code[channel]) * b->volts_per_code[channel];
+    if (*minimum > *maximum) { double swap = *minimum; *minimum = *maximum; *maximum = swap; }
+}
+static void source_envelope(const void *context, size_t first, size_t end, unsigned channel,
+                            double *minimum, double *maximum)
+{
+    const CaptureBuffer *b = context;
+    unsigned low = 255, high = 0;
+    size_t i;
+    for (i = first; i < end; ++i) {
+        if (b->peaks[4*i+channel] < low) low = b->peaks[4*i+channel];
+        if (b->peaks[4*i+2+channel] > high) high = b->peaks[4*i+2+channel];
     }
     *minimum = (low - b->zero_code[channel]) * b->volts_per_code[channel];
     *maximum = (high - b->zero_code[channel]) * b->volts_per_code[channel];
@@ -236,6 +246,8 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
     source.samples = b->bytes / 2;
     source.range = source_range;
     source.value = b->peaks?source_value:NULL;
+    source.envelope = b->peaks?source_envelope:NULL;
+    source.envelope_samples = b->peaks?2:0;
     memset(f, 0, offsetof(DisplayFrame,density));
     f->sequence = b->sequence;
     f->sample_rate_hz = b->sample_rate_hz;
@@ -290,8 +302,13 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         }
         f->minimum[ch] = v->samples ? ((gain >= 0 ? low : peak) - zero) * gain : NAN;
         f->maximum[ch] = v->samples ? ((gain >= 0 ? peak : low) - zero) * gain : NAN;
-        if(b->peaks&&v->samples)
-            source_range(b,v->start,v->start+v->samples,ch,&f->minimum[ch],&f->maximum[ch]);
+        if (b->peaks && v->samples) {
+            double envelope_low, envelope_high;
+            source_envelope(b, v->start/2, (v->start+v->samples+1)/2, ch,
+                             &envelope_low, &envelope_high);
+            if (envelope_low < f->minimum[ch]) f->minimum[ch] = envelope_low;
+            if (envelope_high > f->maximum[ch]) f->maximum[ch] = envelope_high;
+        }
         if (v->samples) {
             double mean = (double)sum / v->samples;
             f->mean[ch] = (mean - zero) * gain;

@@ -86,6 +86,19 @@ void waveform_view_reduce(const WaveformSource *source, double first, double sam
                 if (!isfinite(value)) value = (low + high) * 0.5;
             }
         }
+        if (source->envelope && source->envelope_samples) {
+            double span = (double)source->envelope_samples;
+            double buckets = ceil(source->samples / span);
+            size_t begin = (size_t)fmax(0.0, fmin(buckets, ceil(left / span - 0.5)));
+            size_t end = (size_t)fmax(0.0, fmin(buckets, ceil(right / span - 0.5)));
+            if (begin < end) {
+                double envelope_low, envelope_high;
+                source->envelope(source->context, begin, end, channel,
+                                 &envelope_low, &envelope_high);
+                if (isfinite(envelope_low) && envelope_low < low) low = envelope_low;
+                if (isfinite(envelope_high) && envelope_high > high) high = envelope_high;
+            }
+        }
         if (!isfinite(low) || !isfinite(high) || !isfinite(value)) continue;
         minimum[x] = pixel_y(pixels_per_unit >= 0 ? high : low, zero_y, pixels_per_unit);
         maximum[x] = pixel_y(pixels_per_unit >= 0 ? low : high, zero_y, pixels_per_unit);

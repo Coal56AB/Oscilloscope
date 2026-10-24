@@ -15,10 +15,16 @@ typedef struct {
                   double *minimum, double *maximum);
     /* Optional representative value, distinct from a peak-detect envelope. */
     double (*value)(const void *context, size_t sample, unsigned channel);
+    /* Optional bounds of envelope buckets [first, end). Each bucket spans
+       envelope_samples source samples; its display anchor is the midpoint. */
+    void (*envelope)(const void *context, size_t first, size_t end, unsigned channel,
+                     double *minimum, double *maximum);
+    size_t envelope_samples;
 } WaveformSource;
 
 /* Preserve the requested time interval, marking columns outside the record as gaps.
-   Connect representative samples when expanded; compressed records show bounds. */
+   Connect representative samples when expanded. Envelope buckets contribute
+   one vertical mark at their midpoint, aggregated only when sharing a column. */
 void waveform_view_reduce(const WaveformSource *source, double first, double samples,
                           unsigned channel, double zero_y, double pixels_per_unit,
                           size_t columns, int16_t *representative, int16_t *minimum, int16_t *maximum);
