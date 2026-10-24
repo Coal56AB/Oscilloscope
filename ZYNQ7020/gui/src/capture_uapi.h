@@ -2,11 +2,13 @@
 #define CAPTURE_UAPI_H
 #include <linux/ioctl.h>
 #include <linux/types.h>
-#define OSC_CAPTURE_ABI 3
-#define OSC_CAPTURE_REGISTER_VERSION 4
-#define OSC_CAPTURE_SAMPLE_FORMAT 1
+#define OSC_CAPTURE_ABI 4
+#define OSC_CAPTURE_REGISTER_VERSION 5
+#define OSC_CAPTURE_SAMPLE_FORMAT 2
 /* Fixed-width ABI shared by the dmaengine driver and userspace. */
 #define OSC_CAPTURE_DISCONTINUITY 1u
+/* Each 8-byte group: two CH1/CH2 samples, then CH1/CH2 min and max. */
+#define OSC_CAPTURE_PEAKS 2u
 struct osc_capture_info {
     __u32 abi_version, register_version, sample_format, bitstream_version;
     __u32 buffers, block_bytes;

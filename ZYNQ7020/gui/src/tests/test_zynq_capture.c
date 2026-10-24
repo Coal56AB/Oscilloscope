@@ -19,6 +19,7 @@ static atomic_int fail_poll, bad_offset, bad_info;
 static atomic_uint sample_rate = 200000000;
 static atomic_uint adc_pair = 42 | (42 << 8);
 static atomic_int poison_release;
+static atomic_int packed_peaks;
 static int selftest_mode, selftest_fail_shift=-1, selftest_rail=-1;
 static unsigned selftest_clocks, selftest_progress_count;
 static unsigned selftest_poll_fail_rate;
@@ -74,6 +75,14 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
         memory[i*4096+64+255]=(uint8_t)(atomic_load(&adc_pair)>>8);
         if(selftest_mode && selftest_rail>=0)
             for(unsigned pos=(unsigned)selftest_rail;pos<256;pos+=4)memory[i*4096+64+pos]=255;
+        if(atomic_load(&packed_peaks)){
+            uint8_t *data=memory+i*4096+64;
+            b->flags=OSC_CAPTURE_PEAKS;b->first_sample=(uint64_t)sequence*64;
+            for(unsigned pos=0;pos<256;pos+=8){
+                const uint8_t group[]={128,129,130,131,10,20,240,250};
+                memcpy(data+pos,group,8);
+            }
+        }
     } else if(command==OSC_CAPTURE_RELEASE) {
         unsigned index=*(uint32_t *)arg;
         assert(index<4&&(atomic_fetch_and(&leased,~(1u<<index))&(1u<<index)));
@@ -90,7 +99,7 @@ static int wait_frame(CapturePipeline *p, DisplayFrame *f)
 }
 static void expect_no_frame(CapturePipeline *p, unsigned completed)
 {
-    DisplayFrame frame;
+    static DisplayFrame frame;
     unsigned i;
     for (i=0;i<100 && atomic_load(&releases)<completed;++i) {
         assert(!capture_pipeline_frame(p,&frame));
@@ -105,7 +114,7 @@ static void complete_force_frame_test(void)
     double gain[2]={0.004,0.004},zero[2]={128,128};
     CaptureRequest request={0};
     CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);
-    DisplayFrame frame;
+    static DisplayFrame frame;
     unsigned configured=atomic_load(&configurations),completed=atomic_load(&releases);
     assert(p);
     request.duration_seconds=0.256;request.record_samples=512;request.force_sequence=1;
@@ -126,7 +135,7 @@ static void complete_auto_frame_test(double seconds, int zoom)
 {
     double gain[2]={0.004,0.004},zero[2]={128,128};
     CaptureRequest request={0};
-    DisplayFrame frame;
+    static DisplayFrame frame;
     CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);
     unsigned rate, blocks, completed, configured=atomic_load(&configurations);
     assert(p);
@@ -213,7 +222,7 @@ static void adc_level_test(void)
     CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);
     CaptureRequest request={0};
     CaptureMetrics metrics;
-    DisplayFrame frame;
+    static DisplayFrame frame;
     unsigned completed=atomic_load(&releases);
     assert(p);
     capture_pipeline_metrics(p,&metrics);
@@ -254,7 +263,7 @@ int main(void)
     CapturePipeline *pipeline;
     CaptureRequest request={0};
     CaptureMetrics metrics;
-    DisplayFrame frame;
+    static DisplayFrame frame;
     uint64_t sequence;
     unsigned index;
     atomic_store(&bad_info,1);
@@ -269,6 +278,15 @@ int main(void)
     assert(zynq_capture_release_index(&source,index));
     assert(!zynq_capture_release_index(&source,index));
     zynq_capture_close(&source);assert(!atomic_load(&leased));
+    atomic_store(&packed_peaks,1);atomic_store(&available,1);
+    assert(zynq_capture_open(&source,"/dev/test-adc",gain,zero));
+    assert(zynq_capture_acquire(&source,&a,1)==1 && a.bytes==128 && a.peaks);
+    for(unsigned pos=0;pos<a.bytes;pos+=4){
+        assert(a.data[pos]==128 && a.data[pos+3]==131);
+        assert(a.peaks[pos]==10 && a.peaks[pos+3]==250);
+    }
+    zynq_capture_close(&source);assert(!atomic_load(&leased));
+    atomic_store(&packed_peaks,0);
     assert(zynq_capture_open(&source,"/dev/test-adc",gain,zero));
     atomic_store(&available,1);atomic_store(&bad_offset,1);
     assert(zynq_capture_acquire(&source,&a,1)==-1&&!atomic_load(&leased));

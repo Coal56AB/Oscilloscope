@@ -3,7 +3,8 @@
 int capture_buffer_valid(const CaptureBuffer *b)
 {
     return b && b->data && b->bytes && b->bytes <= b->capacity && !(b->bytes % 2) &&
-           b->sample_rate_hz && b->first_sample <= UINT64_MAX - b->bytes / 2 &&
+           b->sample_rate_hz && (!b->peaks || (!(b->bytes%4) && !(b->first_sample%2))) &&
+           b->first_sample <= UINT64_MAX - b->bytes / 2 &&
            (b->trigger_sample == CAPTURE_NO_TRIGGER ||
             (b->trigger_sample >= b->first_sample &&
              b->trigger_sample < b->first_sample + b->bytes / 2));

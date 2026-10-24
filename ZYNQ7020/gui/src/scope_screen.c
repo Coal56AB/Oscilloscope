@@ -29,6 +29,15 @@ static int view_y(int plot_y)
     return view_top + plot_y * view_height / SCOPE_PLOT_HEIGHT;
 }
 
+int scope_screen_waveform_height(const ScopeScreen *screen)
+{
+    int split=screen->split_height;
+    if(!screen->zoom_enabled&&!screen->fft_enabled)return SCOPE_PLOT_HEIGHT;
+    if(split<70)split=70;
+    if(split>250)split=250;
+    return SCOPE_PLOT_HEIGHT-split;
+}
+
 static const uint8_t glyphs[53][7] = {
     {0,0,0,0,0,0,0},            /* space */
     {14,17,19,21,25,17,14},     /* 0 */
@@ -643,52 +652,36 @@ static uint32_t density_color(int level)
     return RGB(255, 25, 20);
 }
 
-static void trace_density(const int16_t *history, const int16_t *minimum,
-                          const int16_t *maximum, int count)
+/* Colors depend only on counts of original samples at the screen pixel. */
+static void trace_density(const ScopeScreen *screen, unsigned channel)
 {
-    enum { RADIUS = 18 };
-    int frame_index, x, y;
-    uint16_t density[SCOPE_PLOT_HEIGHT];
-    if (!history || count <= 0) return;
-    if (count > 8) count = 8;
-    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
-        int first = SCOPE_PLOT_HEIGHT, last = 0;
-        memset(density, 0, sizeof(density));
-        for (frame_index = 0; frame_index < count; ++frame_index) {
-            const int16_t *samples = history + frame_index * SCOPE_PLOT_WIDTH;
-            int index = frame_index * SCOPE_PLOT_WIDTH + x;
-            int low = minimum ? minimum[index] : samples[x];
-            int high = maximum ? maximum[index] : samples[x];
-            int previous = x ? samples[x - 1] : samples[x];
-            int offset;
-            if (low == WAVEFORM_NO_SAMPLE || high == WAVEFORM_NO_SAMPLE) continue;
-            if (previous == WAVEFORM_NO_SAMPLE) previous = low;
-            if (low < 3) low = 3;
-            if (low > SCOPE_PLOT_HEIGHT - 4) low = SCOPE_PLOT_HEIGHT - 4;
-            if (high < 3) high = 3;
-            if (high > SCOPE_PLOT_HEIGHT - 4) high = SCOPE_PLOT_HEIGHT - 4;
-            if (previous < 3) previous = 3;
-            if (previous > SCOPE_PLOT_HEIGHT - 4) previous = SCOPE_PLOT_HEIGHT - 4;
-            for (offset = -RADIUS; offset <= high - low + RADIUS; ++offset) {
-                int target = low + offset;
-                int distance = offset < 0 ? -offset : target > high ? target - high : 0;
-                if (target < 0 || target >= SCOPE_PLOT_HEIGHT) continue;
-                density[target] += (uint16_t)(RADIUS + 1 - distance);
-                if (target < first) first = target;
-                if (target > last) last = target;
-            }
-            if (previous < low || previous > high) {
-                int start = previous < low ? previous : high;
-                int end = previous < low ? low : previous;
-                for (y = start; y <= end; ++y) density[y] += 3;
-                if (start < first) first = start;
-                if (end > last) last = end;
-            }
+    const uint8_t *levels=screen->density_levels[channel];
+    const WaveformSource *source=&screen->density_source[channel];
+    uint16_t counts[SCOPE_PLOT_HEIGHT];
+    uint32_t palette[256];
+    int rows=levels && screen->density_rows?(int)screen->density_rows:view_height;
+    double ratio=(double)view_height/SCOPE_PLOT_HEIGHT;
+    unsigned peak=0;
+    int x,y;
+    for(y=0;y<256;++y)palette[y]=density_color(y);
+    if (screen->density_samples <= SCOPE_PLOT_WIDTH)
+        trace(channel ? screen->ch2_samples : screen->ch1_samples,
+              RGB(0,15,55), RGB(0,35,150));
+    if (!levels) {
+        for(x=0;x<SCOPE_PLOT_WIDTH;++x) {
+            waveform_density_column(source,screen->density_first,screen->density_samples,
+                channel,screen->density_zero[channel]*ratio,screen->density_scale[channel]*ratio,
+                SCOPE_PLOT_WIDTH,x,rows,counts);
+            for(y=0;y<rows;++y)if(counts[y]>peak)peak=counts[y];
         }
-        for (y = first; y <= last; ++y) {
-            int level = density[y] * 255 / (count * (RADIUS + 1));
-            if (level > 0)
-                pixel(PLOT_X + x, view_y(y), density_color(level));
+    }
+    for(x=0;x<SCOPE_PLOT_WIDTH;++x) {
+        if(!levels)waveform_density_column(source,screen->density_first,screen->density_samples,
+            channel,screen->density_zero[channel]*ratio,screen->density_scale[channel]*ratio,
+            SCOPE_PLOT_WIDTH,x,rows,counts);
+        for(y=0;y<rows;++y) {
+            unsigned level=levels?levels[x*SCOPE_PLOT_HEIGHT+y]:waveform_density_level(counts[y],peak);
+            if(level)pixel(PLOT_X+x,view_top+y*view_height/rows,palette[level]);
         }
     }
 }
@@ -832,8 +825,7 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         if (split > 250) split = 250;
         view_top = screen->zoom_enabled || screen->fft_enabled ?
                    PLOT_Y + split + cursor_band : PLOT_Y;
-        view_height = screen->zoom_enabled || screen->fft_enabled ?
-                      SCOPE_PLOT_HEIGHT - split - cursor_band : SCOPE_PLOT_HEIGHT;
+        view_height = scope_screen_waveform_height(screen);
     }
 
     fill(0, 0, SCOPE_WIDTH, SCOPE_HEIGHT, BOOT_SPLASH_BACKGROUND);
@@ -981,19 +973,21 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
             fill(PLOT_X + i, py, 7, 1, trigger_color);
     }
     if (screen->ch1_enabled) {
-        if (screen->intensity_coloring && !screen->zoom_enabled &&
-            screen->history_ch1_samples && screen->history_count > 0)
-            trace_density(screen->history_ch1_samples, screen->history_ch1_min_samples,
-                          screen->history_ch1_max_samples, screen->history_count);
+        if(screen->intensity_coloring&&screen->peak_detect&&screen->ch1_min_samples&&screen->ch1_max_samples)
+            trace_envelope(screen->ch1_min_samples,screen->ch1_max_samples,RGB(0,15,55),RGB(0,35,150));
+        if (screen->intensity_coloring &&
+            (screen->density_levels[0] || screen->density_source[0].samples))
+            trace_density(screen,0);
         else if (screen->ch1_min_samples && screen->ch1_max_samples)
             trace_envelope(screen->ch1_min_samples, screen->ch1_max_samples, RGB(89, 64, 29), yellow);
         else trace(screen->ch1_samples, RGB(89, 64, 29), yellow);
     }
     if (screen->ch2_enabled) {
-        if (screen->intensity_coloring && !screen->zoom_enabled &&
-            screen->history_ch2_samples && screen->history_count > 0)
-            trace_density(screen->history_ch2_samples, screen->history_ch2_min_samples,
-                          screen->history_ch2_max_samples, screen->history_count);
+        if(screen->intensity_coloring&&screen->peak_detect&&screen->ch2_min_samples&&screen->ch2_max_samples)
+            trace_envelope(screen->ch2_min_samples,screen->ch2_max_samples,RGB(0,15,55),RGB(0,35,150));
+        if (screen->intensity_coloring &&
+            (screen->density_levels[1] || screen->density_source[1].samples))
+            trace_density(screen,1);
         else if (screen->ch2_min_samples && screen->ch2_max_samples)
             trace_envelope(screen->ch2_min_samples, screen->ch2_max_samples, RGB(27, 66, 78), cyan);
         else trace(screen->ch2_samples, RGB(27, 66, 78), cyan);

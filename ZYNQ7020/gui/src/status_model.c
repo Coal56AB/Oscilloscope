@@ -1,4 +1,5 @@
 #include "status_model.h"
+#include "battery_level.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -157,8 +158,9 @@ void status_model_lines(const StatusModel *m, const StatusSystem *s, uint64_t no
         line(rows,0,"4 POWER / BATTERY");
         if (p->power_mv>=0 && sample_current(m,p->power_age_ms,now)) {
             line(rows,1,"INPUT: %.3f V",p->power_mv/1000.0);
-        } else line(rows,1,"INPUT: -");
-        line(rows,3,"CHARGE: -"); line(rows,4,"CURRENT: -");
+            line(rows,3,"CHARGE: %u%%",battery_level_percent((unsigned)p->power_mv));
+        } else {line(rows,1,"INPUT: -");line(rows,3,"CHARGE: -");}
+        line(rows,4,"CURRENT: -");
         line(rows,5,"CHARGING: -"); line(rows,7,"K1: NEXT");
     } else if (page==STATUS_STORAGE_PAGE) {
         line(rows,0,"5 STORAGE");

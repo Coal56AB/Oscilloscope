@@ -25,7 +25,7 @@
 #define PAYLOAD_BYTES (BLOCK_BYTES - HEADER_BYTES)
 #define MAPPING_BYTES (BUFFERS * BLOCK_BYTES)
 #define GPIO_STATUS 8
-#define PL_ID 0xadc40000
+#define PL_ID 0xadc50000
 
 struct receiver {
     struct miscdevice misc;
@@ -53,6 +53,7 @@ struct session {
     struct capture_slot slot[BUFFERS];
     unsigned inflight;
     u32 payload_bytes, sample_rate, control;
+    bool peak_detect;
     bool stopped, error;
     u64 next_sequence;
     unsigned long last_completion;
@@ -92,8 +93,9 @@ static void completed(void *argument, const struct dmaengine_result *result)
         capture_error(s, "DMA completion error or incomplete transfer");
         goto out;
     }
-    if (le32_to_cpu(header[0]) != 0x5043534f || le32_to_cpu(header[1]) != 3 ||
-        le32_to_cpu(header[2]) != s->payload_bytes || le32_to_cpu(header[3]) != s->sample_rate) {
+    if (le32_to_cpu(header[0]) != 0x5043534f || le32_to_cpu(header[1]) != 4 ||
+        le32_to_cpu(header[2]) != s->payload_bytes || le32_to_cpu(header[3]) != s->sample_rate ||
+        le32_to_cpu(header[8]) != (s->peak_detect ? OSC_CAPTURE_PEAKS : 0)) {
         capture_error(s, "invalid DMA block header");
         goto out;
     }
@@ -254,7 +256,8 @@ static long capture_ioctl(struct file *file, unsigned int command, unsigned long
         .buffers = BUFFERS, .block_bytes = BLOCK_BYTES, .mapping_bytes = MAPPING_BYTES
     };
     struct osc_capture_block block = { .bytes = s->payload_bytes, .data_offset = HEADER_BYTES,
-        .sample_rate_hz = s->sample_rate, .trigger_sample = U64_MAX };
+        .sample_rate_hz = s->sample_rate, .trigger_sample = U64_MAX,
+        .flags = s->peak_detect ? OSC_CAPTURE_PEAKS : 0 };
     struct capture_slot *slot = NULL;
     unsigned i, index;
     unsigned long flags;
@@ -286,6 +289,7 @@ static long capture_ioctl(struct file *file, unsigned int command, unsigned long
         s->payload_bytes = 8u << payload_shift;
         s->sample_rate = rate;
         s->control = control | (payload_shift << 6);
+        s->peak_detect = !!(control & 0x3e);
         writel(s->control, s->receiver->gpio);
         s->inflight = 0; s->next_sequence = 0; s->error = false;
         for (i = 0; i < BUFFERS; ++i) {
@@ -323,7 +327,7 @@ static long capture_ioctl(struct file *file, unsigned int command, unsigned long
             block.hardware_ns = div_u64_rem(slot->first_sample, s->sample_rate, &remainder) * 1000000000ULL;
             block.hardware_ns += div_u64((u64)remainder * 1000000000ULL, s->sample_rate);
         }
-        if (block.sequence != s->next_sequence) block.flags = OSC_CAPTURE_DISCONTINUITY;
+        if (block.sequence != s->next_sequence) block.flags |= OSC_CAPTURE_DISCONTINUITY;
     }
 out:
     spin_unlock_irqrestore(&s->lock, flags);

@@ -11,7 +11,7 @@ module axis_capture_frame #(
     output reg [63:0] m_axis_tdata,
     output wire [7:0] m_axis_tkeep,
     output reg m_axis_tvalid, input wire m_axis_tready,
-    output reg m_axis_tlast
+    output reg m_axis_tlast, input wire peak_detect
 );
     wire [31:0] payload_beats=payload_bytes >> 3;
 
@@ -31,10 +31,11 @@ module axis_capture_frame #(
                 if (header<8) begin
                     m_axis_tvalid<=1;
                     case (header)
-                        0: m_axis_tdata<=64'h00000003_5043534f;
+                        0: m_axis_tdata<=64'h00000004_5043534f;
                         1: m_axis_tdata<={sample_rate,payload_bytes};
                         2: m_axis_tdata<=sequence;
                         3: m_axis_tdata<=first_sample;
+                        4: m_axis_tdata<=peak_detect?64'd2:64'd0;
                         default: m_axis_tdata<=0;
                     endcase
                     header<=header+1'b1;
@@ -46,7 +47,7 @@ module axis_capture_frame #(
                     m_axis_tlast<=beat==payload_beats-1;
                     if (beat==payload_beats-1) begin
                         beat<=0; header<=0; sequence<=sequence+1'b1;
-                        first_sample<=first_sample+(payload_bytes >> 1);
+                        first_sample<=first_sample+(payload_bytes >> (peak_detect?2:1));
                     end else beat<=beat+1'b1;
             end
         end

@@ -14,6 +14,9 @@ typedef struct {
     uint64_t sequence, sample_rate_hz, first_sample, trigger_sample, hardware_ns, software_ns;
     double volts_per_code[2], zero_code[2];
     uint32_t flags;
+    /* Optional min(CH1,CH2),max(CH1,CH2) for each two-sample time interval.
+       This side buffer has the same byte length/capacity as data. */
+    uint8_t *peaks;
 } CaptureBuffer;
 typedef enum { CAPTURE_FREE, CAPTURE_FILLING, CAPTURE_READY, CAPTURE_READING } CaptureState;
 typedef enum { CAPTURE_STOP_ON_FULL, CAPTURE_DROP_NEW, CAPTURE_OVERWRITE_READY } CapturePolicy;

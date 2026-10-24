@@ -123,6 +123,8 @@ int main(void)
     p.power_age_ms=1000;assert(status_model_receive(&m,&p,sizeof(p),9002));
     status_model_lines(&m,&s,11002,lines);assert(strstr(lines[1],"12.345 V"));
     status_model_lines(&m,&s,11003,lines);assert(!strcmp(lines[1],"INPUT: -"));
+    p.power_mv=3850;p.power_age_ms=0;assert(status_model_receive(&m,&p,sizeof(p),11003));
+    status_model_lines(&m,&s,11003,lines);assert(!strcmp(lines[3],"CHARGE: 60%"));
     p.power_age_ms=UINT64_MAX;assert(status_model_receive(&m,&p,sizeof(p),9002));
     status_model_lines(&m,&s,9003,lines);assert(!strcmp(lines[1],"INPUT: -"));
     for(m.page=0;(size_t)m.page<status_page_count(&s);++m.page){

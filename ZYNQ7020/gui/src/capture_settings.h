@@ -19,8 +19,8 @@ static inline unsigned capture_rate_index(double seconds, unsigned samples, int 
 static inline unsigned capture_payload_shift(unsigned rate)
 {
     unsigned shift = 0;
-    /* Four pairs/beat; <=40 ms per block, including the slowest ROLL. */
-    while (shift < 17 && (4u << (shift + 1)) <= rate / 25) ++shift;
+    /* Peak groups hold two pairs/beat; full rate holds four. <=40 ms/block. */
+    while (shift < 17 && ((rate==200000000?4u:2u) << (shift + 1)) <= rate / 25) ++shift;
     return shift;
 }
 #endif

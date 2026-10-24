@@ -141,7 +141,7 @@ static void processor_file_test(void)
     uint8_t data[8192] = {0}, loaded[8192];
     CaptureBuffer b = {0}, read = {0};
     CaptureView view = {0, 4096, {200, 330}, {100, 100}};
-    DisplayFrame frame;
+    static DisplayFrame frame;
     CaptureSource source;
     FileCaptureSource context;
     FILE *file = tmpfile();
@@ -177,7 +177,7 @@ static void processor_file_test(void)
 
 static void processor_record_bounds_test(void)
 {
-    uint8_t data[8192];CaptureBuffer b={0};DisplayFrame f;
+    uint8_t data[8192];CaptureBuffer b={0};static DisplayFrame f;
     CaptureView view={0,0,{200,330},{100,100},-2048,8192};
     b.data=data;b.capacity=sizeof(data);fill(&b,77);
     data[2*2048]=255;
@@ -216,7 +216,7 @@ static void processor_short_pulse_test(void)
     uint8_t data[65536];
     CaptureBuffer buffer = {0};
     CaptureView view = {1, 4093, {200, 330}, {100, 100}};
-    DisplayFrame frame;
+    static DisplayFrame frame;
     size_t i, x, length;
     buffer.data = data;
     buffer.capacity = sizeof(data);
@@ -242,7 +242,7 @@ static void processor_zoom_source_test(void)
     uint8_t data[8192], original[8192];
     CaptureBuffer buffer = {0};
     CaptureView view = {0, 4096, {200, 330}, {100, 100}};
-    DisplayFrame frame;
+    static DisplayFrame frame;
     size_t x;
     buffer.data = data;
     buffer.capacity = sizeof(data);
@@ -265,7 +265,7 @@ static void processor_zoom_source_test(void)
 static void processor_statistics_test(void)
 {
     uint8_t data[512];
-    CaptureBuffer b={0};CaptureView view={0,256,{200,330},{100,100}};DisplayFrame f;
+    CaptureBuffer b={0};CaptureView view={0,256,{200,330},{100,100}};static DisplayFrame f;
     b.data=data;b.capacity=sizeof(data);fill(&b,1);view.skip_spectrum=1;
     for(unsigned i=0;i<256;++i){data[2*i]=(uint8_t)i;data[2*i+1]=(uint8_t)(255-i);}
     for(int sign=-1;sign<=1;++sign){
@@ -285,7 +285,7 @@ static void processor_statistics_test(void)
 static void processor_large_statistics_test(void)
 {
     const size_t count=1000003;
-    CaptureBuffer b={0};CaptureView view={0};DisplayFrame f;
+    CaptureBuffer b={0};CaptureView view={0};static DisplayFrame f;
     uint8_t *data=malloc((count+2)*2);assert(data);
     b.data=data;b.capacity=(count+2)*2;fill(&b,1);
     view.start=1;view.samples=count;view.skip_spectrum=1;
@@ -319,7 +319,7 @@ static void processor_fft_test(void)
     uint8_t data[2048];
     CaptureBuffer buffer = {0};
     CaptureView view = {0, 1024, {200, 330}, {100, 100}};
-    DisplayFrame frame;
+    static DisplayFrame frame;
     unsigned n, i, k;
     unsigned coverage[513] = {0};
     buffer.data = data;
@@ -328,7 +328,7 @@ static void processor_fft_test(void)
     for (i = 0; i < SCOPE_FFT_BINS; ++i) {
         unsigned first, end;
         spectrum_bin_range(i, SCOPE_FFT_BINS, 1024, &first, &end);
-        assert(first >= 1 && end > first && end <= 513);
+        assert(end > first && end <= 513);
         for (k = first; k < end; ++k) coverage[k] = 1;
     }
     for (k = 1; k <= 512; ++k) assert(coverage[k]);
@@ -347,12 +347,32 @@ static void processor_fft_test(void)
         }
         assert(abs((int)peak - (int)expected) <= 1 && frame.fft[0][peak] > 200);
     }
+    {
+        size_t samples = 100000;
+        unsigned peak = 0;
+        uint8_t *long_data = malloc(samples * 2);
+        assert(long_data);
+        for (i = 0; i < samples; ++i) {
+            long_data[2*i] = (uint8_t)lround(128 + 50*cos(6.283185307179586*10000*i/50000000));
+            long_data[2*i+1] = 128;
+        }
+        buffer.data = long_data; buffer.bytes = buffer.capacity = samples * 2;
+        buffer.sample_rate_hz = 50000000; view.samples = samples;
+        assert(capture_process(&buffer, &view, &frame));
+        assert(frame.fft_size == 65536);
+        for (k = 1; k < SCOPE_FFT_BINS; ++k)
+            if (frame.fft[0][k] > frame.fft[0][peak]) peak = k;
+        assert(fabs(spectrum_frequency_at((double)peak/(SCOPE_FFT_BINS-1),25000000,frame.fft_size)-10000)<1000);
+        assert(frame.fft[0][peak] > 200);
+        assert(spectrum_frequency_at(0,25000000,frame.fft_size) == 0);
+        free(long_data);
+    }
 }
 
 static void pipeline_test(void)
 {
     CapturePipeline *p = capture_pipeline_create(NULL);
-    DisplayFrame f;
+    static DisplayFrame f;
     CaptureMetrics m;
     unsigned i;
     int got = 0;
@@ -462,13 +482,107 @@ static void capture_debug_test(void)
     memset(raw,128,sizeof(raw));input.trigger_sample=CAPTURE_NO_TRIGGER;
     input.first_sample=100;input.volts_per_code[0]=1;
     raw[4]=129;raw[6]=127;raw[10]=129;
-    assert(capture_find_trigger(&input,0,0,0,100,&trigger)&&trigger==102);
-    assert(capture_find_trigger(&input,0,1,0,100,&trigger)&&trigger==103);
-    assert(capture_find_trigger(&input,0,0,0,103,&trigger)&&trigger==105);
-    assert(!capture_find_trigger(&input,0,0,200,100,&trigger));
+    assert(capture_find_trigger(&input,0,0,0,0,100,&trigger)&&trigger==102);
+    assert(capture_find_trigger(&input,0,1,0,0,100,&trigger)&&trigger==103);
+    assert(capture_find_trigger(&input,0,0,0,0,103,&trigger)&&trigger==105);
+    assert(!capture_find_trigger(&input,0,0,200,0,100,&trigger));
+    {
+        const uint8_t noisy[]={140,136,132,129,128,129,127,128,129,126,124,126,
+                               128,129,132,136,140,136,132,129,128,129,127,124};
+        input.bytes=sizeof(noisy)*2;
+        for(size_t i=0;i<sizeof(noisy);++i)raw[2*i]=noisy[i];
+        /* Without an arm margin, noise on the falling slope looks like RISING. */
+        assert(capture_find_trigger(&input,0,0,0,0,100,&trigger)&&trigger==105);
+        assert(capture_find_trigger(&input,0,0,0,2,100,&trigger)&&trigger==113);
+        assert(capture_find_trigger(&input,0,1,0,2,100,&trigger)&&trigger==106);
+        assert(capture_find_trigger(&input,0,2,0,2,100,&trigger)&&trigger==106);
+        assert(capture_find_trigger(&input,0,0,0,2,106,&trigger)&&trigger==113);
+        assert(capture_find_trigger(&input,0,1,0,2,107,&trigger)&&trigger==122);
+    }
+    {
+        unsigned false_rising=0;
+        input.bytes=sizeof(raw);input.sample_rate_hz=1000000;
+        input.first_sample=100;input.trigger_sample=CAPTURE_NO_TRIGGER;
+        debug=(CaptureDebug){1,{SIGNAL_WAVE_SINE,SIGNAL_WAVE_SINE},1000};
+        output.capacity=sizeof(generated);
+        /* Exercise the actual noisy DEBUG generator. Local threshold crossings
+           on a falling sine must not be accepted as a rising carrier edge. */
+        for(unsigned sequence=0;sequence<32;++sequence){
+            input.sequence=sequence;
+            assert(capture_debug_replace(&input,&output,&debug));
+            assert(capture_find_trigger(&output,0,0,0.6,0,100,&trigger));
+            if(cos(2*3.141592653589793*(trigger%1000)/1000.0)<0)++false_rising;
+            assert(capture_find_trigger(&output,0,0,0.6,2,100,&trigger));
+            assert(cos(2*3.141592653589793*(trigger%1000)/1000.0)>0);
+            assert(capture_find_trigger(&output,0,1,0.6,2,100,&trigger));
+            assert(cos(2*3.141592653589793*(trigger%1000)/1000.0)<0);
+        }
+        assert(false_rising>0);
+    }
 }
+static void processor_density_test(void)
+{
+    uint8_t data[16384];
+    CaptureBuffer b={0};
+    CaptureView v={0,8192,{200,330},{100,100}};
+    static DisplayFrame frame;
+    unsigned i;
+    b.data=data;b.capacity=sizeof(data);fill(&b,1);
+    for(i=0;i<8192;++i){data[2*i]=i%8==7?148:128;data[2*i+1]=128;}
+    v.skip_spectrum=1;v.density_enabled=1;
+    assert(capture_process(&b,&v,&frame) && frame.density_valid);
+    assert(frame.density[0][300][200]==255);
+    assert(frame.density[0][300][180]==16);
+    assert(frame.density[0][300][190]==0); /* No invented hits inside min/max. */
+    v.display_first=2048;v.display_samples=1024;
+    assert(capture_process(&b,&v,&frame) && frame.density_valid);
+    assert(frame.density[0][300][200]==255);
+    assert(frame.density[0][303][180]==255);
+    assert(frame.density[0][300][190]==0);
+    v.display_samples=0;
+    assert(capture_process(&b,&v,&frame));
+    assert(frame.density[0][300][200]==255 && frame.density[0][300][180]==16);
+    for(i=0;i<8192;++i)data[2*i]=i%8==7?127:128;
+    v.density_rows=240;
+    assert(capture_process(&b,&v,&frame) && frame.density_rows==240);
+    /* Logical rows 200 and 201 share a physical pixel: sum before coloring. */
+    assert(frame.density[0][300][100]==255 && frame.density[0][300][101]==0);
+}
+
+static void peak_detect_test(void)
+{
+    uint8_t raw[4096]={0},codes[4096],peaks[4096],dummy[4096]={0};
+    CaptureBuffer in={0},out={0};
+    CaptureDebug debug={1,{SIGNAL_WAVE_SQUARE,SIGNAL_WAVE_SINE},10000};
+    CaptureView view={0,2048,{200,330},{100,100}};
+    static DisplayFrame frame;
+    unsigned i;
+    in.data=raw;in.peaks=dummy;in.bytes=in.capacity=sizeof(raw);
+    in.sample_rate_hz=1000;in.trigger_sample=CAPTURE_NO_TRIGGER;
+    out.data=codes;out.peaks=peaks;out.capacity=sizeof(codes);
+    assert(capture_debug_replace(&in,&out,&debug));
+    for(i=0;i<2048;++i)assert(codes[2*i]>=127 && codes[2*i]<=129);
+    for(i=0;i<sizeof(peaks);i+=4)assert(peaks[i]==127 && peaks[i+2]==189);
+    view.skip_spectrum=1;
+    assert(capture_process(&out,&view,&frame) && frame.peak_detect);
+    assert(frame.y_min[0][300]<=79 && frame.y_max[0][300]>=201);
+    assert(frame.minimum[0]<0 && frame.maximum[0]>1.2);
+    view.display_first=1024;view.display_samples=64;
+    assert(capture_process(&out,&view,&frame));
+    for(i=0;i<SCOPE_PLOT_WIDTH;++i){
+        assert(frame.y_min[0][i]==frame.y[0][i] && frame.y_max[0][i]==frame.y[0][i]);
+        assert(frame.y[0][i]>=198 && frame.y[0][i]<=202);
+    }
+    /* The original extrema remain available when returning to the full view. */
+    view.display_samples=0;
+    assert(capture_process(&out,&view,&frame));
+    assert(frame.y_min[0][300]<=79 && frame.y_max[0][300]>=201);
+}
+
 int main(void)
 {
+    processor_density_test();
+    peak_detect_test();
     protocol_test();
     queue_test();
     ring_test();

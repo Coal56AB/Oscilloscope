@@ -2,6 +2,7 @@
 #include "capture_settings.h"
 #include "signal_generator.h"
 #include "spectrum_bins.h"
+#include "battery_level.h"
 #include "waveform_view.h"
 #include "control_protocol.h"
 
@@ -47,6 +48,9 @@ static const char *holdoff_names[] = {"OFF", "10 us", "50 us", "100 us"};
 static const char *generator_wave_names[] = {
     "SQUARE", "SINE", "TRIANGLE", "SAW", "SINC", "NOISE"
 };
+static const char *generator_wave_options[] = {
+    "SQR", "SINE", "TRI", "SAW", "SINC", "NOISE"
+};
 static const char *generator_frequency_names[] = {
     "1 Hz", "2 Hz", "5 Hz", "10 Hz", "20 Hz", "50 Hz", "100 Hz", "200 Hz", "500 Hz",
     "1 kHz", "2 kHz", "5 kHz", "10 kHz", "20 kHz", "50 kHz",
@@ -71,8 +75,9 @@ static const struct {
     {"MEASUREMENTS", DEMO_MENU_MEASURE},
     {"PROCESSING", DEMO_MENU_PROCESSING},
 #if DEMO_ENABLE_GENERATOR
-    {"DEBUG", DEMO_MENU_DEBUG}
+    {"DEBUG", DEMO_MENU_DEBUG},
 #endif
+    {"TIME", DEMO_MENU_TIME}
 };
 static const char *debug_labels[] = {"GENERATOR", "LONG PRESS", "DOUBLE CLICK", "SIMULATION", "ADC CH1", "ADC CH2"};
 static const char *generator_labels[] = {"CH1 WAVE", "CH2 WAVE", "FREQUENCY"};
@@ -194,7 +199,7 @@ static void format_frequency(char *text, size_t size, double hz)
 static void update_fft_cursor(DemoSignal *demo)
 {
     double hz = spectrum_frequency_at((double)demo->screen.fft_cursor_x / (SCOPE_PLOT_WIDTH - 1),
-                                      demo->fft_span_hz, SCOPE_PLOT_WIDTH);
+                                      demo->fft_span_hz, demo->fft_size);
     double divisor = hz >= 1000000.0 ? 1000000.0 : hz >= 1000.0 ? 1000.0 : 1.0;
     const char *unit = hz >= 1000000.0 ? "MHz" : hz >= 1000.0 ? "kHz" : "Hz";
     if (demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE)
@@ -227,18 +232,19 @@ void demo_signal_ui_drag_fft_cursor(DemoSignal *demo, int coordinate, int previo
     demo_signal_ui_move_fft_cursor(demo, coordinate);
 }
 
-void demo_signal_set_fft_range(DemoSignal *demo, double span_hz)
+void demo_signal_set_fft_range(DemoSignal *demo, double span_hz, unsigned size)
 {
     char sampling[24], step[24];
     int tick;
     demo->fft_span_hz = span_hz;
+    demo->fft_size = size ? size : SCOPE_PLOT_WIDTH;
     update_fft_cursor(demo);
     format_frequency(sampling, sizeof(sampling), span_hz * 2.0);
-    format_frequency(step, sizeof(step), span_hz * 2.0 / SCOPE_PLOT_WIDTH);
+    format_frequency(step, sizeof(step), span_hz * 2.0 / demo->fft_size);
     snprintf(demo->fft_info_text, sizeof(demo->fft_info_text), "FS %s / DF %s", sampling, step);
     demo->screen.fft_sampling_info = demo->fft_info_text;
     for (tick = 0; tick < SCOPE_FFT_TICKS; ++tick) {
-        double hz = spectrum_frequency_at((double)tick / (SCOPE_FFT_TICKS - 1), span_hz, SCOPE_PLOT_WIDTH);
+        double hz = spectrum_frequency_at((double)tick / (SCOPE_FFT_TICKS - 1), span_hz, demo->fft_size);
         const char *unit = hz >= 1000000.0 ? "M" : hz >= 1000.0 ? "k" : "";
         double divisor = hz >= 1000000.0 ? 1000000.0 : hz >= 1000.0 ? 1000.0 : 1.0;
         snprintf(demo->fft_frequency_text[tick], sizeof(demo->fft_frequency_text[tick]),
@@ -459,9 +465,22 @@ static void generator_source_range(const void *context, size_t first, size_t end
 }
 
 /* Both demo and ADC records reduce their source interval through waveform_view. */
+static void density_source_range(const void *context, size_t first, size_t end,
+                                unsigned channel, double *minimum, double *maximum)
+{
+    const double *values = context;
+    size_t i;
+    (void)channel;
+    *minimum = *maximum = values[first];
+    for (i = first + 1; i < end; ++i) {
+        if (values[i] < *minimum) *minimum = values[i];
+        if (values[i] > *maximum) *maximum = values[i];
+    }
+}
+
 static void render_generator_view(DemoSignal *demo, double start_us, double us_per_pixel)
 {
-    WaveformSource source;
+    WaveformSource source={0};
     int x;
     source.context = demo;
     source.samples = demo->source_count;
@@ -470,6 +489,15 @@ static void render_generator_view(DemoSignal *demo, double start_us, double us_p
         double scale = PIXELS_PER_DIV / volts_per_div(demo, x);
         double zero = channel_zero(demo, x) +
                       (demo->coupling[x] ? (x ? 1.60 : 1.20) * scale * 0.5 : 0.0);
+        demo->screen.density_levels[x] = NULL;
+        demo->screen.peak_detect = 0;
+        demo->screen.density_source[x].context = demo->source_samples[x];
+        demo->screen.density_source[x].samples = demo->source_count;
+        demo->screen.density_source[x].range = density_source_range;
+        demo->screen.density_first = (start_us-demo->capture_start_us)/demo->source_step_us;
+        demo->screen.density_samples = SCOPE_PLOT_WIDTH*us_per_pixel/demo->source_step_us;
+        demo->screen.density_zero[x] = zero;
+        demo->screen.density_scale[x] = scale;
         waveform_view_reduce(&source, (start_us - demo->capture_start_us) / demo->source_step_us,
                              SCOPE_PLOT_WIDTH * us_per_pixel / demo->source_step_us,
                              x, zero, scale, SCOPE_PLOT_WIDTH, x ? demo->ch2 : demo->ch1,
@@ -558,6 +586,11 @@ void demo_signal_begin_external(DemoSignal *demo)
     int x, ch;
     demo->external_capture = 1;
     demo->external_frame_valid = 0;
+    demo->screen.peak_detect = 0;
+    for (ch=0;ch<2;++ch) {
+        demo->screen.density_levels[ch]=NULL;
+        demo->screen.density_source[ch].samples=0;
+    }
     demo->screen.trigger_locked = 0;
     demo->history_count = demo->screen.history_count = 0;
     for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
@@ -1107,7 +1140,7 @@ static void refresh_menu(DemoSignal *demo)
         }
         screen->menu_labels[3] = debug_labels[3];
         screen->menu_values[3] = on_off_names[demo->adc_simulation];
-        screen->menu_stepper[3] = 1;
+        set_menu_options(screen, 3, on_off_names, 2, demo->adc_simulation);
         for (i = 4; i < 6; ++i) {
             screen->menu_labels[i] = debug_labels[i];
             screen->menu_values[i] = demo->adc_level_text[i - 4];
@@ -1120,6 +1153,10 @@ static void refresh_menu(DemoSignal *demo)
         }
         screen->menu_values[0] = generator_wave_names[demo->generator_wave[0]];
         screen->menu_values[1] = generator_wave_names[demo->generator_wave[1]];
+        for (i = 0; i < 2; ++i) {
+            screen->menu_stepper[i] = 0;
+            set_menu_options(screen, i, generator_wave_options, DEMO_WAVE_COUNT, demo->generator_wave[i]);
+        }
         screen->menu_values[2] = generator_frequency_names[demo->generator_frequency_index];
     } else if (demo->menu_kind == DEMO_MENU_FONT) {
         screen->menu_title = "DEBUG / FONT";
@@ -1208,8 +1245,6 @@ static void update_text(DemoSignal *demo, int regenerate)
         snprintf(demo->acquisition_rate_text, sizeof(demo->acquisition_rate_text),
             rate >= 1e6 ? "%.3g MSa/s AUTO" : rate >= 1e3 ? "%.3g kSa/s AUTO" : "%.3g Sa/s AUTO",
             rate >= 1e6 ? rate / 1e6 : rate >= 1e3 ? rate / 1e3 : rate);
-        if (roll && !demo->waveform_loaded)
-            strncat(demo->time_text, " ROLL", sizeof(demo->time_text)-strlen(demo->time_text)-1);
     }
     snprintf(demo->zoom_text, sizeof(demo->zoom_text), "ZOOM x%.7g", zoom_ratio(demo));
     snprintf(demo->horizontal_position_text, sizeof(demo->horizontal_position_text),
@@ -1258,7 +1293,7 @@ static void update_text(DemoSignal *demo, int regenerate)
                                 demo->fft_split_height : demo->zoom_split_height;
     {
         double span = 50000.0 * SCOPE_PLOT_WIDTH / current_time_us_per_div(demo);
-        demo_signal_set_fft_range(demo, span);
+        demo_signal_set_fft_range(demo, span, SCOPE_PLOT_WIDTH);
         int periodic_enabled =
             (demo->screen.ch1_enabled && demo->generator_wave[0] != DEMO_WAVE_NOISE) ||
             (demo->screen.ch2_enabled && demo->generator_wave[1] != DEMO_WAVE_NOISE);
@@ -1924,6 +1959,10 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
                   DEMO_MENU_MAIN);
     } else if (demo->menu_kind == DEMO_MENU_DEBUG) {
         if (item == 0) open_menu(demo, DEMO_MENU_GENERATOR, DEMO_MENU_DEBUG);
+        else if (item == 3) {
+            demo->edit_value = !demo->adc_simulation;
+            apply_edit(demo);
+        }
         else if (item < 4) {
             demo->edit_value = current_menu_value(demo);
             demo->screen.menu_editing = 1;
@@ -1959,11 +1998,12 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
                           demo->menu_kind == DEMO_MENU_CH2) &&
                          (item == 0 || item == 1 || item == 2);
         short_list |= demo->menu_kind == DEMO_MENU_TRIGGER && item < 4;
+        short_list |= demo->menu_kind == DEMO_MENU_TIME && item == 2;
         short_list |= demo->menu_kind == DEMO_MENU_CURSOR ||
                       demo->menu_kind == DEMO_MENU_DISPLAY ||
                       demo->menu_kind == DEMO_MENU_PROCESSING ||
                       demo->menu_kind == DEMO_MENU_PC ||
-                      demo->menu_kind == DEMO_MENU_GENERATOR;
+                      (demo->menu_kind == DEMO_MENU_GENERATOR && item < 2);
         if (short_list) {
             demo->edit_value = (current_menu_value(demo) + 1) % menu_value_count(demo);
             apply_edit(demo);
@@ -2256,6 +2296,15 @@ void demo_signal_ui_request_browse_delete(DemoSignal *demo, int index)
     update_text(demo, 0);
 }
 
+int demo_signal_set_battery(DemoSignal *demo, unsigned millivolts, int valid)
+{
+    unsigned percent=valid?battery_level_percent(millivolts):0;
+    int changed=demo->screen.battery_known!=!!valid || demo->screen.battery_percent!=percent;
+    demo->screen.battery_known=(uint8_t)!!valid;
+    demo->screen.battery_percent=(uint8_t)percent;
+    return changed;
+}
+
 int demo_signal_set_adc_level(DemoSignal *demo, const uint8_t code[2], int valid)
 {
     char text[2][4] = {{0}};
@@ -2347,6 +2396,10 @@ void demo_signal_ui_show_wave(DemoSignal *demo, const char *name,
     demo->screen.browser_title = demo->browser_title_text;
     demo->screen.waveform_loaded = 1;
     demo->waveform_loaded = 1;
+    for(channel=0;channel<2;++channel){
+        demo->screen.density_source[channel].samples=0;
+        demo->screen.density_levels[channel]=NULL;
+    }
     analyze_loaded_timing(demo, 0);
     analyze_loaded_timing(demo, 1);
     close_menu(demo);

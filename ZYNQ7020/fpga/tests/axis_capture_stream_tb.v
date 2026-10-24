@@ -15,7 +15,7 @@ module axis_capture_stream_tb;
     axis_capture_pack packer(clk,resetn,group,resetn,source_ready,
         packed_data,,packed_valid,used<32,);
     axis_capture_frame #(.BLOCK_BYTES(256)) dut(clk,resetn,32'd192,32'd200000000,fifo[rd],used>0,
-        fifo_ready,frame_data,keep,frame_valid,ready,last);
+        fifo_ready,frame_data,keep,frame_valid,ready,last,1'b0);
     always #5 clk=~clk;
     initial begin repeat(3) @(negedge clk); resetn=1; end
     always @(negedge clk) if(resetn) begin
@@ -36,7 +36,7 @@ module axis_capture_stream_tb;
         if(frame_valid&&ready) begin
             frame=received/32; offset=received%32;
             case(offset)
-                0: expected=64'h00000003_5043534f;
+                0: expected=64'h00000004_5043534f;
                 1: expected={32'd200000000,32'd192};
                 2: expected=frame;
                 3: expected=frame*96;

@@ -23,10 +23,10 @@ int main(void)
         unsigned rate=osc_capture_rate(capture_rate_index(spans[scale],count,roll));
         unsigned shift=capture_payload_shift(rate);
         assert(rate*spans[scale]*(roll?1:2)<=count);
-        assert((4u<<shift)/(double)rate<=0.04);
+        assert(((rate==200000000?4u:2u)<<shift)/(double)rate<=0.04);
         assert(shift<=17);
     }
-    capture_history_init(&history,ring,10);
+    capture_history_init(&history,ring,NULL,10);
     input.data=samples; input.capacity=input.bytes=12; input.sample_rate_hz=100;
     input.trigger_sample=CAPTURE_NO_TRIGGER;
     input.volts_per_code[0]=input.volts_per_code[1]=1;
@@ -53,6 +53,19 @@ int main(void)
             assert(storage[i]>=127&&storage[i]<=129);
             assert(storage[i+1]>=205&&storage[i+1]<=207);
         }
+    }
+    {
+        uint8_t peak_ring[20],peak_input[12],peak_output[20];
+        capture_history_init(&history,ring,peak_ring,10);
+        input.first_sample=0;input.peaks=peak_input;
+        snapshot.peaks=peak_output;
+        for(i=0;i<12;++i){samples[i]=(uint8_t)i;peak_input[i]=(uint8_t)(100+i);}
+        capture_history_append(&history,&input);
+        input.first_sample=6;
+        for(i=0;i<12;++i){samples[i]=(uint8_t)(12+i);peak_input[i]=(uint8_t)(112+i);}
+        capture_history_append(&history,&input);
+        assert(capture_history_snapshot(&history,&snapshot) && snapshot.first_sample==2);
+        for(i=0;i<20;++i){assert(storage[i]==i+4);assert(peak_output[i]==104+i);}
     }
     return 0;
 }

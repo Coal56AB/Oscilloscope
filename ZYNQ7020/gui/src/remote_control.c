@@ -77,7 +77,10 @@ void remote_control_pump(RemoteControl *r)
         if(!remaining){disconnect_client(r);return;}
         count=send(r->client,r->response+offset,remaining>65536?65536:remaining,MSG_NOSIGNAL);
     }
-    if(count>0){r->sent+=(size_t)count;r->deadline=time(NULL)+10;}
+    if(count>0){
+        r->sent+=(size_t)count;r->deadline=time(NULL)+10;
+        if(r->sent==r->header_size+r->size)disconnect_client(r);
+    }
     else if(count<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)disconnect_client(r);
 }
 

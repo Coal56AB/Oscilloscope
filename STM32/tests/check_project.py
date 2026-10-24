@@ -69,6 +69,15 @@ def check_project():
     require(target.findtext("./TargetOption/TargetCommonOption/Device") == "STM32F103RC",
             "Keil target device changed")
 
+    options = ET.parse(PROJECT.with_suffix(".uvoptx")).getroot()
+    driver = next((entry.findtext("Name", "") for entry in options.findall(".//SetRegEntry")
+                   if entry.findtext("Key") == "ST-LINKIII-KEIL_SWO"), "")
+    flash_options = re.search(r"(?:^|\s)-FO(\d+)\b", driver)
+    require(flash_options is not None and int(flash_options[1]) & 15 == 15,
+            "ST-Link Download must erase, program, verify, then reset and run")
+    require(options.findtext(".//DebugDescription/Enable") == "0",
+            "Reset and run must use the ST-Link driver, not the pack debug sequence")
+
     paths = set()
     for item in target.findall("./Groups/Group/Files/File/FilePath"):
         resolved = (PROJECT.parent / item.text.replace("\\", "/")).resolve()

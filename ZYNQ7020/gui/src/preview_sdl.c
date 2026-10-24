@@ -366,6 +366,7 @@ static void act(DemoAction action)
 static void press_control_at(DemoControl control, int long_press, uint64_t when)
 {
     act(demo_signal_press_at(&demo,control,long_press,when));
+    invalidate();
 }
 
 static void suppress_chord_control(DemoControl control)
@@ -803,6 +804,13 @@ static void key_up(const SDL_KeyboardEvent *event)
     invalidate();
 }
 
+static int update_panel_battery(const SerialControlMetrics *panel,uint64_t now)
+{
+    return demo_signal_set_battery(&demo,(unsigned)(panel->power_mv>0?panel->power_mv:0),
+        panel->connected&&panel->power_received_ms&&now>=panel->power_received_ms&&
+        now-panel->power_received_ms<=3000);
+}
+
 static void drain_controls(uint64_t now)
 {
     static unsigned generation;static uint32_t down_ms[CONTROL_ID_COUNT];
@@ -817,10 +825,11 @@ static void drain_controls(uint64_t now)
         else if(event.type==CONTROL_UP&&key_holds[event.control].active){
             /* Source duration survives UART burst delivery and uint32 timestamp wrap. */
             uint32_t duration=event.timestamp_ms-down_ms[event.control];
-            if(duration>=((uint32_t)demo.hold_time_ms)&&has_hold_action((DemoControl)event.control)&&
-                !key_holds[event.control].long_done&&!key_holds[event.control].suppressed){
-                key_holds[event.control].long_done=1;press_control_at((DemoControl)event.control,1,now);}
-            finish_press(&key_holds[event.control],now);
+            HeldControl *held=&key_holds[event.control];
+            if(!held->long_done&&!held->suppressed)
+                press_control_at(held->control,has_hold_action(held->control)&&
+                    duration>=(uint32_t)demo.hold_time_ms,now);
+            held->active=0;
         }
         invalidate();
     }
@@ -884,6 +893,10 @@ static void remote_state(FILE *response)
             channel+1,demo.probe_ten[channel],channel+1,demo.scale_index[channel],channel+1,demo.channel_position[channel],channel+1,demo.filter_level[channel]);
     }
     fprintf(response,"\"record_depth_index\":%d,\"sample_rate_hz\":%.9g,",demo.record_depth_index,demo.acquisition_rate_hz);
+    fprintf(response,"\"simulation\":%d,\"generator_frequency_index\":%d,\"ch1_wave\":%d,\"ch2_wave\":%d,\"fft\":%d,\"fft_size\":%u,\"peak_detect\":%d,\"intensity_coloring\":%d,\"battery_known\":%d,\"battery_percent\":%d,",
+        demo.adc_simulation,demo.generator_frequency_index,demo.generator_wave[0],demo.generator_wave[1],
+        demo.fft_enabled,demo.fft_size,demo.screen.peak_detect,demo.intensity_coloring,
+        demo.screen.battery_known,demo.screen.battery_percent);
     fprintf(response,"\"time_index\":%d,\"time_position\":%d,\"zoom\":%d,\"trigger_mode\":%d,\"trigger_source\":%d,\"trigger_edge\":%d,\"trigger_holdoff\":%d,\"trigger_level\":%.9g,\"time_scales_us\":[",
         demo.screen.zoom_enabled?demo.zoom_time_index:demo.time_index,demo.time_position,demo.screen.zoom_enabled,
         demo.trigger_mode_index,demo.trigger_source_index,demo.trigger_edge_index,demo.trigger_holdoff_index,demo.trigger_voltage);
@@ -905,6 +918,7 @@ static int remote_set(const char *key,double number)
         {"generator_frequency_index",DEMO_MENU_GENERATOR,2},{"ch1_wave",DEMO_MENU_GENERATOR,0},
         {"ch2_wave",DEMO_MENU_GENERATOR,1},{"simulation",DEMO_MENU_DEBUG,3},
         {"fft",DEMO_MENU_PROCESSING,4},{"persistence",DEMO_MENU_PROCESSING,3},
+        {"intensity_coloring",DEMO_MENU_PROCESSING,2},
         {"trigger_source",DEMO_MENU_TRIGGER,1},{"trigger_edge",DEMO_MENU_TRIGGER,2},
         {"trigger_holdoff",DEMO_MENU_TRIGGER,3}
     };
@@ -941,7 +955,7 @@ static int remote_command(const char *command, FILE *response, void *context)
     else if(!strcmp(command,"single")){demo_signal_set_option(&demo,DEMO_MENU_TRIGGER,0,2);if(!demo.screen.running)demo_signal_ui_toggle_run(&demo);}
     else if(!strcmp(command,"force"))demo_signal_force_trigger(&demo);
     else{fputs("Invalid remote command or setting\n",response);return 0;}
-    invalidate();draw_all();fputs("OK\n",response);return 1;
+    invalidate();fputs("OK\n",response);return 1;
 }
 
 static void publish_service_status(int fd, const char *path, unsigned stage, unsigned source,
@@ -1231,7 +1245,7 @@ int main(int argc, char **argv)
         /* Rendering/presenting is part of the frame budget, not an extra delay. */
         now=now_ms();
         int event_wait=frame_deadline>now?(int)(frame_deadline-now):0;
-        if(!dirty&&!demo.screen.running)event_wait=16;
+        if(!dirty&&(!demo.screen.running||demo.external_capture))event_wait=16;
         if(event_wait>16)event_wait=16;
         if(SDL_WaitEventTimeout(&event,event_wait))do{
             demo_signal_update_time(&demo,now_ms());
@@ -1267,9 +1281,11 @@ int main(int argc, char **argv)
         update_pc_console(now);
         if(serial_device){
             SerialControlMetrics panel;
+            uint64_t panel_now=scope_clock_ns()/1000000;
             serial_control_set_run(&serial_controls,demo.screen.running);
             for(i=0;i<2;++i)serial_control_set_encoder_mode(&serial_controls,(unsigned)i,demo.position_mode[i]||demo.waveform_loaded);
             serial_control_metrics(&serial_controls,&panel);
+            if(update_panel_battery(&panel,panel_now))invalidate();
             if(!demo.waveform_loaded)for(i=0;i<2;++i)if((panel.scale_valid&(1U<<i))&&
                 demo_signal_scale_mv(demo.scale_index[i])!=panel.scale_mv[i]){
                 demo_signal_accept_scale(&demo,(unsigned)i,panel.scale_mv[i]);invalidate();}
@@ -1281,10 +1297,13 @@ int main(int argc, char **argv)
                 if(raw_file||(adc_device&&demo.trigger_mode_index==2))demo.screen.running=0;invalidate();}
             capture_pipeline_metrics(capture_pipeline,&metrics);
             if(demo_signal_set_adc_level(&demo,metrics.adc_code,
-                metrics.adc_valid&&metrics.adc_age_ms<=STATUS_HEARTBEAT_MS))invalidate();
-            if(adc_device)demo.screen.waiting_for_trigger=metrics.waiting&&demo.screen.running;
+                metrics.adc_valid&&metrics.adc_age_ms<=STATUS_HEARTBEAT_MS)&&
+                demo.screen.menu_open&&demo.menu_kind==DEMO_MENU_DEBUG)invalidate();
+            if(adc_device && demo.screen.waiting_for_trigger!=(metrics.waiting&&demo.screen.running)){
+                demo.screen.waiting_for_trigger=metrics.waiting&&demo.screen.running;invalidate();}
             if(metrics.source_error&&demo.screen.running){demo.screen.running=0;demo_signal_notify(&demo,"ADC CAPTURE ERROR");invalidate();}}
-        if(demo.screen.running||demo.screen.status_visible||mouse_hold.active||key_holds[0].active||key_holds[1].active){demo_signal_advance(&demo);invalidate();}
+        if(demo.screen.running&&!demo.external_capture){demo_signal_advance(&demo);invalidate();}
+        if(demo.screen.status_visible||mouse_hold.active||key_holds[0].active||key_holds[1].active)invalidate();
         if(dirty&&running){uint64_t render_begin=scope_clock_ns();frame_deadline=now_ms()+16;draw_all();render_time+=scope_clock_ns()-render_begin;++render_frames;
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
             if(drm_display){int submitted=linux_display_present(drm_display,screen_pixels);if(submitted<0){running=0;exit_status=1;}else dirty=!submitted;}

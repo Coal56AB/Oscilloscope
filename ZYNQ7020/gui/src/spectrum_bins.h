@@ -14,13 +14,13 @@ static inline double spectrum_level_at_db(double db)
     return (db + 80.0) * 255.0 / 80.0;
 }
 
-/* Logarithmic positive-frequency axis: first FFT frequency through Nyquist.
-   DC is outside this axis. The first frequency equals Fs / FFT size. */
+/* Logarithmic axis with a linear origin: zero through Nyquist.
+   The transition scale equals one FFT frequency step. */
 static inline double spectrum_frequency_at(double fraction, double span_hz, unsigned size)
 {
     if (fraction < 0.0) fraction = 0.0;
     if (fraction > 1.0) fraction = 1.0;
-    return span_hz * 2.0 / size * pow(size / 2.0, fraction);
+    return span_hz * 2.0 / size * expm1(log1p(size / 2.0) * fraction);
 }
 
 /* Maximum over each logarithmic display group retains narrow spectral peaks.
@@ -29,11 +29,11 @@ static inline void spectrum_bin_range(unsigned index, unsigned count, unsigned s
                                       unsigned *first, unsigned *end)
 {
     double half = size / 2.0;
-    *first = index ? (unsigned)ceil(pow(half, (index - 0.5) / (count - 1))) : 1;
+    *first = index ? (unsigned)ceil(expm1(log1p(half) * (index - 0.5) / (count - 1))) : 0;
     *end = index + 1 < count ?
-        (unsigned)ceil(pow(half, (index + 0.5) / (count - 1))) : size / 2 + 1;
+        (unsigned)ceil(expm1(log1p(half) * (index + 0.5) / (count - 1))) : size / 2 + 1;
     if (*end <= *first) {
-        *first = (unsigned)(pow(half, (double)index / (count - 1)) + 0.5);
+        *first = (unsigned)(expm1(log1p(half) * index / (count - 1)) + 0.5);
         *end = *first + 1;
     }
 }

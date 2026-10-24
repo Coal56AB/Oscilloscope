@@ -2,6 +2,7 @@
 #include "capture_processor.h"
 #include "waveform_view.h"
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -24,11 +25,12 @@ static double sample_voltage(const CaptureBuffer *b, size_t sample, unsigned cha
            b->volts_per_code[channel];
 }
 int capture_find_trigger(const CaptureBuffer *b, unsigned ch, unsigned edge,
-                         double volts, uint64_t first_allowed, uint64_t *sample)
+                         double volts, unsigned hysteresis_codes,
+                         uint64_t first_allowed, uint64_t *sample)
 {
-    size_t i, start = 1;
+    size_t i, start = 1, history;
     double level;
-    int previous;
+    int previous, rising_armed, falling_armed;
     if (!capture_buffer_valid(b) || ch >= 2 || edge > 2 || !isfinite(volts) || !sample ||
         b->volts_per_code[ch] <= 0) return 0;
     if (first_allowed > b->first_sample) {
@@ -37,11 +39,23 @@ int capture_find_trigger(const CaptureBuffer *b, unsigned ch, unsigned edge,
         if (offset > start) start = (size_t)offset;
     }
     level = volts / b->volts_per_code[ch] + b->zero_code[ch];
-    previous = b->data[2 * (start - 1) + ch];
-    for (i = start; i < b->bytes / 2; ++i) {
+    /* Recover the arm state before the allowed trigger window. A noisy return
+       across the threshold must not turn a falling slope into a rising trigger. */
+    history = start - 1;
+    while (history && b->data[2 * history + ch] > level - hysteresis_codes &&
+           b->data[2 * history + ch] < level + hysteresis_codes) --history;
+    previous = b->data[2 * history + ch];
+    rising_armed = previous <= level - hysteresis_codes;
+    falling_armed = previous >= level + hysteresis_codes;
+    for (i = history + 1; i < b->bytes / 2; ++i) {
         int current = b->data[2 * i + ch];
-        if ((edge != 1 && previous <= level && current > level) ||
-            (edge != 0 && previous >= level && current < level)) {
+        int rising = rising_armed && previous <= level && current > level;
+        int falling = falling_armed && previous >= level && current < level;
+        if (rising) rising_armed = 0;
+        if (falling) falling_armed = 0;
+        if (current <= level - hysteresis_codes) rising_armed = 1;
+        if (current >= level + hysteresis_codes) falling_armed = 1;
+        if (i >= start && ((edge != 1 && rising) || (edge != 0 && falling))) {
             *sample = b->first_sample + i;
             return 1;
         }
@@ -72,6 +86,10 @@ static void source_range(const void *context, size_t first, size_t end, unsigned
         if (value < low) low = value;
         if (value > high) high = value;
     }
+    if(b->peaks)for(i=first/2;i<(end+1)/2;++i){
+        if(b->peaks[4*i+channel]<low)low=b->peaks[4*i+channel];
+        if(b->peaks[4*i+2+channel]>high)high=b->peaks[4*i+2+channel];
+    }
     *minimum = (low - b->zero_code[channel]) * b->volts_per_code[channel];
     *maximum = (high - b->zero_code[channel]) * b->volts_per_code[channel];
     if (*minimum > *maximum) { double swap = *minimum; *minimum = *maximum; *maximum = swap; }
@@ -83,26 +101,32 @@ int capture_value_at(const CaptureBuffer *b, size_t sample, unsigned channel, do
     *volts = sample_voltage(b, sample, channel);
     return 1;
 }
-/* Fixed-size radix-2 FFT; no allocation and no dependence on raw record depth. */
-static void spectrum(const CaptureBuffer *b, const CaptureView *v, unsigned ch, uint8_t *bins)
+static double source_value(const void *context,size_t sample,unsigned channel)
 {
-    enum { N = 1024 };
-    double re[N], im[N];
+    return sample_voltage(context,sample,channel);
+}
+/* Use the available record up to 64K contiguous samples without decimation.
+   Heap workspace keeps the larger transform off the GUI/worker stack. */
+static int spectrum(const CaptureBuffer *b, const CaptureView *v, unsigned ch, unsigned n, uint8_t *bins)
+{
+    double *re = malloc(2 * n * sizeof(*re)), *im;
     unsigned i, j, length;
     double gain = fabs(b->volts_per_code[ch]) * 128, mean = 0;
-    unsigned count = v->samples < N ? (unsigned)v->samples : N;
+    unsigned count = v->samples < n ? (unsigned)v->samples : n;
+    if (!re) return 0;
+    im = re + n;
     for (i = 0; i < count; ++i) mean += sample_voltage(b, v->start + i, ch);
     if (count) mean /= count;
-    for (i = 0; i < N; ++i) {
+    for (i = 0; i < n; ++i) {
         size_t offset = i;
         double value = 0;
         if (offset < v->samples)
             value = sample_voltage(b, v->start + offset, ch) - mean;
-        re[i] = value * (0.5 - 0.5 * cos(6.283185307179586 * i / (N - 1)));
+        re[i] = value * (0.5 - 0.5 * cos(6.283185307179586 * i / (n - 1)));
         im[i] = 0;
     }
-    for (i = 1, j = 0; i < N; ++i) {
-        unsigned bit = N >> 1;
+    for (i = 1, j = 0; i < n; ++i) {
+        unsigned bit = n >> 1;
         for (; j & bit; bit >>= 1)
             j ^= bit;
         j ^= bit;
@@ -112,12 +136,12 @@ static void spectrum(const CaptureBuffer *b, const CaptureView *v, unsigned ch, 
             re[j] = t;
         }
     }
-    for (length = 2; length <= N; length <<= 1) {
+    for (length = 2; length <= n; length <<= 1) {
         unsigned half = length / 2, k;
         for (k = 0; k < half; ++k) {
             double angle = -6.283185307179586 * k / length;
             double c = cos(angle), s = sin(angle);
-            for (i = 0; i < N; i += length) {
+            for (i = 0; i < n; i += length) {
                 double tr = c * re[i + k + half] - s * im[i + k + half],
                        ti = s * re[i + k + half] + c * im[i + k + half];
                 re[i + k + half] = re[i + k] - tr;
@@ -130,25 +154,64 @@ static void spectrum(const CaptureBuffer *b, const CaptureView *v, unsigned ch, 
     for (i = 0; i < SCOPE_FFT_BINS; ++i) {
         unsigned first, end, k;
         double magnitude = 0;
-        spectrum_bin_range(i, SCOPE_FFT_BINS, N, &first, &end);
+        spectrum_bin_range(i, SCOPE_FFT_BINS, n, &first, &end);
         for (k = first; k < end; ++k) {
-            double value = hypot(re[k], im[k]) * 4 / N;
+            double value = hypot(re[k], im[k]) * 4 / n;
             if (value > magnitude) magnitude = value;
         }
         double db = gain > 0 ? 20 * log10(magnitude / gain + 1e-12) : -120;
         double y = spectrum_level_at_db(db);
         bins[i] = (uint8_t)(y < 0 ? 0 : y > 255 ? 255 : y);
     }
+    free(re);
+    return 1;
 }
+/* Count original ADC hits before reduction. Lookup tables avoid floating point
+   work per sample; the retained raw record remains the source for STOP/ZOOM. */
+static int density(const CaptureBuffer *b, const CaptureView *v, double first,
+                   double samples, unsigned ch, uint8_t *levels)
+{
+    size_t x, i;
+    unsigned peak = 0, code;
+    unsigned height=v->density_rows?v->density_rows:SCOPE_PLOT_HEIGHT;
+    int rows[256];
+    uint16_t *counts = calloc(SCOPE_PLOT_WIDTH * SCOPE_PLOT_HEIGHT, sizeof(*counts));
+    uint8_t *palette;
+    if (!counts) return 0;
+    for (code = 0; code < 256; ++code) {
+        double y = (v->zero_y[ch] - (code - b->zero_code[ch]) * b->volts_per_code[ch] * v->pixels_per_volt[ch]) * height/SCOPE_PLOT_HEIGHT;
+        rows[code] = y >= 0 && y < height ? (int)y : -1;
+    }
+    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
+        size_t a = (size_t)ceil(fmax(0, fmin(first + x * samples / SCOPE_PLOT_WIDTH, b->bytes / 2)));
+        size_t end = (size_t)ceil(fmax(0, fmin(first + (x + 1) * samples / SCOPE_PLOT_WIDTH, b->bytes / 2)));
+        for (i = a; i < end; ++i) {
+            int y = rows[b->data[2*i+ch]];
+            if (y >= 0) {
+                uint16_t *count = &counts[x*SCOPE_PLOT_HEIGHT+y];
+                if (*count < UINT16_MAX) ++*count;
+                if (*count > peak) peak = *count;
+            }
+        }
+    }
+    palette = malloc(peak + 1);
+    if (!palette) {free(counts);return 0;}
+    for (code = 0; code <= peak; ++code) palette[code] = (uint8_t)waveform_density_level(code,peak);
+    for (i = 0; i < SCOPE_PLOT_WIDTH * SCOPE_PLOT_HEIGHT; ++i) levels[i] = palette[counts[i]];
+    free(palette);free(counts);
+    return 1;
+}
+
 int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *f)
 {
     unsigned ch;
-    WaveformSource source;
+    WaveformSource source={0};
     CaptureView overlap;
     double display_first, display_samples;
     uint64_t start_ns = scope_clock_ns();
     if (!capture_buffer_valid(b) || !v || !f)
         return 0;
+    if(v->density_rows>SCOPE_PLOT_HEIGHT)return 0;
     if (v->display_samples != 0) {
         double first, end;
         if (!isfinite(v->display_first) || !isfinite(v->display_samples) || v->display_samples <= 0)
@@ -172,9 +235,14 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
     source.context = b;
     source.samples = b->bytes / 2;
     source.range = source_range;
-    memset(f, 0, sizeof(*f));
+    source.value = b->peaks?source_value:NULL;
+    memset(f, 0, offsetof(DisplayFrame,density));
     f->sequence = b->sequence;
     f->sample_rate_hz = b->sample_rate_hz;
+    f->peak_detect = b->peaks!=NULL;
+    f->display_samples = display_samples;
+    f->fft_size = 1024;
+    while (f->fft_size < 65536 && f->fft_size * 2 <= v->samples) f->fft_size *= 2;
     f->trigger_sample = b->trigger_sample;
     f->trigger_x = b->trigger_sample != CAPTURE_NO_TRIGGER && b->trigger_sample >= b->first_sample ?
         ((double)(b->trigger_sample - b->first_sample) - display_first) * SCOPE_PLOT_WIDTH / display_samples :
@@ -222,6 +290,8 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         }
         f->minimum[ch] = v->samples ? ((gain >= 0 ? low : peak) - zero) * gain : NAN;
         f->maximum[ch] = v->samples ? ((gain >= 0 ? peak : low) - zero) * gain : NAN;
+        if(b->peaks&&v->samples)
+            source_range(b,v->start,v->start+v->samples,ch,&f->minimum[ch],&f->maximum[ch]);
         if (v->samples) {
             double mean = (double)sum / v->samples;
             f->mean[ch] = (mean - zero) * gain;
@@ -294,8 +364,11 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         waveform_view_reduce(&source, display_first, display_samples, ch,
                              v->zero_y[ch], v->pixels_per_volt[ch], SCOPE_PLOT_WIDTH,
                              f->y[ch], f->y_min[ch], f->y_max[ch]);
-        if (!v->skip_spectrum) spectrum(b, v, ch, f->fft[ch]);
+        if (!v->skip_spectrum && !spectrum(b, v, ch, f->fft_size, f->fft[ch])) return 0;
+        if (v->density_enabled && !density(b,v,display_first,display_samples,ch,&f->density[ch][0][0])) return 0;
     }
+    f->density_valid = v->density_enabled;
+    f->density_rows = v->density_rows?v->density_rows:SCOPE_PLOT_HEIGHT;
     f->processing_ns = scope_clock_ns() - start_ns;
     return 1;
 }

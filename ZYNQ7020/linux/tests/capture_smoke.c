@@ -70,7 +70,7 @@ static int run(unsigned pass, unsigned rate_index)
         }
         if (block.index >= info.buffers || block.data_offset != 64 ||
             block.bytes != payload || block.sample_rate_hz != rate ||
-            block.first_sample != block.sequence * (payload / 2) ||
+            block.first_sample != block.sequence * (payload / (rate_index?4:2)) ||
             (blocks && block.sequence <= previous)) goto out;
         if (blocks) gaps += block.sequence - previous - 1;
         previous = block.sequence;

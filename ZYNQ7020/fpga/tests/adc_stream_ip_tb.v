@@ -18,7 +18,7 @@ module adc_stream_ip_tb;
     ad9288_input adc(clk,sample_clk,resetn,enable,a,b,a+8'd64,b+8'd64,
         clk_a,clk_b,adc_data,adc_valid,adc_ready,stream_resetn,overflow,3'd0);
     axis_capture_decimate decimate(sample_clk,stream_resetn,divider,
-        adc_data,adc_valid,adc_ready,selected_data,selected_valid,selected_ready);
+        adc_data,adc_valid,adc_ready,selected_data,selected_valid,selected_ready,);
     adc_width_test width_ip(.aclk(sample_clk), .aresetn(stream_resetn),
         .s_axis_tdata(selected_data), .s_axis_tvalid(selected_valid), .s_axis_tready(selected_ready),
         .m_axis_tdata(packed_data), .m_axis_tvalid(packed_valid), .m_axis_tready(packed_ready));
@@ -26,7 +26,7 @@ module adc_stream_ip_tb;
         .s_axis_tdata(packed_data), .s_axis_tvalid(packed_valid), .s_axis_tready(packed_ready),
         .m_axis_tdata(fifo_data), .m_axis_tvalid(fifo_valid), .m_axis_tready(fifo_ready));
     axis_capture_frame #(.BLOCK_BYTES(1024)) frame_ip(sample_clk,stream_resetn,32'd960,rate,
-        fifo_data,fifo_valid,fifo_ready,frame_data,frame_keep,frame_valid,frame_ready,frame_last);
+        fifo_data,fifo_valid,fifo_ready,frame_data,frame_keep,frame_valid,frame_ready,frame_last,divider!=0);
     adc_cdc_test cdc_ip(.s_axis_aclk(sample_clk), .s_axis_aresetn(stream_resetn),
         .m_axis_aclk(clk), .m_axis_aresetn(resetn),
         .s_axis_tdata(frame_data), .s_axis_tkeep(frame_keep), .s_axis_tlast(frame_last),
@@ -50,11 +50,12 @@ module adc_stream_ip_tb;
         else if(valid&&ready) begin
             if(keep!==8'hff || last!==(words==127)) $fatal(1,"packet boundary");
             case(words)
-                0: if(data!==64'h00000003_5043534f) $fatal(1,"magic");
+                0: if(data!==64'h00000004_5043534f) $fatal(1,"magic");
                 1: if(data!=={rate,32'd960}) $fatal(1,"format");
                 2: if(data!==blocks) $fatal(1,"sequence");
-                3: if(data!==blocks*480) $fatal(1,"sample counter");
-                4,5,6,7: if(data!==0) $fatal(1,"reserved");
+                3: if(data!==blocks*(divider==0?480:240)) $fatal(1,"sample counter");
+                4: if(data!==(divider==0?64'd0:64'd2)) $fatal(1,"peak flag");
+                5,6,7: if(data!==0) $fatal(1,"reserved");
                 default: begin
                     if(read+1>=written || data!=={expected[read+1],expected[read]})
                         $fatal(1,"data loss at %d",read);

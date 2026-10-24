@@ -46,7 +46,7 @@ static void consumer(void *context)
 {
     Bench *b = context;
     CaptureView view = {0, BLOCK_BYTES / 2, {200, 330}, {100, 100}};
-    DisplayFrame frame;
+    static DisplayFrame frame;
     for (;;) {
         int slot = capture_ring_take(&b->ring, 20);
         if (slot >= 0) {

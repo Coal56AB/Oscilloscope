@@ -6,6 +6,10 @@
 #include <poll.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -80,7 +84,8 @@ int zynq_capture_acquire(ZynqCaptureSource *s, CaptureBuffer *b, unsigned timeou
     ++s->leased;
     if (!block.bytes || block.data_offset > s->info.block_bytes ||
         block.bytes > s->info.block_bytes - block.data_offset || block.bytes % 2 ||
-        block.data_offset % 8 || (block.flags & ~OSC_CAPTURE_DISCONTINUITY)) {
+        block.data_offset % 8 || (block.flags & ~(OSC_CAPTURE_DISCONTINUITY|OSC_CAPTURE_PEAKS)) ||
+        ((block.flags & OSC_CAPTURE_PEAKS) && (block.bytes%8 || block.first_sample%2))) {
         zynq_capture_release(s);
         return -1;
     }
@@ -95,6 +100,23 @@ int zynq_capture_acquire(ZynqCaptureSource *s, CaptureBuffer *b, unsigned timeou
     b->hardware_ns = block.hardware_ns;
     b->software_ns = scope_clock_ns();
     b->flags = block.flags;
+    if(block.flags & OSC_CAPTURE_PEAKS) {
+        size_t i=0, groups=block.bytes/8;
+        const uint8_t *packed=b->data;
+        size_t capacity=(s->info.block_bytes-block.data_offset)/2;
+        if(!s->decoded[block.index])s->decoded[block.index]=malloc(capacity*2);
+        if(!s->decoded[block.index]){zynq_capture_release(s);return -1;}
+        b->data=s->decoded[block.index];b->peaks=b->data+capacity;
+        b->capacity=capacity;b->bytes=block.bytes/2;
+#if defined(__ARM_NEON)
+        for(;i+4<=groups;i+=4){
+            uint32x4x2_t values=vld2q_u32((const uint32_t *)(packed+8*i));
+            vst1q_u32((uint32_t *)(b->data+4*i),values.val[0]);
+            vst1q_u32((uint32_t *)(b->peaks+4*i),values.val[1]);
+        }
+#endif
+        for(;i<groups;++i){memcpy(b->data+4*i,packed+8*i,4);memcpy(b->peaks+4*i,packed+8*i+4,4);}
+    }
     memcpy(b->volts_per_code, s->volts_per_code, sizeof(b->volts_per_code));
     memcpy(b->zero_code, s->zero_code, sizeof(b->zero_code));
     if (!capture_buffer_valid(b)) {
@@ -121,6 +143,8 @@ int zynq_capture_release_index(ZynqCaptureSource *s, uint32_t index)
 }
 void zynq_capture_close(ZynqCaptureSource *s)
 {
+    unsigned i;
+    for(i=0;i<CAPTURE_RING_MAX;++i){free(s->decoded[i]);s->decoded[i]=NULL;}
     if (s->fd >= 0) {
         uint32_t i;
         for (i = 0; i < s->info.buffers && i < CAPTURE_RING_MAX; ++i)

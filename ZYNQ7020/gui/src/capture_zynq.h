@@ -8,6 +8,7 @@ typedef struct {
     struct osc_capture_info info;
     uint32_t index;
     uint64_t leases[2];
+    uint8_t *decoded[CAPTURE_RING_MAX];
     double volts_per_code[2], zero_code[2];
 } ZynqCaptureSource;
 /* Requires a real driver implementing capture_uapi.h; errors are not simulated. */

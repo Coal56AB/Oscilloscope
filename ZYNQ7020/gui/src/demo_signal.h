@@ -85,6 +85,7 @@ typedef struct {
     char fft_info_text[64];
     char fft_cursor_text[24];
     double fft_span_hz;
+    unsigned fft_size;
     char ch_scale_text[2][20];
     char edit_scale_text[20];
     char ch_input_text[2][20];
@@ -177,7 +178,7 @@ void demo_signal_present_external(DemoSignal *demo, uint64_t sequence);
 unsigned demo_signal_generator_hz(int index);
 
 void demo_signal_init(DemoSignal *demo);
-void demo_signal_set_fft_range(DemoSignal *demo, double span_hz);
+void demo_signal_set_fft_range(DemoSignal *demo, double span_hz, unsigned size);
 void demo_signal_advance(DemoSignal *demo);
 void demo_signal_update_time(DemoSignal *demo, uint64_t now_ms);
 unsigned demo_signal_pc_baud(int index);
@@ -240,5 +241,7 @@ void demo_signal_ui_close_capture(DemoSignal *demo);
 void demo_signal_notify(DemoSignal *demo, const char *message);
 void demo_signal_begin_external(DemoSignal *demo);
 int demo_signal_set_adc_level(DemoSignal *demo, const uint8_t code[2], int valid);
+/* Battery voltage is already restored by the STM32 from its 1:2 divider. */
+int demo_signal_set_battery(DemoSignal *demo, unsigned millivolts, int valid);
 
 #endif

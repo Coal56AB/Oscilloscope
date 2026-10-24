@@ -18,9 +18,10 @@ struct CapturePipeline {
     FILE *file;
     uint8_t *storage[CAPTURE_RING_MAX];
     CaptureRequest request;
-    DisplayFrame frame;
+    DisplayFrame frames[3];
+    unsigned write_slot, ready_slot, reading_slot;
     unsigned revision, arm_revision;
-    int stop, have_frame, source_error;
+    int stop, source_error;
     uint64_t bytes, display_replaced, processing_ns, waveforms;
     uint64_t adc_sample_ns;
     int hardware;
@@ -83,7 +84,7 @@ static void process_frame(CapturePipeline *p, const CaptureBuffer *b,
 {
     uint64_t started = scope_clock_ns();
     CaptureView view;
-    DisplayFrame frame;
+    DisplayFrame *frame = &p->frames[p->write_slot];
     double samples = request->duration_seconds * b->sample_rate_hz;
     double base_samples = fmax(request->overview_duration_seconds, request->duration_seconds) * b->sample_rate_hz;
     double base_first;
@@ -102,31 +103,36 @@ static void process_frame(CapturePipeline *p, const CaptureBuffer *b,
     view.display_first = base_first + (base_samples - view.display_samples) * 0.5 +
                          request->zoom_offset_seconds * b->sample_rate_hz;
     view.skip_spectrum = !request->spectrum_enabled;
+    view.density_enabled = request->density_enabled;
+    view.density_rows = request->density_rows;
     memcpy(view.zero_y, request->zero_y, sizeof(view.zero_y));
     memcpy(view.pixels_per_volt, request->pixels_per_volt, sizeof(view.pixels_per_volt));
-    if (capture_process(b, &view, &frame)) {
+    if (capture_process(b, &view, frame)) {
         if (request->overview_duration_seconds > request->duration_seconds) {
             CaptureView base = view;
-            DisplayFrame overview;
+            DisplayFrame *overview = malloc(sizeof(*overview));
             base.display_samples = request->overview_duration_seconds * b->sample_rate_hz;
             base.display_first = base_first;
             base.skip_spectrum = 1;
-            if (capture_process(b, &base, &overview))
-                memcpy(frame.overview, overview.y, sizeof(frame.overview));
-            frame.overview_start = (int)lround((view.display_first - base_first) * SCOPE_PLOT_WIDTH / base_samples);
-            frame.overview_end = (int)lround((view.display_first + view.display_samples - base_first) * SCOPE_PLOT_WIDTH / base_samples);
-        } else memcpy(frame.overview, frame.y, sizeof(frame.overview));
+            base.density_enabled = 0;
+            if (overview && capture_process(b, &base, overview))
+                memcpy(frame->overview, overview->y, sizeof(frame->overview));
+            free(overview);
+            frame->overview_start = (int)lround((view.display_first - base_first) * SCOPE_PLOT_WIDTH / base_samples);
+            frame->overview_end = (int)lround((view.display_first + view.display_samples - base_first) * SCOPE_PLOT_WIDTH / base_samples);
+        } else memcpy(frame->overview, frame->y, sizeof(frame->overview));
         if (b->trigger_sample == CAPTURE_NO_TRIGGER)
-            frame.trigger_x = ((1.0 - request->pan_fraction) * base_samples -
+            frame->trigger_x = ((1.0 - request->pan_fraction) * base_samples -
                 (base_samples - view.display_samples) * 0.5 - request->zoom_offset_seconds * b->sample_rate_hz) *
                 SCOPE_PLOT_WIDTH / view.display_samples;
-        frame.processing_ns = scope_clock_ns() - started + preprocessing_ns;
+        frame->processing_ns = scope_clock_ns() - started + preprocessing_ns;
         scope_mutex_lock(&p->mutex);
-        if (p->have_frame) ++p->display_replaced;
-        p->frame = frame;
+        if (p->ready_slot) ++p->display_replaced;
+        p->ready_slot = p->write_slot + 1;
+        for (p->write_slot=0;p->write_slot<3;++p->write_slot)
+            if (p->write_slot+1!=p->ready_slot && p->write_slot+1!=p->reading_slot) break;
         ++p->waveforms;
-        p->have_frame = 1;
-        p->processing_ns = frame.processing_ns;
+        p->processing_ns = frame->processing_ns;
         scope_mutex_unlock(&p->mutex);
     }
 }
@@ -172,7 +178,7 @@ static void hardware_worker(void *context)
     debug.data = p->storage[3]; debug.capacity = CAPTURE_MAX_SAMPLES * 2;
     retained.data = p->storage[1]; retained.capacity = CAPTURE_MAX_SAMPLES * 2;
     candidate.data = p->storage[2]; candidate.capacity = CAPTURE_MAX_SAMPLES * 2;
-    capture_history_init(&history, p->storage[0], 100000);
+    capture_history_init(&history, p->storage[0], p->storage[0]+CAPTURE_MAX_SAMPLES*2, 100000);
     while (!stopped(p)) {
         CaptureRequest request;
         unsigned revision, arm, wanted_depth, wanted_rate, ch;
@@ -190,7 +196,7 @@ static void hardware_worker(void *context)
         force = request.force_sequence != forced;
         if (memcmp(&previous_debug, &request.debug, sizeof(previous_debug)) ||
             memcmp(previous_gain, request.adc_volts_per_code, sizeof(previous_gain))) {
-            capture_history_init(&history, p->storage[0], wanted_depth);
+            capture_history_init(&history, p->storage[0], p->storage[0]+CAPTURE_MAX_SAMPLES*2, wanted_depth);
             last_display = 0; previous_debug = request.debug;
             memcpy(previous_gain, request.adc_volts_per_code, sizeof(previous_gain));
         }
@@ -199,7 +205,7 @@ static void hardware_worker(void *context)
             if (!zynq_capture_configure(&p->zynq, wanted_rate, shift)) failed = 1;
             else {
                 rate_index = wanted_rate; depth = wanted_depth;
-                capture_history_init(&history, p->storage[0], depth);
+                capture_history_init(&history, p->storage[0], p->storage[0]+CAPTURE_MAX_SAMPLES*2, depth);
                 expected = next_trigger = last_display = 0; failed = 0;
             }
             scope_mutex_lock(&p->mutex);
@@ -230,10 +236,11 @@ static void hardware_worker(void *context)
                         received.volts_per_code[ch] = request.adc_volts_per_code[ch];
                 if (received.bytes / 2 > depth) {
                     size_t skip = received.bytes / 2 - depth;
-                    received.data += skip * 2; received.first_sample += skip;
+                    received.data += skip * 2; if(received.peaks)received.peaks+=skip*2; received.first_sample += skip;
                     received.bytes -= skip * 2; received.capacity -= skip * 2;
                 }
                 if (request.debug.enabled) {
+                    debug.peaks=debug.data+debug.capacity;
                     if (!capture_debug_replace(&received, &debug, &request.debug)) failed = 1;
                     else capture_history_append(&history, &debug);
                 } else capture_history_append(&history, &received);
@@ -252,6 +259,7 @@ static void hardware_worker(void *context)
                     int triggered = 0, complete;
                     double span, pre, post;
                     drained = 0;
+                    candidate.peaks=candidate.data+candidate.capacity;
                     capture_history_snapshot(&history, &candidate);
                     span = fmax(request.duration_seconds, request.overview_duration_seconds) * candidate.sample_rate_hz;
                     pre = ceil(span * (1.0 - request.pan_fraction));
@@ -261,11 +269,12 @@ static void hardware_worker(void *context)
                     if (!request.roll) {
                         if (complete) {
                             CaptureBuffer search = candidate;
+                            search.peaks=NULL;
                             uint64_t first = candidate.first_sample + (uint64_t)pre;
                             if (first < next_trigger) first = next_trigger;
                             search.bytes -= (size_t)post * 2;
                             triggered = capture_find_trigger(&search, request.trigger_channel, request.trigger_edge,
-                                request.trigger_voltage, first, &candidate.trigger_sample);
+                                request.trigger_voltage, 2, first, &candidate.trigger_sample);
                         }
                     }
                     if (force && complete) {
@@ -310,7 +319,7 @@ CapturePipeline *capture_pipeline_create_zynq(const char *device, const double g
     {
         unsigned i;
         for (i = 0; i < 4; ++i) {
-            p->storage[i] = malloc(CAPTURE_MAX_SAMPLES * 2);
+            p->storage[i] = malloc(CAPTURE_MAX_SAMPLES * 4);
             if (!p->storage[i]) goto fail;
         }
     }
@@ -418,6 +427,8 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
     if (r->running && !p->request.running) ++p->arm_revision;
     if (p->request.duration_seconds != r->duration_seconds ||
         p->request.spectrum_enabled != r->spectrum_enabled ||
+        p->request.density_enabled != r->density_enabled ||
+        p->request.density_rows != r->density_rows ||
         p->request.roll != r->roll || p->request.record_samples != r->record_samples ||
         p->request.overview_duration_seconds != r->overview_duration_seconds ||
         p->request.zoom_offset_seconds != r->zoom_offset_seconds ||
@@ -428,17 +439,23 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
     p->request = *r;
     scope_mutex_unlock(&p->mutex);
 }
+/* One GUI consumer leases a completed slot. Neither copying the density map
+   nor processing a new frame holds the configuration/metrics mutex. */
 int capture_pipeline_frame(CapturePipeline *p, DisplayFrame *f)
 {
-    int result;
+    unsigned slot;
+    const DisplayFrame *ready;
     scope_mutex_lock(&p->mutex);
-    result = p->have_frame;
-    if (result) {
-        *f = p->frame;
-        p->have_frame = 0;
-    }
+    slot=p->ready_slot;
+    if(slot){p->ready_slot=0;p->reading_slot=slot;}
     scope_mutex_unlock(&p->mutex);
-    return result;
+    if(!slot)return 0;
+    ready=&p->frames[slot-1];
+    memcpy(f,ready,ready->density_valid?sizeof(*f):offsetof(DisplayFrame,density));
+    scope_mutex_lock(&p->mutex);
+    p->reading_slot=0;
+    scope_mutex_unlock(&p->mutex);
+    return 1;
 }
 void capture_pipeline_metrics(CapturePipeline *p, CaptureMetrics *m)
 {

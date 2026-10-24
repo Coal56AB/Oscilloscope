@@ -38,7 +38,7 @@ C:/Xilinx/SDK/2019.1/bin/program_flash.bat -f ZYNQ7020/output/linux/qspi.bin -of
 
 Проект STM32F103RCT6 — `STM32/oscill_controls.ioc` и `STM32/MDK-ARM/oscill_controls.uvprojx`. Настройки, распиновка и регенерация — [STM32.md](STM32.md). После успешного Rebuild в Keil HEX создаётся в `STM32/output/oscill_controls.hex`; фактические сборки — [TESTING.md](TESTING.md). Начальная настройка использует HSI/PLL 64 МГц, не зависит от неизвестного кварца модуля.
 
-Подключить ST-Link: SWDIO → PA13, SWCLK → PA14, GND → GND. В Keil выбран ST-Link/SWD и STM32F103RC; записать прошивку командой Download.
+Подключить ST-Link: SWDIO → PA13, SWCLK → PA14, GND → GND. В Keil выбран ST-Link/SWD и STM32F103RC; записать прошивку командой Download. В настройках Flash Download включён Reset and Run, а пакетная Debug Description отключена: сброс и запуск после проверки выполняет драйвер ST-Link. После `Verify OK.Application running ...` проверить ответ панели на изменение диапазона — один текст журнала не подтверждает запуск приложения.
 
 Не менять read protection/option bytes без необходимости. Проверить DOWN/UP, быстрые вращения, одновременно нажатые кнопки, удержания и UART. Первый тест связи: PA9 → RX USB–UART 3,3 В и GND, 115200 8N1; раз в секунду отправляется heartbeat. Состояние GPIO и алгоритмов на физической плате ещё не проверено.
 

@@ -61,7 +61,7 @@ renderer не соединяет линией. Raw processor считает ст
 пересечению с памятью; отображение более длинного интервала не запускает захват.
 Генератор и CSV используют тот же механизм. Форматы BMP/CSV сохранены.
 
-`capture_uapi.h` задаёт Linux ABI 3; описание — [CAPTURE_INTERFACE.md](CAPTURE_INTERFACE.md).
+`capture_uapi.h` задаёт Linux ABI 4; описание — [CAPTURE_INTERFACE.md](CAPTURE_INTERFACE.md).
 Встроенный драйвер `linux/driver/oscill_capture.c` выделяет coherent DMA-память,
 проверяет аппаратный ID и заголовки, обслуживает SG и владение блоками.
 `capture_zynq.c` отображает только эту память read-only. Zynq-7000 HP не
@@ -88,4 +88,4 @@ TF2 предполагается съёмным хранилищем exFAT. `osc
 
 ## Версии
 
-Контракт захвата: карта регистров — 4, driver ABI — 3, sample format — 1. UART protocol — 1, app version — 0.1.0. Аппаратный ID захвата — `0xADC40000` без флагов ошибок. Manifest фиксирует Git SHA исходников, toolchain/Buildroot/kernel/U-Boot и хеши boot/bitstream/kernel/DTB/rootfs. Userspace capture adapter отвергает неверную ABI версию до доступа к payload. Миграция исходного GUI и сохранение истории описаны в [REPOSITORY.md](REPOSITORY.md).
+Контракт захвата: карта регистров — 5, driver ABI — 4, sample format — 2. UART protocol — 1, app version — 0.1.0. Аппаратный ID захвата — `0xADC50000` без флагов ошибок. Manifest фиксирует Git SHA исходников, toolchain/Buildroot/kernel/U-Boot и хеши boot/bitstream/kernel/DTB/rootfs. Userspace capture adapter отвергает неверную ABI версию до доступа к payload. Миграция исходного GUI и сохранение истории описаны в [REPOSITORY.md](REPOSITORY.md).

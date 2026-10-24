@@ -106,7 +106,7 @@ static void test_debug_hold_threshold(void)
 
 static void test_external_trigger_marker(void)
 {
-    DisplayFrame f={0};
+    static DisplayFrame f={0};
     CaptureRequest r;
     demo_signal_init(&demo);
     demo_signal_begin_external(&demo);
@@ -131,7 +131,7 @@ static void test_adc_vertical_ranges(void)
     CaptureBuffer buffer={0};
     CaptureRequest request;
     CaptureView view={0};
-    DisplayFrame frame;
+    static DisplayFrame frame;
     double span[6], voltage[6];
     unsigned i,ch;
     demo_signal_init(&demo);demo_signal_begin_external(&demo);
@@ -328,8 +328,42 @@ static void test_remote_commands(void)
     rewind(response);assert(fread(header,1,1,response)==1);assert(header[0]=='{');fclose(response);
 }
 
+static void test_delayed_panel_release(void)
+{
+    ControlEvent event={CONTROL_DOWN,DEMO_BTN_MENU,0,100,0};
+    control_queue_init(&controls);
+    memset(key_holds,0,sizeof(key_holds));pending_chord=DEMO_CONTROL_COUNT;
+    demo_signal_init(&demo);
+    assert(control_queue_push(&controls,&event));
+    drain_controls(1000);
+    event.type=CONTROL_UP;event.timestamp_ms=180;
+    assert(control_queue_push(&controls,&event));
+    /* UI was busy for a second, but the physical press lasted only 80 ms. */
+    drain_controls(2000);
+    assert(demo.screen.menu_open && demo.menu_kind==DEMO_MENU_MAIN);
+    assert(!key_holds[DEMO_BTN_MENU].active);
+    control_queue_destroy(&controls);
+}
+
+static void test_panel_battery(void)
+{
+    SerialControlMetrics panel={0};
+    demo_signal_init(&demo);
+    panel.connected=1;panel.power_mv=3850;panel.power_received_ms=1000;
+    assert(update_panel_battery(&panel,1000));
+    assert(demo.screen.battery_known && demo.screen.battery_percent==60);
+    assert(!update_panel_battery(&panel,2000));
+    assert(update_panel_battery(&panel,4001) && !demo.screen.battery_known);
+    panel.power_received_ms=5000;
+    assert(update_panel_battery(&panel,5000) && demo.screen.battery_known);
+    panel.connected=0;
+    assert(update_panel_battery(&panel,5001) && !demo.screen.battery_known);
+}
+
 int main(void)
 {
+    test_delayed_panel_release();
+    test_panel_battery();
     test_debug_hold_threshold();
     test_external_trigger_marker();
     test_adc_vertical_ranges();

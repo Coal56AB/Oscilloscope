@@ -2,6 +2,7 @@
 #define SCOPE_SCREEN_H
 
 #include <stdint.h>
+#include "waveform_view.h"
 
 #define SCOPE_WIDTH 1024
 #define SCOPE_HEIGHT 600
@@ -20,7 +21,7 @@
 #define SCOPE_MENU_ROW_HEIGHT 54
 #define SCOPE_MENU_CONTROL_X 450
 #define SCOPE_MENU_CONTROL_WIDTH 430
-#define SCOPE_MENU_CHOICES 4
+#define SCOPE_MENU_CHOICES 6
 #define SCOPE_PANEL_RADIUS 5
 #define SCOPE_WINDOW_RADIUS 10
 #define SCOPE_MEASURE_SLOTS 10
@@ -95,6 +96,12 @@ typedef struct {
     uint8_t browser_visible;
     uint8_t waveform_loaded;
     const uint8_t *fft_ch1_bins;
+    const uint8_t *density_levels[2];
+    unsigned density_rows;
+    WaveformSource density_source[2];
+    double density_first, density_samples;
+    double density_zero[2], density_scale[2];
+    uint8_t peak_detect;
     const uint8_t *fft_ch2_bins;
     const char *fft_frequency_labels[SCOPE_FFT_TICKS];
     const char *fft_sampling_info;
@@ -157,6 +164,7 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
 void scope_update_render(uint32_t *pixels, int stride, const char *phase, unsigned percent);
 void scope_startup_render(uint32_t *pixels, int stride, const char *phase, unsigned percent, int failed);
 int scope_screen_fft_level_at(const ScopeScreen *screen, int y);
+int scope_screen_waveform_height(const ScopeScreen *screen);
 int scope_screen_cursor_measurement_width(const ScopeScreen *screen);
 void scope_screen_cursor_measurement_bounds(const ScopeScreen *screen, int *x, int *y,
                                             int *width, int *height);

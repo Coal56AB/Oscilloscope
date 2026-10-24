@@ -18,6 +18,8 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     r->record_samples = capture_record_samples(d->record_depth_index);
     r->roll = r->overview_duration_seconds > 1.0 && d->trigger_mode_index == 0;
     r->spectrum_enabled = d->fft_enabled;
+    r->density_enabled = d->intensity_coloring;
+    r->density_rows = (unsigned)scope_screen_waveform_height(&d->screen);
     r->debug.enabled = d->adc_simulation;
     r->debug.wave[0] = d->generator_wave[0];
     r->debug.wave[1] = d->generator_wave[1];
@@ -48,6 +50,13 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
 void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
 {
     int i;
+    d->screen.peak_detect=(uint8_t)f->peak_detect;
+    d->screen.density_rows=f->density_rows;
+    d->screen.density_samples=f->display_samples;
+    for(i=0;i<2;++i){
+        d->screen.density_source[i].samples=0;
+        d->screen.density_levels[i]=f->density_valid?&f->density[i][0][0]:NULL;
+    }
     d->acquisition_rate_hz = f->sample_rate_hz;
     if (d->external_capture) {
         d->screen.trigger_locked = f->trigger_sample != CAPTURE_NO_TRIGGER;
@@ -68,7 +77,7 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
     demo_signal_present_external(d, f->sequence);
     memcpy(d->fft_ch1, f->fft[0], sizeof(d->fft_ch1));
     memcpy(d->fft_ch2, f->fft[1], sizeof(d->fft_ch2));
-    demo_signal_set_fft_range(d, f->sample_rate_hz / 2.0);
+    demo_signal_set_fft_range(d, f->sample_rate_hz / 2.0, f->fft_size);
     d->screen.fft_ch1_bins = d->fft_ch1;
     d->screen.fft_ch2_bins = d->fft_ch2;
     for (i = 0; i < d->measurement_count; ++i) {

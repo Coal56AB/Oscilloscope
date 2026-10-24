@@ -107,6 +107,7 @@ static void test_external_without_samples(uint32_t *pixels, int stride)
 
 static void test_trace_gaps(uint32_t *pixels, int stride)
 {
+    static uint8_t density[SCOPE_PLOT_WIDTH][SCOPE_PLOT_HEIGHT];
     int mode,x;
     demo_signal_init(&demo);demo.screen.ch2_enabled=0;demo.screen.measurement_count=0;
     demo.screen.channel_zero_y[0]=350;
@@ -114,7 +115,9 @@ static void test_trace_gaps(uint32_t *pixels, int stride)
         int16_t value=x>=256 && x<768 && !(x>=500 && x<520)?210:WAVEFORM_NO_SAMPLE;
         demo.ch1[x]=demo.minimum[0][x]=demo.maximum[0][x]=value;
         demo.history_ch1[0][x]=demo.history_minimum[0][0][x]=demo.history_maximum[0][0][x]=value;
+        if(value!=WAVEFORM_NO_SAMPLE)density[x][value]=255;
     }
+    demo.screen.density_levels[0]=&density[0][0];
     for(mode=0;mode<3;++mode){
         demo.screen.ch1_min_samples=mode?demo.minimum[0]:NULL;
         demo.screen.ch1_max_samples=mode?demo.maximum[0]:NULL;
@@ -129,6 +132,29 @@ static void test_trace_gaps(uint32_t *pixels, int stride)
         assert(signal!=pixels[(SCOPE_PLOT_Y+210)*stride+SCOPE_PLOT_X+300]);
         demo.screen.ch1_enabled=1;
     }
+}
+
+static void test_density_connections_and_battery(uint32_t *pixels, int stride)
+{
+    static uint8_t density[SCOPE_PLOT_WIDTH][SCOPE_PLOT_HEIGHT];
+    int x,y;
+    demo_signal_init(&demo);
+    demo.screen.ch2_enabled=0;demo.screen.measurement_count=0;
+    demo.screen.channel_zero_y[0]=350;
+    demo.screen.intensity_coloring=1;demo.screen.peak_detect=0;
+    demo.screen.density_levels[0]=&density[0][0];
+    demo.screen.density_rows=SCOPE_PLOT_HEIGHT;demo.screen.density_samples=64;
+    for(x=0;x<SCOPE_PLOT_WIDTH;++x)demo.ch1[x]=210;
+    density[300][210]=density[316][210]=255;
+    demo.screen.battery_known=1;demo.screen.battery_percent=0;
+    scope_screen_render(pixels,stride,&demo.screen);
+    assert(pixels[(SCOPE_PLOT_Y+210)*stride+SCOPE_PLOT_X+300]==0xff1914);
+    assert(pixels[(SCOPE_PLOT_Y+210)*stride+SCOPE_PLOT_X+308]==0x002396);
+    /* Empty battery has no number drawn over its interior. */
+    for(y=15;y<37;++y)for(x=158;x<171;++x)assert(pixels[y*stride+x]!=0xe5f0f2);
+    demo.screen.battery_percent=100;
+    scope_screen_render(pixels,stride,&demo.screen);
+    assert(pixels[34*stride+160]==0x70dfa3);
 }
 
 static void test_fft_cursor_label(uint32_t *pixels, int stride)
@@ -280,12 +306,14 @@ static void test_buttons_and_overlay(uint32_t *pixels, int stride)
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
     demo_signal_ui_menu_choose(&demo, 4, 1);
     demo_signal_ui_dismiss_menu(&demo);
-    assert(strcmp(demo.screen.fft_frequency_labels[0], "1k") == 0);
-    assert(strcmp(demo.screen.fft_frequency_labels[1], "2.18k") == 0);
+    assert(strcmp(demo.screen.fft_frequency_labels[0], "0") == 0);
+    assert(strcmp(demo.screen.fft_frequency_labels[1], "1.18k") == 0);
     assert(strcmp(demo.screen.fft_frequency_labels[8], "512k") == 0);
     assert(strcmp(demo.screen.fft_sampling_info, "FS 1.024M / DF 1k") == 0);
-    demo_signal_set_fft_range(&demo, 100000000.0);
-    assert(strcmp(demo.screen.fft_frequency_labels[1], "426k") == 0);
+    demo_signal_set_fft_range(&demo, 100000000.0, 65536);
+    assert(strcmp(demo.screen.fft_frequency_labels[0], "0") == 0);
+    assert(strcmp(demo.screen.fft_frequency_labels[1], "8.14k") == 0);
+    assert(strcmp(demo.screen.fft_sampling_info, "FS 200M / DF 3.052k") == 0);
     assert(strcmp(demo.screen.fft_frequency_labels[8], "100M") == 0);
 }
 
@@ -329,6 +357,7 @@ int main(void)
     test_corner_composition();
     test_trace_width(pixels, SCOPE_WIDTH + 3);
     test_trace_gaps(pixels, SCOPE_WIDTH + 3);
+    test_density_connections_and_battery(pixels, SCOPE_WIDTH + 3);
     test_external_without_samples(pixels, SCOPE_WIDTH + 3);
     test_trigger_icons(pixels, SCOPE_WIDTH + 3);
     test_lowercase_n(pixels, SCOPE_WIDTH + 3);

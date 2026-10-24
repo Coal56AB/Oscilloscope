@@ -15,6 +15,8 @@ typedef struct {
     int spectrum_enabled;
     unsigned record_samples;
     int roll;
+    int density_enabled;
+    unsigned density_rows;
 } CaptureRequest;
 typedef struct {
     uint64_t blocks, bytes, dropped, overwritten, display_replaced, processing_ns, waveforms;
@@ -33,6 +35,7 @@ CapturePipeline *capture_pipeline_create_zynq(const char *device,
 #endif
 void capture_pipeline_destroy(CapturePipeline *pipeline);
 void capture_pipeline_request(CapturePipeline *pipeline, const CaptureRequest *request);
+/* Single consumer; copies a completed immutable slot without holding settings. */
 int capture_pipeline_frame(CapturePipeline *pipeline, DisplayFrame *frame);
 void capture_pipeline_metrics(CapturePipeline *pipeline, CaptureMetrics *metrics);
 #endif

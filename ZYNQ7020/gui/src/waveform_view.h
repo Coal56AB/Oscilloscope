@@ -13,11 +13,18 @@ typedef struct {
        Return NaN bounds if that interval contains no valid sample. */
     void (*range)(const void *context, size_t first, size_t end, unsigned channel,
                   double *minimum, double *maximum);
+    /* Optional representative value, distinct from a peak-detect envelope. */
+    double (*value)(const void *context, size_t sample, unsigned channel);
 } WaveformSource;
 
 /* Preserve the requested time interval, marking columns outside the record as gaps.
-   Interpolate only when there are fewer samples than columns. */
+   Connect representative samples when expanded; compressed records show bounds. */
 void waveform_view_reduce(const WaveformSource *source, double first, double samples,
                           unsigned channel, double zero_y, double pixels_per_unit,
                           size_t columns, int16_t *representative, int16_t *minimum, int16_t *maximum);
+/* Count original samples, without interpolated hits, envelope filling or blur. */
+void waveform_density_column(const WaveformSource *source, double first, double samples,
+                             unsigned channel, double zero_y, double pixels_per_unit,
+                             size_t columns, size_t column, size_t rows, uint16_t *counts);
+unsigned waveform_density_level(unsigned count, unsigned peak);
 #endif

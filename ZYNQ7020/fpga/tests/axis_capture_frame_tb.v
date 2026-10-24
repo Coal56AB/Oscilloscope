@@ -10,7 +10,7 @@ module axis_capture_frame_tb;
     reg [63:0] held_data, expected;
     reg held_last;
     axis_capture_frame #(.BLOCK_BYTES(128)) dut(
-        clk,resetn,32'd64,32'd200000000,data,valid,input_ready,output_data,keep,output_valid,ready,last);
+        clk,resetn,32'd64,32'd200000000,data,valid,input_ready,output_data,keep,output_valid,ready,last,1'b0);
     always #5 clk=~clk;
     initial begin repeat(3) @(negedge clk); resetn=1; end
     always @(negedge clk) if(resetn) begin
@@ -26,7 +26,7 @@ module axis_capture_frame_tb;
         if(output_valid&&ready) begin
             frame=received/16; offset=received%16;
             case(offset)
-                0: expected=64'h00000003_5043534f;
+                0: expected=64'h00000004_5043534f;
                 1: expected={32'd200000000,32'd64};
                 2: expected=frame;
                 3: expected=frame*32;

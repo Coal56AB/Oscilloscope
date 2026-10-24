@@ -1,6 +1,37 @@
 #include "waveform_view.h"
 #include <limits.h>
 #include <math.h>
+#include <string.h>
+
+unsigned waveform_density_level(unsigned count, unsigned peak)
+{
+    if (!count || !peak) return 0;
+    return peak <= 1 ? 255 : 16 + (count - 1) * 239 / (peak - 1);
+}
+
+void waveform_density_column(const WaveformSource *source, double first, double samples,
+                             unsigned channel, double zero_y, double pixels_per_unit,
+                             size_t columns, size_t column, size_t rows, uint16_t *counts)
+{
+    size_t i, end;
+    double left, right;
+    memset(counts, 0, rows * sizeof(*counts));
+    if (!source || !source->range || !columns || samples <= 0) return;
+    left = first + column * samples / columns;
+    right = first + (column + 1) * samples / columns;
+    i = (size_t)ceil(fmax(0, fmin(left, source->samples)));
+    end = (size_t)ceil(fmax(0, fmin(right, source->samples)));
+    for (; i < end; ++i) {
+        double value, unused, position;
+        size_t y;
+        if(source->value)value=source->value(source->context,i,channel);
+        else source->range(source->context, i, i + 1, channel, &value, &unused);
+        position = zero_y - value * pixels_per_unit;
+        if (!isfinite(position) || position < 0 || position >= rows) continue;
+        y = (size_t)position;
+        if (counts[y] < UINT16_MAX) ++counts[y];
+    }
+}
 
 static int16_t pixel_y(double value, double zero, double scale)
 {
@@ -29,14 +60,20 @@ void waveform_view_reduce(const WaveformSource *source, double first, double sam
         position = fmax(0.0, fmin(left, source->samples - 1.0));
         a = (size_t)floor(position);
         if (step < 1.0) {
-            double next_low, next_high, fraction = position - a;
+            /* Connect representative samples without stretching their peak
+               buckets into the unknown interval between sample positions. */
             size_t next = a + 1 < source->samples ? a + 1 : a;
-            source->range(source->context, a, a + 1, channel, &low, &high);
-            source->range(source->context, next, next + 1, channel, &next_low, &next_high);
-            if (!isfinite(next_low)) next_low = low;
-            low += (next_low - low) * fraction;
-            high = low;
-            value = low;
+            double next_value, fraction = position - a;
+            if (source->value) {
+                value = source->value(source->context, a, channel);
+                next_value = source->value(source->context, next, channel);
+            } else {
+                source->range(source->context, a, a + 1, channel, &value, &high);
+                source->range(source->context, next, next + 1, channel, &next_value, &high);
+            }
+            if (!isfinite(next_value)) next_value = value;
+            value += (next_value - value) * fraction;
+            low = high = value;
         } else {
             size_t end = (size_t)floor(fmin(right, source->samples));
             if (end <= a) end = a + 1;
@@ -44,7 +81,8 @@ void waveform_view_reduce(const WaveformSource *source, double first, double sam
             source->range(source->context, a, end, channel, &low, &high);
             {
                 double unused;
-                source->range(source->context, a, a + 1, channel, &value, &unused);
+                if(source->value)value=source->value(source->context,a,channel);
+                else source->range(source->context, a, a + 1, channel, &value, &unused);
                 if (!isfinite(value)) value = (low + high) * 0.5;
             }
         }

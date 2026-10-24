@@ -54,6 +54,7 @@ net reset_adc/peripheral_aresetn adc/resetn
 net capture_gpio/gpio_io_o capture_config/control
 net capture_config/enable adc/enable
 net capture_config/clock_shift adc/clock_shift
+net capture_decimate/peak_detect capture_frame/peak_detect
 net capture_config/group_divider capture_decimate/group_divider
 net capture_config/sample_rate capture_frame/sample_rate
 net capture_config/payload_bytes capture_frame/payload_bytes
