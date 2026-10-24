@@ -570,6 +570,23 @@ static void connected_projection_test(void)
             assert(!coverage[x*480+99] && !coverage[x*480+301]);
         }
     }
+    /* The dominant trace stays at full brightness on either side of one
+       sample per pixel and under compression; rare paths remain weaker. */
+    memset(data,100,sizeof(data));
+    {
+        const double scales[]={512,1023,1024,1025,2048,8192,32768};
+        unsigned scale;
+        for(scale=0;scale<sizeof(scales)/sizeof(scales[0]);++scale){
+            assert(waveform_view_connect_u8(data,sizeof(data),1,positions,0,scales[scale],
+                                            1024,480,coverage));
+            for(x=0;x<1024;++x)assert(coverage[x*480+200]==255);
+        }
+        data[7]=200;
+        assert(waveform_view_connect_u8(data,sizeof(data),1,positions,0,8192,1024,480,coverage));
+        assert(coverage[200]==255);
+        assert(coverage[250]>=96 && coverage[250]<coverage[200]);
+        assert(!coverage[301]);
+    }
     /* A resolved period keeps its two crossings; drawing cannot invent a
        lower-frequency envelope when the view is shifted by a fractional sample. */
     for(i=0;i<sizeof(data);++i)data[i]=i%128<64?0:200;

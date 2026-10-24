@@ -75,7 +75,7 @@ int waveform_view_connect_u8(const uint8_t *data, size_t count, size_t stride,
         level=0;
         for(y=0;y<rows;++y){
             level+=difference[y];
-            if(level)coverage[x*rows+y]=(uint8_t)(samples<=columns?255:64+level*96/peak);
+            if(level)coverage[x*rows+y]=(uint8_t)(level==peak?255:96+159*sqrt((double)level/peak));
         }
     }
     free(difference);
