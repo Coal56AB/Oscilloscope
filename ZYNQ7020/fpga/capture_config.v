@@ -1,13 +1,17 @@
 // Software changes configuration only while acquisition is disabled.
 module capture_config(input wire clk, input wire [31:0] control,
     output wire enable, output reg [31:0] sample_rate,
-    output reg [31:0] group_divider, output wire [31:0] payload_bytes);
-    (* ASYNC_REG="TRUE" *) reg [31:0] sync1, sync2;
+    output reg [31:0] group_divider, output wire [31:0] payload_bytes,
+    output wire [2:0] clock_shift);
+    (* ASYNC_REG="TRUE" *) reg [31:0] sync1=32'h3000, sync2=32'h3000;
     assign enable=control[0];
     assign payload_bytes=32'd8 << sync2[10:6];
+    assign clock_shift=sync2[13:11];
     always @(posedge clk) begin
         sync1<=control; sync2<=sync1;
-        case (sync2[5:1])
+        if (clock_shift!=0) begin
+            sample_rate<=200000000 >> clock_shift; group_divider<=0;
+        end else case (sync2[5:1])
             0: begin sample_rate<=200000000; group_divider<=0; end
             1: begin sample_rate<=100000000; group_divider<=1; end
             2: begin sample_rate<=50000000; group_divider<=2; end

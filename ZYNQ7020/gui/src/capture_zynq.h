@@ -15,6 +15,7 @@ int zynq_capture_open(ZynqCaptureSource *source, const char *device, const doubl
                       const double zero_code[2]);
 /* 1 leased block, 0 timeout, -1 error. The driver owns the mapping. */
 int zynq_capture_configure(ZynqCaptureSource *source, unsigned rate, unsigned shift);
+int zynq_capture_test_clock(ZynqCaptureSource *source, unsigned shift, unsigned payload_shift);
 int zynq_capture_acquire(ZynqCaptureSource *source, CaptureBuffer *buffer, unsigned timeout_ms);
 int zynq_capture_ready(ZynqCaptureSource *source);
 int zynq_capture_release(ZynqCaptureSource *source);

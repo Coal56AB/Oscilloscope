@@ -31,7 +31,9 @@ int main(void)
     int receiver=status_receiver_open(path),sender=status_sender_open();assert(receiver>=0&&sender>=0);
     assert(status_receiver_open(path)<0&&errno==EADDRINUSE);
     StatusPacket p,received;status_packet_init(&p);p.pid=123;p.stage=STATUS_READY;
+    p.source=STATUS_ADC;p.adc_valid=1;p.adc_code[0]=0;p.adc_code[1]=255;p.adc_age_ms=17;
     assert(status_send(sender,path,&p));assert(status_receive(receiver,&received)==1&&received.pid==123);
+    assert(received.adc_valid && received.adc_code[0]==0 && received.adc_code[1]==255 && received.adc_age_ms==17);
     assert(status_receive(receiver,&received)<0);
     close(receiver);unlink(path);assert(!status_send(sender,path,&p)); /* restart is harmless */
     receiver=status_receiver_open(path);assert(receiver>=0);

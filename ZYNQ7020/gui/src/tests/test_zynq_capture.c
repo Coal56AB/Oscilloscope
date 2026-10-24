@@ -3,6 +3,7 @@
 #endif
 #include "capture_zynq.h"
 #include "capture_pipeline.h"
+#include "capture_selftest.h"
 #include <assert.h>
 #include <errno.h>
 #include <math.h>
@@ -13,9 +14,14 @@
 #include <sys/mman.h>
 
 static uint8_t memory[4 * 4096];
-static atomic_uint leased, available, counter, releases;
+static atomic_uint leased, available, counter, releases, configurations;
 static atomic_int fail_poll, bad_offset, bad_info;
 static atomic_uint sample_rate = 200000000;
+static atomic_uint adc_pair = 42 | (42 << 8);
+static atomic_int poison_release;
+static int selftest_mode, selftest_fail_shift=-1, selftest_rail=-1;
+static unsigned selftest_clocks, selftest_progress_count;
+static unsigned selftest_poll_fail_rate;
 int __wrap_open(const char *path, int flags, ...) { (void)flags; assert(!strcmp(path,"/dev/test-adc")); return 42; }
 int __wrap_close(int fd) { assert(fd==42); atomic_store(&leased,0); return 0; }
 void *__wrap_mmap(void *addr, size_t length, int protection, int flags, int fd, long offset)
@@ -27,6 +33,7 @@ int __wrap_munmap(void *addr, size_t length) { assert(addr==memory&&length==size
 int __wrap_poll(struct pollfd *p, unsigned long count, int timeout)
 {
     assert(count==1&&p->fd==42);
+    if(selftest_mode && atomic_load(&sample_rate)==selftest_poll_fail_rate){p->revents=POLLERR;return 1;}
     if (atomic_load(&fail_poll)) { p->revents=POLLERR; return 1; }
     if (atomic_load(&available)) { p->revents=POLLIN; return 1; }
     scope_sleep_ms(timeout>5?5:timeout); return 0;
@@ -36,7 +43,7 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
     va_list args; void *arg;
     assert(fd==42); va_start(args,command); arg=va_arg(args,void *); va_end(args);
     if(command==OSC_CAPTURE_GET_INFO) {
-        struct osc_capture_info info={OSC_CAPTURE_ABI,3,OSC_CAPTURE_SAMPLE_FORMAT,1,4,4096,sizeof(memory)};
+        struct osc_capture_info info={OSC_CAPTURE_ABI,OSC_CAPTURE_REGISTER_VERSION,OSC_CAPTURE_SAMPLE_FORMAT,1,4,4096,sizeof(memory)};
         if(atomic_load(&bad_info))info.buffers=1000;
         *(struct osc_capture_info *)arg=info;
     } else if(command==OSC_CAPTURE_CONFIGURE) {
@@ -44,6 +51,14 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
         assert(!atomic_load(&leased));
         sample_rate=osc_capture_rate(config->rate_index); assert(sample_rate);
         atomic_store(&counter,0);
+        atomic_fetch_add(&configurations,1);
+    } else if(command==OSC_CAPTURE_TEST_CLOCK) {
+        const struct osc_capture_test_clock *config=arg;
+        assert(!atomic_load(&leased) && config->shift<=6 && config->payload_shift==17);
+        assert(config->shift==6-selftest_clocks);
+        if((int)config->shift==selftest_fail_shift){errno=EIO;return -1;}
+        sample_rate=200000000u>>config->shift;
+        atomic_store(&counter,0);atomic_store(&available,4);++selftest_clocks;
     } else if(command==OSC_CAPTURE_DEQUEUE) {
         struct osc_capture_block *b=arg;
         unsigned i,mask=atomic_load(&leased),sequence;
@@ -55,10 +70,15 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
         b->sequence=sequence;b->sample_rate_hz=sample_rate;b->first_sample=(uint64_t)sequence*128;
         b->trigger_sample=CAPTURE_NO_TRIGGER;b->hardware_ns=b->first_sample*5;
         memset(memory+i*4096+64,42,256);
+        memory[i*4096+64+254]=(uint8_t)atomic_load(&adc_pair);
+        memory[i*4096+64+255]=(uint8_t)(atomic_load(&adc_pair)>>8);
+        if(selftest_mode && selftest_rail>=0)
+            for(unsigned pos=(unsigned)selftest_rail;pos<256;pos+=4)memory[i*4096+64+pos]=255;
     } else if(command==OSC_CAPTURE_RELEASE) {
         unsigned index=*(uint32_t *)arg;
         assert(index<4&&(atomic_fetch_and(&leased,~(1u<<index))&(1u<<index)));
         atomic_fetch_add(&releases,1);
+        if(atomic_load(&poison_release))memset(memory+index*4096+64,238,256);
     } else assert(0);
     return 0;
 }
@@ -68,6 +88,164 @@ static int wait_frame(CapturePipeline *p, DisplayFrame *f)
     for(i=0;i<100;++i){if(capture_pipeline_frame(p,f))return 1;scope_sleep_ms(5);}
     return 0;
 }
+static void expect_no_frame(CapturePipeline *p, unsigned completed)
+{
+    DisplayFrame frame;
+    unsigned i;
+    for (i=0;i<100 && atomic_load(&releases)<completed;++i) {
+        assert(!capture_pipeline_frame(p,&frame));
+        scope_sleep_ms(5);
+    }
+    assert(atomic_load(&releases)>=completed);
+    scope_sleep_ms(50);
+    assert(!capture_pipeline_frame(p,&frame));
+}
+static void complete_force_frame_test(void)
+{
+    double gain[2]={0.004,0.004},zero[2]={128,128};
+    CaptureRequest request={0};
+    CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);
+    DisplayFrame frame;
+    unsigned configured=atomic_load(&configurations),completed=atomic_load(&releases);
+    assert(p);
+    request.duration_seconds=0.256;request.record_samples=512;request.force_sequence=1;
+    request.zero_y[0]=request.zero_y[1]=200;
+    request.pixels_per_volt[0]=request.pixels_per_volt[1]=100;
+    capture_pipeline_request(p,&request);
+    for(unsigned i=0;i<100&&atomic_load(&configurations)==configured;++i)scope_sleep_ms(5);
+    assert(atomic_load(&configurations)>configured&&atomic_load(&sample_rate)==1000);
+    /* With the marker at the right edge, FORCE needs the marker sample as
+       well as all 256 preceding samples of the visible interval. */
+    atomic_store(&available,2);expect_no_frame(p,completed+2);
+    atomic_store(&available,1);assert(wait_frame(p,&frame));
+    for(unsigned ch=0;ch<2;++ch)for(unsigned x=0;x<SCOPE_PLOT_WIDTH;++x)
+        assert(frame.y[ch][x]!=INT16_MIN);
+    capture_pipeline_destroy(p);assert(!atomic_load(&leased));
+}
+static void complete_auto_frame_test(double seconds, int zoom)
+{
+    double gain[2]={0.004,0.004},zero[2]={128,128};
+    CaptureRequest request={0};
+    DisplayFrame frame;
+    CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);
+    unsigned rate, blocks, completed, configured=atomic_load(&configurations);
+    assert(p);
+    request.running=1;request.duration_seconds=seconds;
+    if(zoom){request.overview_duration_seconds=seconds;request.duration_seconds/=4;}
+    request.record_samples=1000;request.pan_fraction=0.5;request.trigger_voltage=100;
+    request.zero_y[0]=request.zero_y[1]=200;
+    request.pixels_per_volt[0]=request.pixels_per_volt[1]=100;
+    capture_pipeline_request(p,&request);
+    for(unsigned i=0;i<100&&atomic_load(&configurations)==configured;++i)scope_sleep_ms(5);
+    assert(atomic_load(&configurations)>configured);
+    rate=atomic_load(&sample_rate);
+    blocks=(unsigned)ceil(seconds*rate/128);
+    assert(blocks>1);
+    completed=atomic_load(&releases);
+    atomic_store(&available,blocks-1);
+    expect_no_frame(p,completed+blocks-1);
+    atomic_store(&available,1);assert(wait_frame(p,&frame));
+    assert(frame.view_samples>=(size_t)ceil(request.duration_seconds*rate));
+    assert(frame.view_samples<=(size_t)ceil(request.duration_seconds*rate)+1);
+    for(unsigned ch=0;ch<2;++ch)for(unsigned x=0;x<SCOPE_PLOT_WIDTH;++x)
+        assert(frame.y[ch][x]!=INT16_MIN);
+    /* A discontinuity must accumulate a complete interval again. */
+    atomic_fetch_add(&counter,100);
+    completed=atomic_load(&releases);
+    atomic_store(&available,blocks-1);
+    expect_no_frame(p,completed+blocks-1);
+    atomic_store(&available,1);assert(wait_frame(p,&frame));
+    assert(frame.view_samples>=(size_t)ceil(request.duration_seconds*rate));
+    assert(frame.view_samples<=(size_t)ceil(request.duration_seconds*rate)+1);
+    if(!zoom&&seconds==1.0) {
+        /* Widening a live sweep must not publish the shorter retained record. */
+        configured=atomic_load(&configurations);
+        request.duration_seconds=2*seconds;
+        capture_pipeline_request(p,&request);
+        for(unsigned i=0;i<100&&atomic_load(&configurations)==configured;++i)scope_sleep_ms(5);
+        assert(atomic_load(&configurations)>configured);
+        rate=atomic_load(&sample_rate);
+        blocks=(unsigned)ceil(request.duration_seconds*rate/128);
+        completed=atomic_load(&releases);
+        atomic_store(&available,blocks-1);
+        expect_no_frame(p,completed+blocks-1);
+        atomic_store(&available,1);assert(wait_frame(p,&frame));
+        assert(frame.view_samples>=(size_t)ceil(request.duration_seconds*rate));
+        assert(frame.view_samples<=(size_t)ceil(request.duration_seconds*rate)+1);
+        for(unsigned pan=0;pan<2;++pan) {
+            request.running=0;request.pan_fraction=pan;++request.force_sequence;
+            capture_pipeline_request(p,&request);
+            atomic_store(&available,1);assert(wait_frame(p,&frame));
+            assert(frame.trigger_sample!=CAPTURE_NO_TRIGGER);
+            for(unsigned ch=0;ch<2;++ch)for(unsigned x=0;x<SCOPE_PLOT_WIDTH;++x)
+                assert(frame.y[ch][x]!=INT16_MIN);
+        }
+    }
+    capture_pipeline_destroy(p);assert(!atomic_load(&leased));
+}
+static void selftest_progress(unsigned hz,unsigned step,void *context)
+{
+    assert(context==&selftest_clocks && step==selftest_progress_count);
+    assert(hz==(100000000u>>(6-step)));++selftest_progress_count;
+}
+static void startup_capture_test(void)
+{
+    char error[64]={0};
+    selftest_mode=1;selftest_clocks=selftest_progress_count=0;
+    assert(capture_selftest("/dev/test-adc",selftest_progress,&selftest_clocks,error,sizeof(error)));
+    assert(selftest_clocks==7 && selftest_progress_count==7 && !*error && !atomic_load(&leased));
+    selftest_clocks=selftest_progress_count=0;selftest_poll_fail_rate=100000000;
+    assert(!capture_selftest("/dev/test-adc",selftest_progress,&selftest_clocks,error,sizeof(error)));
+    assert(selftest_clocks==6 && strstr(error,"DMA ERROR / 50 MHz") && !atomic_load(&leased));
+    selftest_poll_fail_rate=0;
+    selftest_clocks=selftest_progress_count=0;selftest_fail_shift=2;
+    assert(!capture_selftest("/dev/test-adc",selftest_progress,&selftest_clocks,error,sizeof(error)));
+    assert(selftest_clocks==4 && strstr(error,"25 MHz") && !atomic_load(&leased));
+    selftest_fail_shift=-1;selftest_clocks=selftest_progress_count=0;selftest_rail=3;
+    assert(!capture_selftest("/dev/test-adc",selftest_progress,&selftest_clocks,error,sizeof(error)));
+    assert(selftest_clocks==1 && strstr(error,"CH2-B AT 255") && strstr(error,"1.5625 MHz"));
+    assert(!atomic_load(&leased));selftest_mode=0;selftest_rail=-1;
+}
+
+static void adc_level_test(void)
+{
+    const double gain[2]={0.004,0.004},zero[2]={128,128};
+    CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);
+    CaptureRequest request={0};
+    CaptureMetrics metrics;
+    DisplayFrame frame;
+    unsigned completed=atomic_load(&releases);
+    assert(p);
+    capture_pipeline_metrics(p,&metrics);
+    assert(!metrics.adc_valid && metrics.adc_age_ms==UINT64_MAX);
+    request.running=1;request.duration_seconds=1;request.record_samples=1000;
+    request.pan_fraction=0.5;
+    request.debug=(CaptureDebug){1,{SIGNAL_WAVE_SINE,SIGNAL_WAVE_SQUARE},1};
+    atomic_store(&adc_pair,255u<<8);atomic_store(&poison_release,1);
+    capture_pipeline_request(p,&request);atomic_store(&available,1);
+    expect_no_frame(p,completed+1);
+    capture_pipeline_metrics(p,&metrics);
+    assert(metrics.adc_valid && metrics.adc_code[0]==0 && metrics.adc_code[1]==255);
+    assert(metrics.adc_age_ms<1000 && !capture_pipeline_frame(p,&frame));
+    /* A new real pair replaces the diagnostic value even with simulation off. */
+    request.debug.enabled=0;
+    atomic_store(&adc_pair,127u|(128u<<8));
+    capture_pipeline_request(p,&request);atomic_store(&available,1);
+    expect_no_frame(p,completed+2);
+    capture_pipeline_metrics(p,&metrics);
+    assert(metrics.adc_valid && metrics.adc_code[0]==127 && metrics.adc_code[1]==128);
+    atomic_store(&fail_poll,1);
+    for(unsigned i=0;i<100;++i){
+        capture_pipeline_metrics(p,&metrics);
+        if(metrics.source_error)break;
+        scope_sleep_ms(5);
+    }
+    assert(metrics.source_error && !metrics.adc_valid);
+    capture_pipeline_destroy(p);assert(!atomic_load(&leased));
+    atomic_store(&fail_poll,0);atomic_store(&poison_release,0);
+    atomic_store(&adc_pair,42u|(42u<<8));
+}
+
 int main(void)
 {
     ZynqCaptureSource source;
@@ -98,6 +276,7 @@ int main(void)
 
     pipeline=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);assert(pipeline);
     request.duration_seconds=1e-6;request.pan_fraction=0.5;request.running=1;
+    request.record_samples=200; /* A complete visible interval fits in the fixture block. */
     request.zero_y[0]=request.zero_y[1]=200;
     request.pixels_per_volt[0]=request.pixels_per_volt[1]=100;
     request.debug=(CaptureDebug){1,{SIGNAL_WAVE_SQUARE,SIGNAL_WAVE_SINE},1000000};
@@ -105,7 +284,7 @@ int main(void)
     capture_pipeline_request(pipeline,&request);
     scope_sleep_ms(30);assert(!capture_pipeline_frame(pipeline,&frame));
     atomic_store(&available,1);assert(wait_frame(pipeline,&frame));
-    assert(frame.maximum[0]>1.0&&frame.minimum[0]>=0);
+    assert(frame.maximum[0]>1.0&&frame.minimum[0]>=-0.020001);
     sequence=frame.sequence;
     request.running=0;request.pan_fraction=0.25;
     capture_pipeline_request(pipeline,&request);
@@ -122,7 +301,7 @@ int main(void)
     assert(wait_frame(pipeline,&frame)&&frame.sequence==sequence&&frame.maximum[0]>1);
     request.running=1;capture_pipeline_request(pipeline,&request);
     atomic_store(&available,1);assert(wait_frame(pipeline,&frame));
-    assert(frame.sequence>sequence&&frame.maximum[0]<0);
+    assert(frame.sample_rate_hz==50000000&&frame.maximum[0]<0);
     request.trigger_mode=1;request.trigger_voltage=100;
     capture_pipeline_request(pipeline,&request);
     atomic_store(&available,1);scope_sleep_ms(30);
@@ -133,12 +312,13 @@ int main(void)
     atomic_store(&available,1);assert(wait_frame(pipeline,&frame));
     assert(frame.trigger_sample!=CAPTURE_NO_TRIGGER);
     request.duration_seconds=0.2e-6;request.running=1;request.trigger_mode=2;request.trigger_voltage=0.2;request.debug.enabled=1;
+    request.debug.frequency_hz=10000000;
     capture_pipeline_request(pipeline,&request);
     atomic_store(&available,2);assert(wait_frame(pipeline,&frame));
     scope_sleep_ms(30);
     assert(atomic_load(&available)==1&&!capture_pipeline_frame(pipeline,&frame));
     request.running=0;capture_pipeline_request(pipeline,&request);
-    /* A 128-sample block can miss the rising edge of the 200-sample period. */
+    /* Rearming SINGLE requires a newly acquired interval. */
     atomic_store(&available,2);
     request.running=1;capture_pipeline_request(pipeline,&request);
     assert(wait_frame(pipeline,&frame)&&frame.trigger_sample!=CAPTURE_NO_TRIGGER);
@@ -199,5 +379,13 @@ int main(void)
         assert(got_rate&&frame.view_samples==20);
     }
     capture_pipeline_destroy(pipeline);assert(!atomic_load(&leased));
+    {
+        const double spans[]={0.1,0.2,0.5,1.0}; /* 10, 20, 50, 100 ms/div. */
+        for(unsigned i=0;i<4;++i)complete_auto_frame_test(spans[i],0);
+        complete_auto_frame_test(1.0,1);
+        complete_force_frame_test();
+    }
+    adc_level_test();
+    startup_capture_test();
     return 0;
 }

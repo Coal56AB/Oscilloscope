@@ -74,7 +74,7 @@ static const struct {
     {"DEBUG", DEMO_MENU_DEBUG}
 #endif
 };
-static const char *debug_labels[] = {"GENERATOR", "LONG PRESS", "DOUBLE CLICK", "SIMULATION"};
+static const char *debug_labels[] = {"GENERATOR", "LONG PRESS", "DOUBLE CLICK", "SIMULATION", "ADC CH1", "ADC CH2"};
 static const char *generator_labels[] = {"CH1 WAVE", "CH2 WAVE", "FREQUENCY"};
 static const char *browse_type_labels[] = {"BMP IMAGES", "CSV WAVES"};
 static const char *channel_labels[] = {"CHANNEL", "COUPLING", "PROBE", "V / DIV", "CALIBRATE"};
@@ -873,7 +873,7 @@ static int menu_item_count(DemoMenu kind)
     if (kind == DEMO_MENU_BROWSE) return DEMO_BROWSE_PAGE;
     if (kind == DEMO_MENU_PC) return 2;
     if (kind == DEMO_MENU_PROCESSING) return 5;
-    if (kind == DEMO_MENU_DEBUG) return 4;
+    if (kind == DEMO_MENU_DEBUG) return 6;
     if (kind == DEMO_MENU_GENERATOR) return 3;
     if (kind == DEMO_MENU_FONT) return SCOPE_FONT_COUNT;
     return 0;
@@ -1108,6 +1108,10 @@ static void refresh_menu(DemoSignal *demo)
         screen->menu_labels[3] = debug_labels[3];
         screen->menu_values[3] = on_off_names[demo->adc_simulation];
         screen->menu_stepper[3] = 1;
+        for (i = 4; i < 6; ++i) {
+            screen->menu_labels[i] = debug_labels[i];
+            screen->menu_values[i] = demo->adc_level_text[i - 4];
+        }
     } else if (demo->menu_kind == DEMO_MENU_GENERATOR) {
         screen->menu_title = "DEMO GENERATOR";
         for (i = 0; i < 3; ++i) {
@@ -1489,6 +1493,8 @@ void demo_signal_init(DemoSignal *demo)
     demo->generator_wave[1] = DEMO_WAVE_SQUARE;
     demo->generator_frequency_index = 12;
     demo->adc_simulation = 1;
+    strcpy(demo->adc_level_text[0], "-");
+    strcpy(demo->adc_level_text[1], "-");
     demo->screen.fft_cursor_x = SCOPE_PLOT_WIDTH / 2;
     demo->screen.fft_cursor_level = 128;
     demo->screen.cursor_a = 240;
@@ -1918,7 +1924,7 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
                   DEMO_MENU_MAIN);
     } else if (demo->menu_kind == DEMO_MENU_DEBUG) {
         if (item == 0) open_menu(demo, DEMO_MENU_GENERATOR, DEMO_MENU_DEBUG);
-        else {
+        else if (item < 4) {
             demo->edit_value = current_menu_value(demo);
             demo->screen.menu_editing = 1;
             update_text(demo, 0);
@@ -2022,6 +2028,7 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
     } else if (demo->menu_kind == DEMO_MENU_PROCESSING) {
         small_choice = 1;
     } else if (demo->menu_kind == DEMO_MENU_DEBUG && index > 0) {
+        if (index >= 4) return DEMO_ACTION_NONE;
         demo->edit_value = clamp(current_menu_value(demo) + (direction < 0 ? -1 : 1),
                                  0, menu_value_count(demo) - 1);
         apply_edit(demo);
@@ -2247,6 +2254,21 @@ void demo_signal_ui_request_browse_delete(DemoSignal *demo, int index)
     demo->screen.browser_delete_confirm = 1;
     demo->screen.browser_delete_choice = 0;
     update_text(demo, 0);
+}
+
+int demo_signal_set_adc_level(DemoSignal *demo, const uint8_t code[2], int valid)
+{
+    char text[2][4] = {{0}};
+    unsigned ch;
+    for (ch = 0; ch < 2; ++ch) {
+        if (valid) snprintf(text[ch], sizeof(text[ch]), "%u", (unsigned)code[ch]);
+        else strcpy(text[ch], "-");
+    }
+    if (!strcmp(text[0], demo->adc_level_text[0]) &&
+        !strcmp(text[1], demo->adc_level_text[1])) return 0;
+    memcpy(demo->adc_level_text, text, sizeof(text));
+    if (demo->menu_kind == DEMO_MENU_DEBUG) refresh_menu(demo);
+    return 1;
 }
 
 void demo_signal_export_wave(const DemoSignal *demo, DemoWaveCapture *wave)

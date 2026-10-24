@@ -1,6 +1,7 @@
 /** @file panel_state.c Масштаб принадлежит STM32; GUI получает итог после переключения. */
 #include "panel_state.h"
 #include "oscill_config.h"
+#include "input_range.h"
 #include <string.h>
 
 /** Автономная отладка действует только при отсутствии команд GUI две секунды. */
@@ -19,8 +20,7 @@ static int standalone(const PanelState *state, uint32_t now_ms)
  */
 uint8_t panel_state_relays(int scale_index)
 {
-  static const uint8_t masks[CONTROL_SCALE_COUNT] = {7U, 7U, 6U, 6U, 6U, 4U};
-  return scale_index >= 0 && scale_index < CONTROL_SCALE_COUNT ? masks[scale_index] : 0U;
+  return (uint8_t)input_range_relays((unsigned)scale_index);
 }
 
 /**

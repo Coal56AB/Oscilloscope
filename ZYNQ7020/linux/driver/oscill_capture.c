@@ -25,7 +25,7 @@
 #define PAYLOAD_BYTES (BLOCK_BYTES - HEADER_BYTES)
 #define MAPPING_BYTES (BUFFERS * BLOCK_BYTES)
 #define GPIO_STATUS 8
-#define PL_ID 0xadc30000
+#define PL_ID 0xadc40000
 
 struct receiver {
     struct miscdevice misc;
@@ -162,7 +162,7 @@ static void stop_session(struct session *s)
     spin_unlock_irqrestore(&s->lock, flags);
     cancel_delayed_work_sync(&s->monitor);
     dmaengine_terminate_sync(s->receiver->chan);
-    writel(0, s->receiver->gpio);
+    writel(s->control, s->receiver->gpio);
     /* terminate resets AXI DMA while the old stream can still be valid.
        S2MM accepts a few beats even with RS=0. Flush those prefetched beats
        after the input/CDC reset has propagated, before queuing a new epoch. */
@@ -181,7 +181,8 @@ static int capture_open(struct inode *inode, struct file *file)
     s = kzalloc(sizeof(*s), GFP_KERNEL);
     if (!s) { atomic_set(&r->busy, 0); return -ENOMEM; }
     s->receiver = r;
-    s->payload_bytes = 8u << 17; s->sample_rate = 200000000; s->control = 17u << 6;
+    s->payload_bytes = 8u << 17; s->sample_rate = 200000000 >> 6;
+    s->control = (17u << 6) | (6u << 11);
     kref_init(&s->ref);
     mutex_init(&s->ioctl_lock);
     spin_lock_init(&s->lock);
@@ -189,7 +190,7 @@ static int capture_open(struct inode *inode, struct file *file)
     INIT_DELAYED_WORK(&s->monitor, monitor);
     s->memory = dma_alloc_coherent(r->chan->device->dev, MAPPING_BYTES, &s->dma, GFP_KERNEL);
     if (!s->memory) { kfree(s); atomic_set(&r->busy, 0); return -ENOMEM; }
-    writel(0, r->gpio);
+    writel(s->control, r->gpio);
     error = dmaengine_slave_config(r->chan, &config);
     if (error) goto fail;
     for (i = 0; i < BUFFERS; i++) {
@@ -248,7 +249,7 @@ static long capture_ioctl(struct file *file, unsigned int command, unsigned long
     struct session *s = file->private_data;
     void __user *user = (void __user *)argument;
     struct osc_capture_info info = {
-        .abi_version = OSC_CAPTURE_ABI, .register_version = 3,
+        .abi_version = OSC_CAPTURE_ABI, .register_version = OSC_CAPTURE_REGISTER_VERSION,
         .sample_format = OSC_CAPTURE_SAMPLE_FORMAT, .bitstream_version = 1,
         .buffers = BUFFERS, .block_bytes = BLOCK_BYTES, .mapping_bytes = MAPPING_BYTES
     };
@@ -259,20 +260,32 @@ static long capture_ioctl(struct file *file, unsigned int command, unsigned long
     unsigned long flags;
     int error = 0;
     if (command == OSC_CAPTURE_GET_INFO) return copy_to_user(user, &info, sizeof(info)) ? -EFAULT : 0;
-    if (command != OSC_CAPTURE_DEQUEUE && command != OSC_CAPTURE_RELEASE && command != OSC_CAPTURE_CONFIGURE) return -ENOTTY;
+    if (command != OSC_CAPTURE_DEQUEUE && command != OSC_CAPTURE_RELEASE &&
+        command != OSC_CAPTURE_CONFIGURE && command != OSC_CAPTURE_TEST_CLOCK) return -ENOTTY;
     if (mutex_lock_interruptible(&s->ioctl_lock)) return -ERESTARTSYS;
-    if (command == OSC_CAPTURE_CONFIGURE) {
+    if (command == OSC_CAPTURE_CONFIGURE || command == OSC_CAPTURE_TEST_CLOCK) {
         struct osc_capture_config config;
-        if (copy_from_user(&config, user, sizeof(config))) { error = -EFAULT; goto unlock; }
-        if (!osc_capture_rate(config.rate_index) || config.payload_shift > 17) { error = -EINVAL; goto unlock; }
+        struct osc_capture_test_clock test;
+        u32 payload_shift, rate, control;
+        if (command == OSC_CAPTURE_CONFIGURE) {
+            if (copy_from_user(&config, user, sizeof(config))) { error = -EFAULT; goto unlock; }
+            if (!osc_capture_rate(config.rate_index) || config.payload_shift > 17) { error = -EINVAL; goto unlock; }
+            payload_shift=config.payload_shift; rate=osc_capture_rate(config.rate_index);
+            control=config.rate_index << 1;
+        } else {
+            if (copy_from_user(&test, user, sizeof(test))) { error = -EFAULT; goto unlock; }
+            if (test.shift>6 || test.payload_shift>17) { error = -EINVAL; goto unlock; }
+            payload_shift=test.payload_shift; rate=200000000 >> test.shift;
+            control=test.shift << 11;
+        }
         spin_lock_irqsave(&s->lock, flags);
         for (i = 0; i < BUFFERS; ++i) if (s->slot[i].state == LEASED) error = -EBUSY;
         spin_unlock_irqrestore(&s->lock, flags);
         if (error) goto unlock;
         stop_session(s);
-        s->payload_bytes = 8u << config.payload_shift;
-        s->sample_rate = osc_capture_rate(config.rate_index);
-        s->control = (config.rate_index << 1) | (config.payload_shift << 6);
+        s->payload_bytes = 8u << payload_shift;
+        s->sample_rate = rate;
+        s->control = control | (payload_shift << 6);
         writel(s->control, s->receiver->gpio);
         s->inflight = 0; s->next_sequence = 0; s->error = false;
         for (i = 0; i < BUFFERS; ++i) {

@@ -5,7 +5,7 @@ cell adc_clock xilinx.com:ip:clk_wiz:6.0 {CONFIG.PRIM_IN_FREQ 100 CONFIG.NUM_OUT
     CONFIG.RESET_TYPE ACTIVE_LOW}
 cell reset_adc xilinx.com:ip:proc_sys_reset:5.0 {}
 cell capture_gpio xilinx.com:ip:axi_gpio:2.0 {CONFIG.C_IS_DUAL 1 CONFIG.C_GPIO_WIDTH 32 \
-    CONFIG.C_ALL_OUTPUTS 1 CONFIG.C_DOUT_DEFAULT 0x00000000 \
+    CONFIG.C_ALL_OUTPUTS 1 CONFIG.C_DOUT_DEFAULT 0x00003000 \
     CONFIG.C_GPIO2_WIDTH 32 CONFIG.C_ALL_INPUTS_2 1}
 create_bd_cell -type module -reference capture_config capture_config
 create_bd_cell -type module -reference axis_capture_decimate capture_decimate
@@ -53,6 +53,7 @@ net adc_clock/locked reset_adc/dcm_locked
 net reset_adc/peripheral_aresetn adc/resetn
 net capture_gpio/gpio_io_o capture_config/control
 net capture_config/enable adc/enable
+net capture_config/clock_shift adc/clock_shift
 net capture_config/group_divider capture_decimate/group_divider
 net capture_config/sample_rate capture_frame/sample_rate
 net capture_config/payload_bytes capture_frame/payload_bytes

@@ -8,6 +8,81 @@
 #include <assert.h>
 #include <fcntl.h>
 
+#ifdef SCOPE_ENABLE_ZYNQ
+static int startup_testing,startup_storage_calls,startup_adc_calls,startup_capture_calls;
+static unsigned startup_ticks,startup_cancel_at;
+static int startup_cancel_event;
+extern Uint32 __real_SDL_GetTicks(void);
+extern void __real_scope_sleep_ms(unsigned milliseconds);
+extern int __real_linux_storage_check(const char *path,int require_device);
+Uint32 __wrap_SDL_GetTicks(void)
+{
+    return startup_testing?startup_ticks:__real_SDL_GetTicks();
+}
+void __wrap_scope_sleep_ms(unsigned milliseconds)
+{
+    if(!startup_testing){__real_scope_sleep_ms(milliseconds);return;}
+    assert(!capture_pipeline && !demo.external_capture);
+    startup_ticks+=milliseconds;
+    if(startup_cancel_at && startup_ticks>=startup_cancel_at){
+        if(startup_cancel_event){SDL_Event event={.type=SDL_QUIT};assert(SDL_PushEvent(&event)==1);}
+        else stop_requested=1;
+    } else if(!startup_cancel_at && startup_ticks>=7000)serial_controls.metrics.connected=1;
+}
+int __wrap_linux_storage_check(const char *path,int require_device)
+{
+    if(!startup_testing)return __real_linux_storage_check(path,require_device);
+    assert(!capture_pipeline && !demo.external_capture && require_device);
+    return ++startup_storage_calls>1;
+}
+int __wrap_capture_selftest(const char *device,CaptureSelftestProgress progress,void *context,
+                           char *error,size_t error_size)
+{
+    assert(startup_testing && !capture_pipeline && !demo.external_capture);
+    assert(!strcmp(device,"/dev/test-startup"));
+    ++startup_adc_calls;
+    if(progress)progress(1562500,0,context);
+    if(startup_adc_calls==1){snprintf(error,error_size,"ADC TIMEOUT");return 0;}
+    return 1;
+}
+CapturePipeline *__wrap_capture_pipeline_create_zynq(const char *device,const double gain[2],const double zero[2])
+{
+    assert(startup_testing && !strcmp(device,"/dev/test-startup"));
+    assert(!capture_pipeline && !demo.external_capture && gain[0]>0 && zero[0]==128);
+    return ++startup_capture_calls>1?(CapturePipeline *)(uintptr_t)1:NULL;
+}
+static void test_startup_retry(void)
+{
+    StartupView view={.status_fd=-1};
+    ControlEvent event={0};
+    unsigned ticks_after;
+    assert(SDL_Init(SDL_INIT_TIMER|SDL_INIT_EVENTS)==0);
+    control_queue_init(&controls);
+    assert(control_queue_push(&controls,&event));
+    demo_signal_init(&demo);capture_pipeline=NULL;stop_requested=0;
+    memset(&serial_controls,0,sizeof(serial_controls));
+    require_data_device=1;startup_ticks=0;startup_testing=1;
+    /* USB appears after the first six-second check. SD, ADC and acquisition
+       creation then each fail once before the same process starts the GUI. */
+    assert(startup_wait_ready(&view,"/dev/test-startup",1));
+    assert(startup_storage_calls==4 && startup_adc_calls==3 && startup_capture_calls==2);
+    assert(capture_pipeline && demo.external_capture && !*startup_error);
+    assert(!control_queue_pop(&controls,&event));
+    ticks_after=startup_ticks;
+    capture_pipeline=NULL;demo_signal_init(&demo);serial_controls.metrics.connected=0;
+    startup_cancel_at=ticks_after+200;startup_cancel_event=0;
+    assert(!startup_wait_ready(&view,"/dev/test-startup",1) && stop_requested);
+    assert(!capture_pipeline && startup_capture_calls==2);
+    /* Closing the window also cancels an indefinite startup wait. */
+    stop_requested=0;startup_cancel_at=startup_ticks+200;startup_cancel_event=1;
+    assert(!startup_wait_ready(&view,"/dev/test-startup",1) && stop_requested);
+    assert(!capture_pipeline && startup_capture_calls==2);
+    startup_testing=startup_cancel_at=startup_cancel_event=stop_requested=require_data_device=0;
+    memset(&serial_controls,0,sizeof(serial_controls));
+    control_queue_destroy(&controls);SDL_Quit();
+}
+#endif
+
 static void test_debug_hold_threshold(void)
 {
     HeldControl held = {0};
@@ -47,6 +122,49 @@ static void test_external_trigger_marker(void)
     assert(demo.screen.trigger_marker_x==400&&demo.screen.zoom_window_start==200&&demo.screen.zoom_window_end==700);
     demo.fft_enabled=0;capture_request_from_demo(&demo,&r);assert(!r.spectrum_enabled);
     demo.fft_enabled=1;capture_request_from_demo(&demo,&r);assert(r.spectrum_enabled);
+}
+
+static void test_adc_vertical_ranges(void)
+{
+    static const double lower[6]={962210,962210,52210,52210,52210,5210};
+    uint8_t codes[8]={118,123,138,133,118,123,138,133};
+    CaptureBuffer buffer={0};
+    CaptureRequest request;
+    CaptureView view={0};
+    DisplayFrame frame;
+    double span[6], voltage[6];
+    unsigned i,ch;
+    demo_signal_init(&demo);demo_signal_begin_external(&demo);
+    buffer.data=codes;buffer.bytes=buffer.capacity=sizeof(codes);
+    buffer.sample_rate_hz=1000;buffer.trigger_sample=CAPTURE_NO_TRIGGER;
+    buffer.zero_code[0]=buffer.zero_code[1]=128;
+    view.samples=sizeof(codes)/2;view.skip_spectrum=1;
+    /* The same ADC codes must shrink on screen within each relay stage,
+       while their voltage remains constant. Exercise the real adapter and projection. */
+    for(i=0;i<6;++i){
+        demo_signal_accept_scale(&demo,0,control_scale_mv(i));
+        demo_signal_accept_scale(&demo,1,control_scale_mv(i));
+        capture_request_from_demo(&demo,&request);
+        for(ch=0;ch<2;++ch){
+            buffer.volts_per_code[ch]=request.adc_volts_per_code[ch];
+            view.pixels_per_volt[ch]=request.pixels_per_volt[ch];
+            view.zero_y[ch]=request.zero_y[ch];
+            assert(fabs(buffer.volts_per_code[ch]-0.004*(1000000+lower[i])/lower[i])<1e-12);
+        }
+        assert(capture_process(&buffer,&view,&frame));
+        /* Upsampling has no envelope at a single column; compare known extrema. */
+        span[i]=fabs(frame.y[0][0]-frame.y[0][SCOPE_PLOT_WIDTH-1]);
+        voltage[i]=frame.maximum[0]-frame.minimum[0];
+    }
+    assert(span[0]>span[1] && fabs(span[0]-2*span[1])<=2);
+    assert(span[2]>span[3] && span[3]>span[4]);
+    assert(fabs(span[2]-2*span[3])<=2 && fabs(span[3]-2*span[4])<=2);
+    assert(voltage[0]==voltage[1] && voltage[2]==voltage[3] && voltage[3]==voltage[4]);
+    demo_signal_set_option(&demo,DEMO_MENU_CH1,2,1);
+    capture_request_from_demo(&demo,&request);
+    assert(fabs(request.adc_volts_per_code[0]-buffer.volts_per_code[0]*10)<1e-12);
+    assert(fabs(request.adc_volts_per_code[0]*request.pixels_per_volt[0]-
+                buffer.volts_per_code[0]*view.pixels_per_volt[0])<1e-12);
 }
 
 static void test_menu_button_hold_release(void)
@@ -214,6 +332,7 @@ int main(void)
 {
     test_debug_hold_threshold();
     test_external_trigger_marker();
+    test_adc_vertical_ranges();
     test_menu_button_hold_release();
     char directory[]="/dev/shm/oscill-export-XXXXXX", path[PATH_MAX];
     struct stat info;
@@ -223,6 +342,9 @@ int main(void)
     expected=malloc(SCOPE_WIDTH*SCOPE_HEIGHT*sizeof(*expected));
     assert(screen_pixels && expected);
     panel_enabled=0;
+#ifdef SCOPE_ENABLE_ZYNQ
+    test_startup_retry();
+#endif
     test_service_power_clock();
     test_console_baud_and_status();
     test_fft_fine_touch();
@@ -255,6 +377,11 @@ int main(void)
     assert(memcmp(screen_pixels,expected,SCOPE_WIDTH*SCOPE_HEIGHT*sizeof(*expected))==0);
     assert(mkdtemp(directory));
     strcpy(application_dir,directory);
+    assert(linux_storage_check(directory,0));
+    assert(!linux_storage_check(directory,1));
+    assert(chmod(directory,0555)==0);
+    assert(!linux_storage_check(directory,0));
+    assert(chmod(directory,0700)==0);
     require_data_device=1;
     act(DEMO_ACTION_SCREENSHOT);
     assert(strcmp(demo.screen.status_message,"NO DATA CARD")==0);

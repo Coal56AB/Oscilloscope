@@ -420,6 +420,36 @@ static void capture_debug_test(void)
         assert(output.flags==input.flags&&output.trigger_sample==input.trigger_sample);
         assert(!memcmp(saved,raw,sizeof(raw))&&memcmp(raw,generated,sizeof(raw)));
     }
+    /* Even an aliased constant carrier has fresh, bounded sample noise.
+       Reprocessing the same completed block must remain deterministic. */
+    debug.wave[0]=SIGNAL_WAVE_SQUARE;debug.wave[1]=SIGNAL_WAVE_SINE;
+    debug.frequency_hz=input.sample_rate_hz;
+    assert(capture_debug_replace(&input,&output,&debug));
+    {
+        unsigned different[2]={0};
+        for(size_t i=0;i<input.bytes/2;++i) {
+            assert(generated[2*i]>=127&&generated[2*i]<=129);
+            assert(generated[2*i+1]>=205&&generated[2*i+1]<=207);
+            for(unsigned ch=0;ch<2;++ch)different[ch]+=generated[2*i+ch]!=generated[ch];
+        }
+        assert(different[0]>100&&different[1]>100);
+    }
+    memcpy(saved,generated,sizeof(saved));
+    assert(capture_debug_replace(&input,&output,&debug)&&!memcmp(saved,generated,sizeof(saved)));
+    ++input.sequence;
+    assert(capture_debug_replace(&input,&output,&debug)&&memcmp(saved,generated,sizeof(saved)));
+    input.bytes=6;input.trigger_sample=CAPTURE_NO_TRIGGER;
+    memset(generated,0x5a,sizeof(generated));
+    assert(capture_debug_replace(&input,&output,&debug));
+    assert(generated[4]>=127&&generated[4]<=129&&generated[5]>=205&&generated[5]<=207);
+    for(size_t i=6;i<sizeof(generated);++i)assert(generated[i]==0x5a);
+    input.bytes=sizeof(raw);
+    debug.wave[0]=SIGNAL_WAVE_NOISE;
+    assert(capture_debug_replace(&input,&output,&debug));
+    for(size_t i=0;i<input.bytes/2;++i) {
+        assert(generated[2*i]==128+generator_noise_code((uint32_t)input.sequence,input.first_sample+i,0)%61);
+        assert(generated[2*i+1]>=205&&generated[2*i+1]<=207);
+    }
     debug.wave[0]=debug.wave[1]=SIGNAL_WAVE_NOISE;
     debug.offset_fraction[0]=0.17;debug.offset_fraction[1]=0.5;
     assert(capture_debug_replace(&input,&output,&debug));

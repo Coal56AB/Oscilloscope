@@ -155,6 +155,7 @@ typedef struct {
 /* Pixels use 0x00RRGGBB, with stride measured in pixels. */
 void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen);
 void scope_update_render(uint32_t *pixels, int stride, const char *phase, unsigned percent);
+void scope_startup_render(uint32_t *pixels, int stride, const char *phase, unsigned percent, int failed);
 int scope_screen_fft_level_at(const ScopeScreen *screen, int y);
 int scope_screen_cursor_measurement_width(const ScopeScreen *screen);
 void scope_screen_cursor_measurement_bounds(const ScopeScreen *screen, int *x, int *y,

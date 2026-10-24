@@ -10,8 +10,9 @@ module ad9288_input_tb;
     integer written=0, read=0;
     integer count_a=0, count_b=0, received=0;
     reg passed=0;
+    reg [2:0] clock_shift=0;
     ad9288_input dut(encode_clk,sample_clk,resetn,enable,a,b,a+8'd64,b+8'd64,
-        clk_a,clk_b,data,valid,input_ready,stream_resetn,overflow);
+        clk_a,clk_b,data,valid,input_ready,stream_resetn,overflow,clock_shift);
     // Exercise the real IP reset latency, not an always-ready receiver.
     adc_width_test width_converter(.aclk(sample_clk), .aresetn(stream_resetn),
         .s_axis_tdata(data), .s_axis_tvalid(valid), .s_axis_tready(input_ready),

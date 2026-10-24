@@ -32,7 +32,7 @@ int status_model_receive(StatusModel *m, const void *data, size_t size, uint64_t
     if (p.magic!=STATUS_MAGIC || p.version!=STATUS_VERSION || p.size!=sizeof(p) ||
         p.stage>STATUS_FAILED || p.source>STATUS_ADC || p.running>1 || p.pipeline>1 ||
         p.panel < -1 || p.panel>1 || p.touch < -1 || p.touch>1 ||
-        p.stm_temperature_valid>1 || (p.stm_temperature_valid &&
+        p.adc_valid>1 || p.stm_temperature_valid>1 || (p.stm_temperature_valid &&
         (p.stm_temperature_mc < -40000 || p.stm_temperature_mc > 125000)) ||
         !memchr(p.error,0,sizeof(p.error))) return 0;
     if (p.stage==STATUS_STARTING && (!m->have_gui || p.pid!=m->gui.pid || m->gui.stage!=STATUS_STARTING))
@@ -107,6 +107,16 @@ void status_model_lines(const StatusModel *m, const StatusSystem *s, uint64_t no
     int live=m->have_gui && p->stage==STATUS_READY && now-m->received_ms<=STATUS_HEARTBEAT_MS;
     int page=m->page;
     memset(rows,0,8*22);
+    if (m->have_gui && ((p->stage==STATUS_STARTING && *p->error) ||
+        (p->stage==STATUS_FAILED && !p->pipeline))) {
+        const char *message=*p->error?p->error:"STARTUP ERROR";
+        line(rows,0,"%s",p->stage==STATUS_FAILED?"STARTUP FAILED":"STARTUP CHECK");
+        line(rows,2,"%.21s",message);
+        if(strlen(message)>21)line(rows,3,"%.21s",message+21);
+        if(strlen(message)>42)line(rows,4,"%.21s",message+42);
+        line(rows,7,"%s",p->stage==STATUS_FAILED?"GUI NOT STARTED":"PLEASE WAIT");
+        return;
+    }
     if (page<0 || (size_t)page>=status_page_count(s)) page=0;
     if (page==STATUS_GUI_PAGE) {
         line(rows,0,"1 GUI / HDMI");
@@ -120,6 +130,11 @@ void status_model_lines(const StatusModel *m, const StatusSystem *s, uint64_t no
         line(rows,0,"2 CAPTURE");
         line(rows,1,"SOURCE: %s",live?source[p->source]:"-");
         line(rows,2,"STATE: %s",live?(p->running?"RUN":"STOP"):"-");
+        if (p->source==STATUS_ADC) {
+            if (p->adc_valid && !p->source_error && sample_current(m,p->adc_age_ms,now))
+                line(rows,3,"CH1:%u CH2:%u",(unsigned)p->adc_code[0],(unsigned)p->adc_code[1]);
+            else line(rows,3,"CH1:- CH2:-");
+        }
         if (p->source==STATUS_DEMO) {
             line(rows,4,"DEMO SIGNAL");
         } else if (!p->pipeline) {

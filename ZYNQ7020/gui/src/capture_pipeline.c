@@ -22,6 +22,7 @@ struct CapturePipeline {
     unsigned revision, arm_revision;
     int stop, have_frame, source_error;
     uint64_t bytes, display_replaced, processing_ns, waveforms;
+    uint64_t adc_sample_ns;
     int hardware;
 #ifdef SCOPE_ENABLE_ZYNQ
     ZynqCaptureSource zynq;
@@ -86,6 +87,10 @@ static void process_frame(CapturePipeline *p, const CaptureBuffer *b,
     double samples = request->duration_seconds * b->sample_rate_hz;
     double base_samples = fmax(request->overview_duration_seconds, request->duration_seconds) * b->sample_rate_hz;
     double base_first;
+    /* A live sweep is published as a whole interval, including after a scale
+       change that can no longer be rendered from the retained record. */
+    if (p->hardware && request->running && !request->roll && b->bytes / 2 < ceil(base_samples))
+        return;
     memset(&view, 0, sizeof(view));
     view.display_samples = samples < 1 ? 1 : samples;
     base_first = ((double)(b->bytes / 2) - base_samples) * request->pan_fraction;
@@ -197,7 +202,9 @@ static void hardware_worker(void *context)
                 capture_history_init(&history, p->storage[0], depth);
                 expected = next_trigger = last_display = 0; failed = 0;
             }
-            scope_mutex_lock(&p->mutex); p->source_error = failed; scope_mutex_unlock(&p->mutex);
+            scope_mutex_lock(&p->mutex);
+            p->source_error = failed; p->adc_sample_ns = 0;
+            scope_mutex_unlock(&p->mutex);
         }
         if (!failed && (force || (request.running && (request.trigger_mode != 2 || single_arm != arm)))) {
             CaptureBuffer received;
@@ -209,6 +216,11 @@ static void hardware_worker(void *context)
                 if (!drained) batch_started = started;
                 scope_mutex_lock(&p->mutex);
                 ++p->hardware_metrics.blocks;
+                /* Read the actual ADC pair while this DMA block is leased,
+                   before DEBUG replaces samples or history trims the block. */
+                p->hardware_metrics.adc_code[0] = received.data[received.bytes - 2];
+                p->hardware_metrics.adc_code[1] = received.data[received.bytes - 1];
+                p->adc_sample_ns = started;
                 if (received.sequence > expected) p->hardware_metrics.dropped += received.sequence - expected;
                 p->bytes += received.bytes;
                 scope_mutex_unlock(&p->mutex);
@@ -237,14 +249,17 @@ static void hardware_worker(void *context)
                 if ((force || request.trigger_mode != 0 || drained >= 8 ||
                      scope_clock_ns() - batch_started >= 10000000 || !zynq_capture_ready(&p->zynq)) &&
                     (force || request.trigger_mode != 0 || revision != processed_revision || started - last_display >= 40000000)) {
-                    int triggered = 0;
+                    int triggered = 0, complete;
+                    double span, pre, post;
                     drained = 0;
                     capture_history_snapshot(&history, &candidate);
+                    span = fmax(request.duration_seconds, request.overview_duration_seconds) * candidate.sample_rate_hz;
+                    pre = ceil(span * (1.0 - request.pan_fraction));
+                    post = ceil(span * request.pan_fraction);
+                    complete = request.roll || (candidate.bytes / 2 >= pre + post &&
+                        (!force || candidate.bytes / 2 > pre));
                     if (!request.roll) {
-                        double span = fmax(request.duration_seconds, request.overview_duration_seconds) * candidate.sample_rate_hz;
-                        double pre = ceil(span * (1.0 - request.pan_fraction));
-                        double post = ceil(span * request.pan_fraction);
-                        if (candidate.bytes / 2 >= pre + post) {
+                        if (complete) {
                             CaptureBuffer search = candidate;
                             uint64_t first = candidate.first_sample + (uint64_t)pre;
                             if (first < next_trigger) first = next_trigger;
@@ -253,14 +268,20 @@ static void hardware_worker(void *context)
                                 request.trigger_voltage, first, &candidate.trigger_sample);
                         }
                     }
-                    if (force) {
-                        candidate.trigger_sample = candidate.first_sample + candidate.bytes / 4;
+                    if (force && complete) {
+                        size_t anchor = candidate.bytes / 4;
+                        if (!request.roll) {
+                            if (anchor < pre) anchor = (size_t)pre;
+                            if (anchor > candidate.bytes / 2 - post)
+                                anchor = candidate.bytes / 2 - (size_t)post;
+                        }
+                        candidate.trigger_sample = candidate.first_sample + anchor;
                         triggered = 1; forced = request.force_sequence;
                     }
                     scope_mutex_lock(&p->mutex);
                     p->hardware_metrics.waiting = !triggered && request.trigger_mode != 0;
                     scope_mutex_unlock(&p->mutex);
-                    if (triggered || request.trigger_mode == 0) {
+                    if (complete && (triggered || request.trigger_mode == 0)) {
                         CaptureBuffer swap = retained;
                         retained = candidate; candidate = swap;
                         have_retained = fresh = 1;
@@ -440,5 +461,7 @@ void capture_pipeline_metrics(CapturePipeline *p, CaptureMetrics *m)
     m->processing_ns = p->processing_ns;
     m->waveforms = p->waveforms;
     m->source_error = p->source_error;
+    m->adc_valid = p->hardware && p->adc_sample_ns && !p->source_error;
+    m->adc_age_ms = m->adc_valid ? (scope_clock_ns() - p->adc_sample_ns) / 1000000 : UINT64_MAX;
     scope_mutex_unlock(&p->mutex);
 }

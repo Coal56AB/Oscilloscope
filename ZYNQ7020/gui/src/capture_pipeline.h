@@ -21,6 +21,9 @@ typedef struct {
     size_t occupancy, peak_occupancy;
     int source_error;
     int waiting;
+    uint64_t adc_age_ms;
+    uint8_t adc_code[2];
+    int adc_valid;
 } CaptureMetrics;
 /* NULL file = raw synthetic source. File source is read in acquisition worker. */
 CapturePipeline *capture_pipeline_create(const char *file);

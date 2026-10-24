@@ -16,7 +16,7 @@ module adc_stream_ip_tb;
     reg [31:0] expected[0:65535];
     wire ready=!stall && cycles%17<14;
     ad9288_input adc(clk,sample_clk,resetn,enable,a,b,a+8'd64,b+8'd64,
-        clk_a,clk_b,adc_data,adc_valid,adc_ready,stream_resetn,overflow);
+        clk_a,clk_b,adc_data,adc_valid,adc_ready,stream_resetn,overflow,3'd0);
     axis_capture_decimate decimate(sample_clk,stream_resetn,divider,
         adc_data,adc_valid,adc_ready,selected_data,selected_valid,selected_ready);
     adc_width_test width_ip(.aclk(sample_clk), .aresetn(stream_resetn),

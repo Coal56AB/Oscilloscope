@@ -1,6 +1,36 @@
 #include "capture_debug.h"
 #include <math.h>
 #include <string.h>
+static int add_noise(const CaptureBuffer *input, CaptureBuffer *output,
+                     const CaptureDebug *debug)
+{
+    uint8_t channels[4];
+    uint32_t mask;
+    size_t i;
+    channels[0] = channels[2] = debug->wave[0] != SIGNAL_WAVE_NOISE;
+    channels[1] = channels[3] = debug->wave[1] != SIGNAL_WAVE_NOISE;
+    memcpy(&mask, channels, sizeof(mask));
+    if (!mask) return 1;
+    /* The periodic shapes occupy codes 48..208. Adding independent -1/0/+1
+       code noise in each byte cannot carry or borrow into the next channel.
+       Apply it after the periodic copies so cycles do not repeat the noise. */
+    for (i = 0; i + 4 <= output->bytes; i += 4) {
+        uint32_t codes;
+        uint32_t noise = generator_noise_code((uint32_t)input->sequence,
+            (size_t)(input->first_sample + i / 2), 0);
+        memcpy(&codes, output->data + i, sizeof(codes));
+        codes += noise & mask;
+        codes -= (noise >> 1) & mask;
+        memcpy(output->data + i, &codes, sizeof(codes));
+    }
+    for (; i < output->bytes; ++i) {
+        uint32_t noise = generator_noise_code((uint32_t)input->sequence,
+            (size_t)(input->first_sample + i / 2), (int)(i % 2));
+        if (channels[i % 2])
+            output->data[i] = (uint8_t)(output->data[i] + (int)(noise & 1) - (int)((noise >> 1) & 1));
+    }
+    return 1;
+}
 int capture_debug_replace(const CaptureBuffer *input, CaptureBuffer *output,
                            const CaptureDebug *debug)
 {
@@ -64,7 +94,7 @@ int capture_debug_replace(const CaptureBuffer *input, CaptureBuffer *output,
                 memcpy(storage + filled, storage, bytes);
                 filled += bytes;
             }
-            return 1;
+            return add_noise(input, output, debug);
         }
         for (i = 0; i < input->bytes / 2; ++i) {
             storage[2 * i] = table[0][phase >> 22];
@@ -73,7 +103,7 @@ int capture_debug_replace(const CaptureBuffer *input, CaptureBuffer *output,
             residue += step_residue;
             if (residue >= input->sample_rate_hz) { ++phase; residue -= input->sample_rate_hz; }
         }
-        return 1;
+        return add_noise(input, output, debug);
     }
     {
         unsigned base0 = (unsigned)(128 - debug->offset_fraction[0] * 60);
@@ -93,5 +123,5 @@ int capture_debug_replace(const CaptureBuffer *input, CaptureBuffer *output,
             if (residue >= input->sample_rate_hz) { ++phase; residue -= input->sample_rate_hz; }
         }
     }
-    return 1;
+    return add_noise(input, output, debug);
 }

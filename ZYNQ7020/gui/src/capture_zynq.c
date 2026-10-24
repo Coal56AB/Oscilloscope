@@ -24,7 +24,7 @@ int zynq_capture_open(ZynqCaptureSource *s, const char *device, const double gai
     s->fd = open(device, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (s->fd < 0 || ioctl(s->fd, OSC_CAPTURE_GET_INFO, &s->info) < 0)
         goto fail;
-    if (s->info.abi_version != OSC_CAPTURE_ABI || s->info.register_version != 3 ||
+    if (s->info.abi_version != OSC_CAPTURE_ABI || s->info.register_version != OSC_CAPTURE_REGISTER_VERSION ||
         s->info.sample_format != OSC_CAPTURE_SAMPLE_FORMAT || !s->info.buffers ||
         s->info.buffers > CAPTURE_RING_MAX || !s->info.block_bytes || s->info.block_bytes % 2 ||
         s->info.mapping_bytes != (uint64_t)s->info.buffers * s->info.block_bytes ||
@@ -44,6 +44,11 @@ int zynq_capture_configure(ZynqCaptureSource *s, unsigned rate, unsigned shift)
 {
     struct osc_capture_config config = {rate, shift};
     return s->fd >= 0 && !s->leased && ioctl(s->fd, OSC_CAPTURE_CONFIGURE, &config) == 0;
+}
+int zynq_capture_test_clock(ZynqCaptureSource *s, unsigned shift, unsigned payload_shift)
+{
+    struct osc_capture_test_clock config = {shift, payload_shift};
+    return s->fd >= 0 && !s->leased && ioctl(s->fd, OSC_CAPTURE_TEST_CLOCK, &config) == 0;
 }
 int zynq_capture_ready(ZynqCaptureSource *s)
 {

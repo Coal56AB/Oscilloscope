@@ -1,6 +1,9 @@
 #define _GNU_SOURCE
 #include "linux_storage.h"
 #include <fcntl.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
@@ -23,6 +26,26 @@ int linux_storage_open(const char *directory, int require_device)
     return fd;
 }
 
+int linux_storage_check(const char *directory, int require_device)
+{
+    static const char pattern[]="OSCILL SD READ WRITE TEST\n";
+    char path[96],data[sizeof(pattern)];
+    int dir=linux_storage_open(directory,require_device),fd,ok,saved;
+    if(dir<0)return 0;
+    snprintf(path,sizeof(path),"/proc/self/fd/%d/.oscill-test-XXXXXX",dir);
+    fd=mkstemp(path);
+    if(fd<0){saved=errno;close(dir);errno=saved;return 0;}
+    errno=0;
+    ok=write(fd,pattern,sizeof(pattern))==(ssize_t)sizeof(pattern) && fsync(fd)==0 &&
+        lseek(fd,0,SEEK_SET)==0 && read(fd,data,sizeof(data))==(ssize_t)sizeof(data) &&
+        !memcmp(data,pattern,sizeof(data));
+    saved=errno;
+    if(close(fd)!=0){saved=errno;ok=0;}
+    if(unlink(path)!=0){saved=errno;ok=0;}
+    if(!linux_storage_sync_close(dir)){saved=errno;ok=0;}
+    if(!ok)errno=saved?saved:EIO;
+    return ok;
+}
 int linux_storage_sync_close(int directory_fd)
 {
     int ok = syncfs(directory_fd) == 0;

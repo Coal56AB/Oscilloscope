@@ -48,6 +48,39 @@ static void temperature_test(void)
     assert(!strcmp(lines[3],"ZYNQ") && !strcmp(lines[4],"42.00 C") && !strcmp(lines[6],"-"));
     s.temperature_count=3;assert(status_page_count(&s)==9);
 }
+static void adc_level_test(void)
+{
+    StatusModel m;StatusSystem s={0};StatusPacket p;char lines[8][22];
+    status_model_init(&m,0);status_packet_init(&p);p.stage=STATUS_READY;p.source=STATUS_ADC;
+    m.page=STATUS_CAPTURE_PAGE;
+    assert(status_model_receive(&m,&p,sizeof(p),1000));
+    status_model_lines(&m,&s,1000,lines);
+    assert(!strcmp(lines[0],"2 CAPTURE") && !strcmp(lines[3],"CH1:- CH2:-"));
+    p.adc_valid=1;p.adc_code[0]=0;p.adc_code[1]=255;p.adc_age_ms=2000;
+    assert(status_model_receive(&m,&p,sizeof(p),1000));
+    status_model_lines(&m,&s,2000,lines);
+    assert(!strcmp(lines[3],"CH1:0 CH2:255"));
+    status_model_lines(&m,&s,2001,lines);
+    assert(!strcmp(lines[3],"CH1:- CH2:-"));
+    p.adc_age_ms=0;p.source_error=1;
+    assert(status_model_receive(&m,&p,sizeof(p),3000));
+    status_model_lines(&m,&s,3000,lines);assert(!strcmp(lines[3],"CH1:- CH2:-"));
+    p.source_error=0;p.source=STATUS_RAW_DEMO;
+    assert(status_model_receive(&m,&p,sizeof(p),3001));
+    status_model_lines(&m,&s,3001,lines);assert(!*lines[3]);
+    p.source=STATUS_ADC;p.adc_age_ms=UINT64_MAX;
+    assert(status_model_receive(&m,&p,sizeof(p),3002));
+    status_model_lines(&m,&s,3002,lines);assert(!strcmp(lines[3],"CH1:- CH2:-"));
+    p.adc_valid=2;assert(!status_model_receive(&m,&p,sizeof(p),3003));
+    p.adc_valid=0;p.stage=STATUS_STARTING;strcpy(p.error,"ADC CLOCK 1.5625 MHz");
+    assert(status_model_receive(&m,&p,sizeof(p),3004));
+    status_model_lines(&m,&s,3004,lines);
+    assert(!strcmp(lines[0],"STARTUP CHECK") && !strcmp(lines[2],p.error));
+    p.stage=STATUS_FAILED;strcpy(p.error,"ADC CH1-A AT 255 / 25 MHz");
+    assert(status_model_receive(&m,&p,sizeof(p),3005));
+    status_model_lines(&m,&s,3005,lines);
+    assert(!strcmp(lines[0],"STARTUP FAILED") && !strcmp(lines[7],"GUI NOT STARTED"));
+}
 int main(void)
 {
     StatusModel m;StatusSystem s={0};StatusPacket p;char lines[8][22];
@@ -79,7 +112,7 @@ int main(void)
     }
     p.source_error=0;
     s.temperature_count=7;assert(status_page_count(&s)==10);
-    m.page=9;strcpy(s.temperature[5].name,"BATTERY PACK");s.temperature[5].celsius=-12.5;s.temperature[5].available=1;
+    m.page=STATUS_TEMPERATURE_PAGE+2;strcpy(s.temperature[5].name,"BATTERY PACK");s.temperature[5].celsius=-12.5;s.temperature[5].available=1;
     status_model_lines(&m,&s,9001,lines);assert(strstr(lines[2],"-12.50 C"));
     s.temperature_count=0;status_model_key(&m,1,9001,&s);assert(m.page==STATUS_GUI_PAGE);
     m.page=STATUS_GUI_PAGE;status_model_lines(&m,&s,9001,lines);assert(strstr(lines[0],"GUI / HDMI"));
@@ -117,5 +150,6 @@ int main(void)
     strcpy(lines[1],"GUI TIMEOUT");oled_text(&oled,lines);oled_present(&oled);
     assert(b.bytes>bytes && b.data<1152);
     temperature_test();
+    adc_level_test();
     puts("status watchdog, K1 pages, value-or-dash freshness and OLED transport: PASS");return 0;
 }

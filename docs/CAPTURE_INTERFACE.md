@@ -13,10 +13,12 @@
 В текущем bitstream AXI DMA S2MM/SG находится по `0x40400000`, IRQ F2P[1]
 (GIC SPI 30), capture AXI GPIO — по `0x41210000`. OLED сохраняет `0x41200000`.
 GPIO.DATA offset 0, bit 0 включает поток; GPIO.DATA2 offset 8 содержит
-`0xADC30000 | overflow`. DATA[5:1] выбирает частоту по `capture_rates.h`,
-DATA[10:6] задаёт payload shift. Настройки меняются при выключенном потоке.
+`0xADC40000 | overflow`. DATA[5:1] выбирает частоту по `capture_rates.h`,
+DATA[10:6] задаёт payload shift, DATA[13:11] — диагностический делитель
+физического encode `2^shift`. Ненулевой clock shift отключает прореживание
+и сохраняет обе ветви A/B. Настройки меняются при выключенном потоке.
 Такты АЦП от enable не зависят. Проверка ID обязательна
-до запуска DMA. Register version=3, bitstream interface version=1;
+до запуска DMA. Register version=4, bitstream interface version=1;
 идентичность конкретной сборки отдельно публикуется штатным SHA-256 bitstream.
 
 Один AXIS пакет содержит 64 байта заголовка и `8 << payload_shift` байт
@@ -52,6 +54,13 @@ CONFIGURE принимает rate_index 0…19 и payload_shift 0…17. При �
 lease возвращает EBUSY. Драйвер завершает текущий поток, сбрасывает очередь
 и запускает новый с соответствующими длиной дескрипторов и GPIO-настройкой.
 Приложение выбирает длительность блока не более 40 мс, максимум 1 МиБ payload.
+
+TEST_CLOCK принимает clock shift 0…6 и payload shift 0…17; ограничения
+владения буферами те же, что у CONFIGURE. Физическая частота ветви равна
+`100000000 >> shift`, частота в заголовке — `200000000 >> shift`.
+При старте FPGA и новом open выбран shift=6. CONFIGURE возвращает shift=0
+и штатное прореживание. Закрытие останавливает поток, сохраняя последнюю
+физическую частоту. Порядок проверки — [STARTUP_CHECKS.md](STARTUP_CHECKS.md).
 
 Между DEQUEUE и RELEASE DMA не пишет в leased buffer. coherent allocation
 обеспечивает согласование CPU/device; перед разбором завершения используется

@@ -106,7 +106,7 @@ static void test_scale_direction_and_stopped_trigger(void)
         assert(demo.scale_index[channel] == before);
     }
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DEBUG);
-    assert(demo.screen.menu_count == 4);
+    assert(demo.screen.menu_count == 6);
     assert(strcmp(demo.screen.menu_labels[1], "LONG PRESS") == 0);
     assert(strcmp(demo.screen.menu_labels[2], "DOUBLE CLICK") == 0);
     assert(demo.hold_time_ms == 300 && demo.double_click_ms == 300);
@@ -600,6 +600,30 @@ static void test_fft_encoder_cycle(void)
     assert(demo.screen.fft_cursor_visible);
 }
 
+static void test_adc_level_menu(void)
+{
+    static DemoSignal demo;
+    const uint8_t code[2]={0,255};
+    demo_signal_init(&demo);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_DEBUG);
+    assert(!strcmp(demo.screen.menu_values[4],"-") && !strcmp(demo.screen.menu_values[5],"-"));
+    assert(demo_signal_set_adc_level(&demo,code,1));
+    assert(!strcmp(demo.screen.menu_labels[4],"ADC CH1") && !strcmp(demo.screen.menu_values[4],"0"));
+    assert(!strcmp(demo.screen.menu_labels[5],"ADC CH2") && !strcmp(demo.screen.menu_values[5],"255"));
+    assert(!demo_signal_set_adc_level(&demo,code,1));
+    for(int row=4;row<6;++row){
+        assert(!demo.screen.menu_stepper[row]);
+        demo_signal_ui_menu_tap(&demo,row,1);
+        demo_signal_ui_menu_activate(&demo);
+        demo_signal_ui_menu_adjust(&demo,1);
+        assert(!demo.screen.menu_editing);
+        assert(!demo_signal_set_option(&demo,DEMO_MENU_DEBUG,row,0));
+    }
+    assert(demo.adc_simulation==1 && demo.hold_time_ms==300 && demo.double_click_ms==300);
+    assert(demo_signal_set_adc_level(&demo,code,0));
+    assert(!strcmp(demo.screen.menu_values[4],"-") && !strcmp(demo.screen.menu_values[5],"-"));
+}
+
 int main(void)
 {
     DemoSignal demo;
@@ -621,6 +645,7 @@ int main(void)
     test_fft_cursor();
     test_fft_encoder_cycle();
     test_scale_direction_and_stopped_trigger();
+    test_adc_level_menu();
     test_stopped_time_view();
     test_menu_button_holds();
     test_default_double_click();
@@ -1259,7 +1284,7 @@ int main(void)
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DISPLAY);
     assert(demo.screen.menu_count == 1);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DEBUG);
-    assert(demo.screen.menu_count == 4);
+    assert(demo.screen.menu_count == 6);
     assert(demo.screen.font_index == SCOPE_FONT_INTER);
     demo_signal_ui_menu_select(&demo, 0);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);

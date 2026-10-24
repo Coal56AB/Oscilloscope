@@ -3,6 +3,7 @@
 #include <linux/ioctl.h>
 #include <linux/types.h>
 #define OSC_CAPTURE_ABI 3
+#define OSC_CAPTURE_REGISTER_VERSION 4
 #define OSC_CAPTURE_SAMPLE_FORMAT 1
 /* Fixed-width ABI shared by the dmaengine driver and userspace. */
 #define OSC_CAPTURE_DISCONTINUITY 1u
@@ -16,8 +17,11 @@ struct osc_capture_block {
     __aligned_u64 sequence, sample_rate_hz, first_sample, trigger_sample, hardware_ns;
 };
 struct osc_capture_config { __u32 rate_index, payload_shift; };
+/* Diagnostic physical encode clock = 100 MHz / 2^shift, both branches kept. */
+struct osc_capture_test_clock { __u32 shift, payload_shift; };
 #include "capture_rates.h"
 #define OSC_CAPTURE_CONFIGURE _IOW('O', 0x13, struct osc_capture_config)
+#define OSC_CAPTURE_TEST_CLOCK _IOW('O', 0x14, struct osc_capture_test_clock)
 #define OSC_CAPTURE_GET_INFO _IOR('O', 0x10, struct osc_capture_info)
 #define OSC_CAPTURE_DEQUEUE _IOR('O', 0x11, struct osc_capture_block)
 #define OSC_CAPTURE_RELEASE _IOW('O', 0x12, __u32)

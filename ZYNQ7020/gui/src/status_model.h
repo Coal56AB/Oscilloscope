@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #define STATUS_MAGIC 0x4f535431U
-#define STATUS_VERSION 2U
+#define STATUS_VERSION 3U
 #define STATUS_SOCKET "/run/oscill-status.sock"
 #define STATUS_MAX_TEMPERATURES 64
 #define STATUS_HEARTBEAT_MS 3000U
@@ -21,6 +21,9 @@ typedef struct {
     int32_t panel, touch, source_error, power_mv;
     uint32_t stm_temperature_valid;
     int32_t stm_temperature_mc;
+    uint64_t adc_age_ms;
+    uint32_t adc_valid;
+    uint8_t adc_code[2];
     char error[64];
 } StatusPacket;
 typedef struct { char name[48]; int available; double celsius; } StatusTemperature;

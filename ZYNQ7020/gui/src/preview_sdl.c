@@ -7,6 +7,9 @@
 #include "control_transport.h"
 #include "remote_control.h"
 #include "status_ipc.h"
+#ifdef SCOPE_ENABLE_ZYNQ
+#include "capture_selftest.h"
+#endif
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
 #include "linux_display.h"
 #include "linux_touch.h"
@@ -52,6 +55,7 @@ static DisplayFrame capture_frame;
 static int capture_frame_valid;
 static const char *console_path;
 static unsigned console_baud = 115200;
+static char startup_error[64];
 static uint64_t pc_activity_until;
 
 static int request_panel_scale(void *context, unsigned channel, int millivolts)
@@ -954,6 +958,8 @@ static void publish_service_status(int fd, const char *path, unsigned stage, uns
     packet.blocks=capture.blocks;packet.bytes=capture.bytes;packet.processing_ns=capture.processing_ns;
     packet.dropped=capture.dropped;packet.overwritten=capture.overwritten;
     packet.occupancy=(uint32_t)capture.occupancy;packet.source_error=capture.source_error;
+    packet.adc_valid=capture.adc_valid;packet.adc_age_ms=capture.adc_age_ms;
+    memcpy(packet.adc_code,capture.adc_code,sizeof(packet.adc_code));
     packet.panel=panel_enabled_status?panel.connected:-1;packet.touch=touch_status;
     packet.uart_errors=panel.crc_errors+panel.format_errors+panel.read_errors+panel.write_errors;
     packet.uart_gaps=panel.sequence_gaps;
@@ -966,11 +972,117 @@ static void publish_service_status(int fd, const char *path, unsigned stage, uns
         packet.stm_temperature_valid=1;packet.stm_temperature_mc=panel.temperature_mc;
         packet.stm_temperature_age_ms=panel_now-panel.temperature_received_ms;
     }
-    if(stage==STATUS_FAILED)snprintf(packet.error,sizeof(packet.error),"GUI START OR DISPLAY");
+    if(stage==STATUS_FAILED)snprintf(packet.error,sizeof(packet.error),"%s",*startup_error?startup_error:"GUI START OR DISPLAY");
     else if(demo.screen.status_visible && demo.screen.status_warning && demo.screen.status_message)
         snprintf(packet.error,sizeof(packet.error),"%s",demo.screen.status_message);
     status_send(fd,path,&packet);
 }
+
+#ifdef SCOPE_ENABLE_ZYNQ
+typedef struct {
+    int status_fd;
+    const char *status_path;
+    SDL_Renderer *renderer;
+    SDL_Texture *texture;
+#ifdef SCOPE_ENABLE_LINUX_DISPLAY
+    LinuxDisplay *display;
+#endif
+} StartupView;
+
+static void startup_show(StartupView *view,const char *message,unsigned percent,int failed)
+{
+    StatusPacket packet;
+    scope_startup_render(screen_pixels,SCOPE_WIDTH,message,percent,failed);
+#ifdef SCOPE_ENABLE_LINUX_DISPLAY
+    if(view->display)linux_display_present(view->display,screen_pixels);
+    else
+#endif
+    if(view->renderer && view->texture){
+        SDL_UpdateTexture(view->texture,NULL,screen_pixels,SCOPE_WIDTH*4);
+        SDL_RenderClear(view->renderer);SDL_RenderCopy(view->renderer,view->texture,NULL,NULL);
+        SDL_RenderPresent(view->renderer);
+    }
+    status_packet_init(&packet);packet.stage=failed?STATUS_FAILED:STATUS_STARTING;
+    packet.pid=(uint32_t)getpid();packet.source=STATUS_ADC;
+    snprintf(packet.error,sizeof(packet.error),"%s",message);
+    if(view->status_path)status_send(view->status_fd,view->status_path,&packet);
+}
+
+static void startup_adc_progress(unsigned hz,unsigned step,void *context)
+{
+    char message[64];
+    snprintf(message,sizeof(message),"ADC CLOCK %.5g MHz",hz/1e6);
+    fprintf(stderr,"Startup: %s\n",message);
+    startup_show(context,message,40+step*8,0);
+}
+
+static void startup_pump_events(void)
+{
+    SDL_Event event;
+    while(SDL_PollEvent(&event))
+        if(event.type==SDL_QUIT ||
+           (event.type==SDL_WINDOWEVENT && event.window.event==SDL_WINDOWEVENT_CLOSE) ||
+           (event.type==SDL_KEYDOWN && event.key.keysym.sym==SDLK_ESCAPE))stop_requested=1;
+}
+
+static int startup_usb_check(StartupView *view,int panel_required)
+{
+    uint64_t deadline=now_ms()+6000;
+    int panel_ok=!panel_required;
+    do {
+        SerialControlMetrics metrics;
+        if(panel_required){serial_control_metrics(&serial_controls,&metrics);panel_ok=metrics.connected;}
+        if(panel_ok)return 1;
+        startup_show(view,"USB PANEL LINK",10,0);
+        startup_pump_events();
+        scope_sleep_ms(100);
+    } while(!stop_requested && now_ms()<deadline);
+    snprintf(startup_error,sizeof(startup_error),"USB PANEL NO DATA");
+    return 0;
+}
+
+static int startup_wait_ready(StartupView *view,const char *adc_device,int panel_required)
+{
+    const double gain[2]={0.004,0.004},zero[2]={128,128};
+    char previous_error[sizeof(startup_error)]="";
+    while(!stop_requested){
+        int ok;
+        uint64_t retry;
+        *startup_error=0;
+        startup_show(view,"USB",0,0);
+        ok=startup_usb_check(view,panel_required);
+        if(ok && require_data_device && !stop_requested){
+            startup_show(view,"SD READ / WRITE",30,0);
+            if(!linux_storage_check(application_dir,1)){
+                snprintf(startup_error,sizeof(startup_error),"SD MOUNT / READ / WRITE ERROR");ok=0;}
+        }
+        if(ok && !stop_requested)ok=capture_selftest(adc_device,startup_adc_progress,view,startup_error,sizeof(startup_error));
+        if(ok && !stop_requested){
+            capture_pipeline=capture_pipeline_create_zynq(adc_device,gain,zero);
+            if(!capture_pipeline){snprintf(startup_error,sizeof(startup_error),"ADC START AFTER SELF-TEST");ok=0;}
+        }
+        if(stop_requested)return 0;
+        if(ok){
+            demo_signal_begin_external(&demo);
+            control_queue_reset(&controls);
+            startup_show(view,"COMPLETE",100,0);
+            SDL_FlushEvents(SDL_FIRSTEVENT,SDL_LASTEVENT);
+            return 1;
+        }
+        if(strcmp(previous_error,startup_error)){
+            fprintf(stderr,"Startup waiting: %s\n",startup_error);
+            snprintf(previous_error,sizeof(previous_error),"%s",startup_error);
+        }
+        retry=now_ms()+1000;
+        do {
+            startup_show(view,startup_error,0,1);
+            startup_pump_events();
+            scope_sleep_ms(100);
+        } while(!stop_requested && now_ms()<retry);
+    }
+    return 0;
+}
+#endif
 
 int main(int argc, char **argv)
 {
@@ -1048,12 +1160,7 @@ int main(int argc, char **argv)
     if(serial_device)demo_signal_bind_scale_control(&demo,request_panel_scale,&serial_controls);
     if(raw_demo||raw_file){capture_pipeline=capture_pipeline_create(raw_file);if(!capture_pipeline){fprintf(stderr,"Cannot open raw capture source\n");exit_status=1;goto cleanup;}}
 #ifdef SCOPE_ENABLE_ZYNQ
-    if(adc_device){
-        const double gain[2]={0.004,0.004},zero[2]={128,128};
-        capture_pipeline=capture_pipeline_create_zynq(adc_device,gain,zero);
-        if(!capture_pipeline){fprintf(stderr,"Cannot open ADC capture: %s\n",adc_device);exit_status=1;goto cleanup;}
-        demo_signal_begin_external(&demo);
-    }
+    /* Hardware acquisition starts only after the startup checks below. */
 #endif
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"0");
 #ifdef SDL_HINT_TOUCH_MOUSE_EVENTS
@@ -1100,6 +1207,15 @@ int main(int argc, char **argv)
 #endif
        (!lcd_renderer||!lcd_texture||(!kiosk&&(!panel_renderer||!panel_texture)))){fprintf(stderr,"Cannot create renderers: %s\n",SDL_GetError());running=0;exit_status=1;}
     lcd_id=lcd_window?SDL_GetWindowID(lcd_window):0;panel_id=panel_window?SDL_GetWindowID(panel_window):0;
+#ifdef SCOPE_ENABLE_ZYNQ
+    if(running && adc_device){
+        StartupView view={.status_fd=status_fd,.status_path=status_path,.renderer=lcd_renderer,.texture=lcd_texture};
+#ifdef SCOPE_ENABLE_LINUX_DISPLAY
+        view.display=drm_display;
+#endif
+        if(!startup_wait_ready(&view,adc_device,serial_device!=NULL))goto cleanup;
+    }
+#endif
     draw_all();
     if(remote_path){remote=remote_control_open(remote_path,remote_command,NULL);
         if(!remote){perror("Remote socket");running=0;exit_status=1;}}
@@ -1164,6 +1280,8 @@ int main(int argc, char **argv)
             if(capture_pipeline_frame(capture_pipeline,&capture_frame)){capture_frame_valid=1;
                 if(raw_file||(adc_device&&demo.trigger_mode_index==2))demo.screen.running=0;invalidate();}
             capture_pipeline_metrics(capture_pipeline,&metrics);
+            if(demo_signal_set_adc_level(&demo,metrics.adc_code,
+                metrics.adc_valid&&metrics.adc_age_ms<=STATUS_HEARTBEAT_MS))invalidate();
             if(adc_device)demo.screen.waiting_for_trigger=metrics.waiting&&demo.screen.running;
             if(metrics.source_error&&demo.screen.running){demo.screen.running=0;demo_signal_notify(&demo,"ADC CAPTURE ERROR");invalidate();}}
         if(demo.screen.running||demo.screen.status_visible||mouse_hold.active||key_holds[0].active||key_holds[1].active){demo_signal_advance(&demo);invalidate();}

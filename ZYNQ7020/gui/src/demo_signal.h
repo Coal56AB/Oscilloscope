@@ -98,6 +98,7 @@ typedef struct {
     char cursor_measurement_value_text[SCOPE_CURSOR_ROWS][SCOPE_CURSOR_READOUTS][24];
     char menu_page_text[20];
     char input_timing_text[2][20];
+    char adc_level_text[2][4];
     char status_text[80];
     int scale_index[2];
     int channel_position[2];
@@ -238,5 +239,6 @@ void demo_signal_ui_show_capture(DemoSignal *demo, const char *name,
 void demo_signal_ui_close_capture(DemoSignal *demo);
 void demo_signal_notify(DemoSignal *demo, const char *message);
 void demo_signal_begin_external(DemoSignal *demo);
+int demo_signal_set_adc_level(DemoSignal *demo, const uint8_t code[2], int valid);
 
 #endif

@@ -88,4 +88,4 @@ TF2 предполагается съёмным хранилищем exFAT. `osc
 
 ## Версии
 
-Контракт захвата: карта регистров и driver ABI — 3, sample format — 1. UART protocol — 1, app version — 0.1.0. Аппаратный ID захвата — `0xADC30000` без флагов ошибок. Manifest фиксирует Git SHA исходников, toolchain/Buildroot/kernel/U-Boot и хеши boot/bitstream/kernel/DTB/rootfs. Userspace capture adapter отвергает неверную ABI версию до доступа к payload. Миграция исходного GUI и сохранение истории описаны в [REPOSITORY.md](REPOSITORY.md).
+Контракт захвата: карта регистров — 4, driver ABI — 3, sample format — 1. UART protocol — 1, app version — 0.1.0. Аппаратный ID захвата — `0xADC40000` без флагов ошибок. Manifest фиксирует Git SHA исходников, toolchain/Buildroot/kernel/U-Boot и хеши boot/bitstream/kernel/DTB/rootfs. Userspace capture adapter отвергает неверную ABI версию до доступа к payload. Миграция исходного GUI и сохранение истории описаны в [REPOSITORY.md](REPOSITORY.md).

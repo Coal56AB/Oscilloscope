@@ -1,5 +1,6 @@
 #include "capture_adapter.h"
 #include "capture_settings.h"
+#include "input_range.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -40,7 +41,8 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     for (ch = 0; ch < 2; ++ch) {
         r->zero_y[ch] = wave.zero_y[ch];
         r->pixels_per_volt[ch] = (SCOPE_PLOT_HEIGHT / 8.0) * 1000 / wave.mv_per_div[ch];
-        r->adc_volts_per_code[ch] = wave.mv_per_div[ch] * 8.0 / 256000.0;
+        r->adc_volts_per_code[ch] = input_range_volts_per_code((unsigned)d->scale_index[ch]) *
+                                  (d->probe_ten[ch] ? 10 : 1);
     }
 }
 void capture_display_apply(DemoSignal *d, const DisplayFrame *f)

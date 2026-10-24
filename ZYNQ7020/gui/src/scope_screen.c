@@ -752,19 +752,30 @@ static void status_overlay(const ScopeScreen *screen)
     }
 }
 
-void scope_update_render(uint32_t *pixels, int stride, const char *phase, unsigned percent)
+static void progress_render(uint32_t *pixels, int stride, const char *title,
+                            const char *phase, unsigned percent, int failed)
 {
     char value[16];
     if(!pixels || stride<SCOPE_WIDTH || !phase) return;
     if(percent>100) percent=100;
     frame=pixels; pitch=stride; draw_alpha=255; active_font=SCOPE_FONT_INTER;
     fill(0,0,SCOPE_WIDTH,SCOPE_HEIGHT,RGB(14,22,28));
-    text(120,180,"FIRMWARE UPDATE",3,RGB(229,240,242));
-    text(120,260,phase,2,RGB(125,150,162));
+    text(120,180,title,3,failed?RGB(255,100,100):RGB(229,240,242));
+    text(120,260,phase,2,failed?RGB(255,160,160):RGB(125,150,162));
     fill(120,330,784,24,RGB(35,49,59));
     fill(120,330,(int)(784*percent/100),24,RGB(82,210,235));
     snprintf(value,sizeof(value),"%u%%",percent);
-    text(120,390,value,3,RGB(229,240,242));
+    text(120,390,failed?"GUI NOT STARTED":value,3,RGB(229,240,242));
+}
+
+void scope_update_render(uint32_t *pixels, int stride, const char *phase, unsigned percent)
+{
+    progress_render(pixels,stride,"FIRMWARE UPDATE",phase,percent,0);
+}
+
+void scope_startup_render(uint32_t *pixels, int stride, const char *phase, unsigned percent, int failed)
+{
+    progress_render(pixels,stride,failed?"STARTUP FAILED":"STARTUP CHECK",phase,percent,failed);
 }
 
 void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen)

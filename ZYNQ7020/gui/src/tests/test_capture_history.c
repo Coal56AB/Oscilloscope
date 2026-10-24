@@ -49,7 +49,10 @@ int main(void)
     {
         CaptureDebug debug={1,{SIGNAL_WAVE_SQUARE,SIGNAL_WAVE_SINE},10000};
         assert(capture_debug_replace(&input,&snapshot,&debug)); /* Decimated DEBUG may alias. */
-        for(i=2;i<12;i+=2)assert(storage[i]==storage[0]&&storage[i+1]==storage[1]);
+        for(i=0;i<12;i+=2) {
+            assert(storage[i]>=127&&storage[i]<=129);
+            assert(storage[i+1]>=205&&storage[i+1]<=207);
+        }
     }
     return 0;
 }
