@@ -590,6 +590,8 @@ void demo_signal_begin_external(DemoSignal *demo)
     for (ch=0;ch<2;++ch) {
         demo->screen.density_levels[ch]=NULL;
         demo->screen.density_source[ch].samples=0;
+        demo->screen.peak_min_samples[ch]=demo->screen.peak_max_samples[ch]=NULL;
+        demo->screen.peak_strength[ch]=NULL;
     }
     demo->screen.trigger_locked = 0;
     demo->history_count = demo->screen.history_count = 0;
@@ -2399,6 +2401,8 @@ void demo_signal_ui_show_wave(DemoSignal *demo, const char *name,
     for(channel=0;channel<2;++channel){
         demo->screen.density_source[channel].samples=0;
         demo->screen.density_levels[channel]=NULL;
+        demo->screen.peak_min_samples[channel]=demo->screen.peak_max_samples[channel]=NULL;
+        demo->screen.peak_strength[channel]=NULL;
     }
     analyze_loaded_timing(demo, 0);
     analyze_loaded_timing(demo, 1);

@@ -18,7 +18,7 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     r->record_samples = capture_record_samples(d->record_depth_index);
     r->roll = r->overview_duration_seconds > 1.0 && d->trigger_mode_index == 0;
     r->spectrum_enabled = d->fft_enabled;
-    r->density_enabled = d->intensity_coloring;
+    r->density_enabled = 1;
     r->density_rows = (unsigned)scope_screen_waveform_height(&d->screen);
     r->debug.enabled = d->adc_simulation;
     r->debug.wave[0] = d->generator_wave[0];
@@ -56,6 +56,9 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
     for(i=0;i<2;++i){
         d->screen.density_source[i].samples=0;
         d->screen.density_levels[i]=f->density_valid?&f->density[i][0][0]:NULL;
+        d->screen.peak_min_samples[i]=f->peak_detect?f->peak_min[i]:NULL;
+        d->screen.peak_max_samples[i]=f->peak_detect?f->peak_max[i]:NULL;
+        d->screen.peak_strength[i]=f->peak_detect?f->peak_strength[i]:NULL;
     }
     d->acquisition_rate_hz = f->sample_rate_hz;
     if (d->external_capture) {

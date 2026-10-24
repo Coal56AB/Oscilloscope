@@ -4,6 +4,7 @@
 #include "boot_splash.h"
 #include "waveform_view.h"
 #include <assert.h>
+#include <math.h>
 
 #include <stddef.h>
 #include <stdio.h>
@@ -569,16 +570,12 @@ static void channel_zero_marker(int y, const char *label, uint32_t background, u
     text(9, y - 7, label, 2, color);
 }
 
-static void trace_segment(int x0, int a, int x1, int b, uint32_t shadow, uint32_t color)
+static void trace_segment(int x0, int a, int x1, int b, uint32_t color)
 {
     if (x0 == x1) {
-        pixel(x0, a - 1, shadow);
-        pixel(x0, b + 1, shadow);
         fill(x0, a, 1, b - a + 1, color);
         return;
     }
-    line(x0, a - 1, x1, b - 1, shadow);
-    line(x0, a + 1, x1, b + 1, shadow);
     line(x0, a, x1, b, color);
 }
 
@@ -589,38 +586,49 @@ static int trace_y(int y)
     return view_y(y);
 }
 
-static void trace(const int16_t *samples, uint32_t shadow, uint32_t color)
+static unsigned peak_opacity(const ScopeScreen *screen)
 {
-    int x;
+    double step=screen->density_samples/SCOPE_PLOT_WIDTH;
+    return step<=0.5?0:step>=4?255:(unsigned)(log2(step/0.5)*85);
+}
+
+static void trace(const int16_t *samples, const uint8_t *hidden, unsigned mask, uint32_t color)
+{
+    int x,saved_alpha=draw_alpha;
     if (!samples) return;
     for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
         if (samples[x] == WAVEFORM_NO_SAMPLE) continue;
+        unsigned strength=hidden?hidden[x]:0;
+        if(hidden && x && hidden[x-1]>strength)strength=hidden[x-1];
+        draw_alpha=saved_alpha*(255-strength*mask/255)/255;
+        if(!draw_alpha)continue;
         if (x && samples[x - 1] != WAVEFORM_NO_SAMPLE)
             trace_segment(PLOT_X + x - 1, trace_y(samples[x - 1]),
-                          PLOT_X + x, trace_y(samples[x]), shadow, color);
+                          PLOT_X + x, trace_y(samples[x]), color);
         else {
             int y = trace_y(samples[x]);
-            pixel(PLOT_X + x, y - 1, shadow);pixel(PLOT_X + x, y + 1, shadow);
             pixel(PLOT_X + x, y, color);
         }
     }
+    draw_alpha=saved_alpha;
 }
 
 static void trace_envelope(const int16_t *minimum, const int16_t *maximum,
                             uint32_t shadow, uint32_t color)
 {
     int x, previous_low = 0, previous_high = 0, connected = 0;
+    (void)shadow;
     for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
         if (minimum[x] == WAVEFORM_NO_SAMPLE || maximum[x] == WAVEFORM_NO_SAMPLE) {
             connected = 0; continue;
         }
         int low = trace_y(minimum[x]), high = trace_y(maximum[x]);
-        trace_segment(PLOT_X + x, low, PLOT_X + x, high, shadow, color);
+        trace_segment(PLOT_X + x, low, PLOT_X + x, high, color);
         /* Connect only gaps between ranges; a midpoint trace creates false beats. */
         if (connected && previous_high < low)
-            trace_segment(PLOT_X + x - 1, previous_high, PLOT_X + x, low, shadow, color);
+            trace_segment(PLOT_X + x - 1, previous_high, PLOT_X + x, low, color);
         else if (connected && previous_low > high)
-            trace_segment(PLOT_X + x - 1, previous_low, PLOT_X + x, high, shadow, color);
+            trace_segment(PLOT_X + x - 1, previous_low, PLOT_X + x, high, color);
         previous_low = low;
         previous_high = high;
         connected = 1;
@@ -653,7 +661,7 @@ static uint32_t density_color(int level)
 }
 
 /* Colors depend only on counts of original samples at the screen pixel. */
-static void trace_density(const ScopeScreen *screen, unsigned channel)
+static void trace_density(const ScopeScreen *screen, unsigned channel, uint32_t color)
 {
     const uint8_t *levels=screen->density_levels[channel];
     const WaveformSource *source=&screen->density_source[channel];
@@ -662,11 +670,19 @@ static void trace_density(const ScopeScreen *screen, unsigned channel)
     int rows=levels && screen->density_rows?(int)screen->density_rows:view_height;
     double ratio=(double)view_height/SCOPE_PLOT_HEIGHT;
     unsigned peak=0;
+    unsigned opacity=peak_opacity(screen);
+    int saved_alpha=draw_alpha;
     int x,y;
-    for(y=0;y<256;++y)palette[y]=density_color(y);
-    if (screen->density_samples <= SCOPE_PLOT_WIDTH)
-        trace(channel ? screen->ch2_samples : screen->ch1_samples,
-              RGB(0,15,55), RGB(0,35,150));
+    for(y=0;y<256;++y)palette[y]=screen->intensity_coloring?density_color(y):color;
+    /* One thin connection preserves continuity. Its coverage never contributes
+       to ADC hit counts, and unknown peak intervals never get a made-up curve. */
+    draw_alpha=screen->intensity_coloring || screen->density_samples<=SCOPE_PLOT_WIDTH?
+        saved_alpha:saved_alpha*160/255;
+    trace(channel ? screen->ch2_samples : screen->ch1_samples,
+          screen->peak_detect?screen->peak_strength[channel]:NULL,
+          opacity,
+          screen->intensity_coloring?RGB(0,35,150):color);
+    draw_alpha=saved_alpha;
     if (!levels) {
         for(x=0;x<SCOPE_PLOT_WIDTH;++x) {
             waveform_density_column(source,screen->density_first,screen->density_samples,
@@ -681,9 +697,42 @@ static void trace_density(const ScopeScreen *screen, unsigned channel)
             SCOPE_PLOT_WIDTH,x,rows,counts);
         for(y=0;y<rows;++y) {
             unsigned level=levels?levels[x*SCOPE_PLOT_HEIGHT+y]:waveform_density_level(counts[y],peak);
-            if(level)pixel(PLOT_X+x,view_top+y*view_height/rows,palette[level]);
+            if(level){
+                draw_alpha=screen->intensity_coloring?saved_alpha:saved_alpha*level/255;
+                if(screen->peak_detect && screen->peak_strength[channel])
+                    draw_alpha=draw_alpha*(255-screen->peak_strength[channel][x]*opacity*159/(255*255))/255;
+                pixel(PLOT_X+x,view_top+y*view_height/rows,palette[level]);
+            }
         }
     }
+    draw_alpha=saved_alpha;
+}
+
+/* A native min/max interval has no internal timing. Show its possible range
+   as a separate band, without fabricating triangles or density hits. */
+static void trace_peak_band(const ScopeScreen *screen,unsigned channel,uint32_t color)
+{
+    const int16_t *minimum=screen->peak_min_samples[channel],*maximum=screen->peak_max_samples[channel];
+    const int16_t *raw_min=channel?screen->ch2_min_samples:screen->ch1_min_samples;
+    const int16_t *raw_max=channel?screen->ch2_max_samples:screen->ch1_max_samples;
+    unsigned opacity=peak_opacity(screen);
+    int x,saved_alpha=draw_alpha;
+    if(!opacity || !screen->peak_detect || screen->waveform_loaded || !minimum || !maximum)return;
+    for(x=0;x<SCOPE_PLOT_WIDTH;++x)if(minimum[x]!=WAVEFORM_NO_SAMPLE && maximum[x]!=WAVEFORM_NO_SAMPLE){
+        int low=trace_y(minimum[x]),high=trace_y(maximum[x]);
+        unsigned strength=screen->peak_strength[channel]?screen->peak_strength[channel][x]:255;
+        draw_alpha=saved_alpha*112*strength/(255*255)*opacity/255;
+        if(!draw_alpha)continue;
+        /* Do not repaint the already represented sample range. Apart from
+           preserving noise texture, this bounds work on long dense records. */
+        if(raw_min && raw_max && raw_min[x]!=WAVEFORM_NO_SAMPLE && raw_max[x]!=WAVEFORM_NO_SAMPLE){
+            int a=trace_y(raw_min[x]),b=trace_y(raw_max[x]);
+            int top=high<a?high:a-1,bottom=low>b?low:b+1;
+            fill(PLOT_X+x,low,1,top-low+1,color);
+            fill(PLOT_X+x,bottom,1,high-bottom+1,color);
+        }else fill(PLOT_X+x,low,1,high-low+1,color);
+    }
+    draw_alpha=saved_alpha;
 }
 
 static void overview_trace(const int16_t *samples, int start, int end,
@@ -972,25 +1021,21 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         for (i = 0; i < SCOPE_PLOT_WIDTH; i += 14)
             fill(PLOT_X + i, py, 7, 1, trigger_color);
     }
+    if(screen->ch1_enabled)trace_peak_band(screen,0,screen->intensity_coloring?RGB(0,35,150):yellow);
+    if(screen->ch2_enabled)trace_peak_band(screen,1,screen->intensity_coloring?RGB(0,35,150):cyan);
     if (screen->ch1_enabled) {
-        if(screen->intensity_coloring&&screen->peak_detect&&screen->ch1_min_samples&&screen->ch1_max_samples)
-            trace_envelope(screen->ch1_min_samples,screen->ch1_max_samples,RGB(0,15,55),RGB(0,35,150));
-        if (screen->intensity_coloring &&
-            (screen->density_levels[0] || screen->density_source[0].samples))
-            trace_density(screen,0);
+        if (screen->density_levels[0] || screen->density_source[0].samples)
+            trace_density(screen,0,yellow);
         else if (screen->ch1_min_samples && screen->ch1_max_samples)
             trace_envelope(screen->ch1_min_samples, screen->ch1_max_samples, RGB(89, 64, 29), yellow);
-        else trace(screen->ch1_samples, RGB(89, 64, 29), yellow);
+        else trace(screen->ch1_samples,NULL,0,yellow);
     }
     if (screen->ch2_enabled) {
-        if(screen->intensity_coloring&&screen->peak_detect&&screen->ch2_min_samples&&screen->ch2_max_samples)
-            trace_envelope(screen->ch2_min_samples,screen->ch2_max_samples,RGB(0,15,55),RGB(0,35,150));
-        if (screen->intensity_coloring &&
-            (screen->density_levels[1] || screen->density_source[1].samples))
-            trace_density(screen,1);
+        if (screen->density_levels[1] || screen->density_source[1].samples)
+            trace_density(screen,1,cyan);
         else if (screen->ch2_min_samples && screen->ch2_max_samples)
             trace_envelope(screen->ch2_min_samples, screen->ch2_max_samples, RGB(27, 66, 78), cyan);
-        else trace(screen->ch2_samples, RGB(27, 66, 78), cyan);
+        else trace(screen->ch2_samples,NULL,0,cyan);
     }
     if (screen->cursor_mode != SCOPE_CURSOR_OFF) {
         const uint32_t cursor = RGB(207, 183, 255);

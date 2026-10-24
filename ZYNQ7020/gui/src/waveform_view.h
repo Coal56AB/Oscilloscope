@@ -22,12 +22,16 @@ typedef struct {
     size_t envelope_samples;
 } WaveformSource;
 
-/* Preserve the requested time interval, marking columns outside the record as gaps.
-   Keep the original sample line when it covers the envelope; interpolate missing
-   peaks as a connected polygon inside their bucket, without inventing hit counts. */
+/* Preserve the original sample line and bounds; never interpolate peak times. */
 void waveform_view_reduce(const WaveformSource *source, double first, double samples,
                           unsigned channel, double zero_y, double pixels_per_unit,
                           size_t columns, int16_t *representative, int16_t *minimum, int16_t *maximum);
+/* Hidden excursions in native peak intervals, separate from acquired samples.
+   Strength rises to 255 over four source quanta; every excursion is retained. */
+void waveform_view_peak_bounds(const WaveformSource *source, double first, double samples,
+                               unsigned channel, double zero_y, double pixels_per_unit,
+                               double quantum, size_t columns, int16_t *minimum, int16_t *maximum,
+                               uint8_t *strength);
 /* Count original samples, without interpolated hits, envelope filling or blur. */
 void waveform_density_column(const WaveformSource *source, double first, double samples,
                              unsigned channel, double zero_y, double pixels_per_unit,

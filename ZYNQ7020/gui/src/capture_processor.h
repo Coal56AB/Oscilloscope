@@ -14,6 +14,8 @@ typedef struct {
 } CaptureView;
 typedef struct {
     int16_t y[2][SCOPE_PLOT_WIDTH], y_min[2][SCOPE_PLOT_WIDTH], y_max[2][SCOPE_PLOT_WIDTH];
+    int16_t peak_min[2][SCOPE_PLOT_WIDTH], peak_max[2][SCOPE_PLOT_WIDTH];
+    uint8_t peak_strength[2][SCOPE_PLOT_WIDTH];
     int16_t overview[2][SCOPE_PLOT_WIDTH];
     uint8_t fft[2][SCOPE_FFT_BINS];
     double minimum[2], maximum[2], mean[2], rms[2], frequency_hz[2], duty[2];

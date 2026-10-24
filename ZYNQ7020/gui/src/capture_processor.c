@@ -381,6 +381,9 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         waveform_view_reduce(&source, display_first, display_samples, ch,
                              v->zero_y[ch], v->pixels_per_volt[ch], SCOPE_PLOT_WIDTH,
                              f->y[ch], f->y_min[ch], f->y_max[ch]);
+        waveform_view_peak_bounds(&source, display_first, display_samples, ch,
+                                 v->zero_y[ch], v->pixels_per_volt[ch], fabs(gain),
+                                 SCOPE_PLOT_WIDTH, f->peak_min[ch], f->peak_max[ch], f->peak_strength[ch]);
         if (!v->skip_spectrum && !spectrum(b, v, ch, f->fft_size, f->fft[ch])) return 0;
         if (v->density_enabled && !density(b,v,display_first,display_samples,ch,&f->density[ch][0][0])) return 0;
     }

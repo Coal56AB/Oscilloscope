@@ -58,6 +58,7 @@ static void test_trace_width(uint32_t *pixels, int stride)
     demo.screen.ch2_enabled = 0;
     demo.screen.measurement_count = 0;
     demo.screen.channel_zero_y[0] = 350;
+    demo.screen.density_source[0].samples=0;
     for (x = 0; x < SCOPE_PLOT_WIDTH; ++x)
         demo.ch1[x] = demo.minimum[0][x] = demo.maximum[0][x] = 210;
     for (zoom = 0; zoom < 2; ++zoom) {
@@ -155,6 +156,64 @@ static void test_density_connections_and_battery(uint32_t *pixels, int stride)
     demo.screen.battery_percent=100;
     scope_screen_render(pixels,stride,&demo.screen);
     assert(pixels[34*stride+160]==0x70dfa3);
+}
+
+static void test_plain_noise_intensity(uint32_t *pixels,int stride)
+{
+    static uint8_t density[SCOPE_PLOT_WIDTH][SCOPE_PLOT_HEIGHT];
+    static uint32_t background[SCOPE_WIDTH*SCOPE_HEIGHT];
+    static int16_t hidden_min[SCOPE_PLOT_WIDTH],hidden_max[SCOPE_PLOT_WIDTH];
+    static uint8_t strength[SCOPE_PLOT_WIDTH];
+    int x,y;
+    demo_signal_init(&demo);demo.screen.ch2_enabled=0;demo.screen.measurement_count=0;
+    demo.screen.channel_zero_y[0]=350;demo.screen.intensity_coloring=0;
+    demo.screen.density_levels[0]=&density[0][0];demo.screen.density_rows=SCOPE_PLOT_HEIGHT;
+    demo.screen.density_samples=8192;
+    for(x=0;x<SCOPE_PLOT_WIDTH;++x){
+        demo.ch1[x]=210;demo.minimum[0][x]=180;demo.maximum[0][x]=240;
+        density[x][210]=255;density[x][180]=16;
+        hidden_min[x]=hidden_max[x]=WAVEFORM_NO_SAMPLE;
+    }
+    scope_screen_render(pixels,stride,&demo.screen);
+    demo.screen.ch1_enabled=0;scope_screen_render(background,SCOPE_WIDTH,&demo.screen);
+    x=300;
+    assert(pixels[(SCOPE_PLOT_Y+210)*stride+x]==0xffc44d);
+    assert(pixels[(SCOPE_PLOT_Y+180)*stride+x]!=background[(SCOPE_PLOT_Y+180)*SCOPE_WIDTH+x]);
+    assert(pixels[(SCOPE_PLOT_Y+180)*stride+x]!=0xffc44d);
+    /* There is no solid envelope between noise hits and no extra stroke halo. */
+    for(y=181;y<240;++y)if(y!=210)
+        assert(pixels[(SCOPE_PLOT_Y+y)*stride+x]==background[(SCOPE_PLOT_Y+y)*SCOPE_WIDTH+x]);
+    demo.screen.ch1_enabled=1;demo.screen.peak_detect=1;
+    demo.screen.peak_min_samples[0]=hidden_min;demo.screen.peak_max_samples[0]=hidden_max;
+    demo.screen.peak_strength[0]=strength;
+    for(x=0;x<SCOPE_PLOT_WIDTH;++x){
+        hidden_min[x]=180;hidden_max[x]=240;
+        strength[x]=255;
+        demo.minimum[0][x]=demo.maximum[0][x]=210;
+    }
+    scope_screen_render(pixels,stride,&demo.screen);
+    /* True hidden excursions still show a wall independently of hit density. */
+    assert(pixels[(SCOPE_PLOT_Y+190)*stride+300]!=background[(SCOPE_PLOT_Y+190)*SCOPE_WIDTH+300]);
+    {
+        const unsigned spans[]={512,1024,2048,4096};unsigned i,previous=0;
+        for(i=0;i<4;++i){
+            unsigned value;
+            demo.screen.density_samples=spans[i];scope_screen_render(pixels,stride,&demo.screen);
+            value=(pixels[(SCOPE_PLOT_Y+190)*stride+300]>>16)&255;
+            assert(i==0 || value>previous);previous=value;
+        }
+    }
+    demo.screen.density_samples=512;
+    scope_screen_render(pixels,stride,&demo.screen);
+    /* At two pixels per sample and closer, the background disappears while
+       the actual curve remains fully visible and connected. */
+    assert(pixels[(SCOPE_PLOT_Y+190)*stride+300]==background[(SCOPE_PLOT_Y+190)*SCOPE_WIDTH+300]);
+    assert(pixels[(SCOPE_PLOT_Y+210)*stride+308]==0xffc44d);
+    demo.screen.density_samples=64;
+    scope_screen_render(pixels,stride,&demo.screen);
+    assert(pixels[(SCOPE_PLOT_Y+190)*stride+300]==background[(SCOPE_PLOT_Y+190)*SCOPE_WIDTH+300]);
+    assert(pixels[(SCOPE_PLOT_Y+210)*stride+308]==0xffc44d);
+    demo.screen.peak_detect=0;
 }
 
 static void test_fft_cursor_label(uint32_t *pixels, int stride)
@@ -358,6 +417,7 @@ int main(void)
     test_trace_width(pixels, SCOPE_WIDTH + 3);
     test_trace_gaps(pixels, SCOPE_WIDTH + 3);
     test_density_connections_and_battery(pixels, SCOPE_WIDTH + 3);
+    test_plain_noise_intensity(pixels, SCOPE_WIDTH + 3);
     test_external_without_samples(pixels, SCOPE_WIDTH + 3);
     test_trigger_icons(pixels, SCOPE_WIDTH + 3);
     test_lowercase_n(pixels, SCOPE_WIDTH + 3);

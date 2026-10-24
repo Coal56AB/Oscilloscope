@@ -565,14 +565,14 @@ static void peak_detect_test(void)
     for(i=0;i<sizeof(peaks);i+=4)assert(peaks[i]==127 && peaks[i+2]==189);
     view.skip_spectrum=1;
     assert(capture_process(&out,&view,&frame) && frame.peak_detect);
-    assert(frame.y_min[0][300]<=79 && frame.y_max[0][300]>=201);
+    assert(frame.peak_min[0][300]<=79 && frame.peak_max[0][300]>=201);
     assert(frame.minimum[0]<0 && frame.maximum[0]>1.2);
     view.display_first=1024;view.display_samples=64;
     assert(capture_process(&out,&view,&frame));
     unsigned low=INT16_MAX,high=0;
     for(i=0;i<SCOPE_PLOT_WIDTH;++i){
-        if(frame.y_min[0][i]<low)low=frame.y_min[0][i];
-        if(frame.y_max[0][i]>high)high=frame.y_max[0][i];
+        if(frame.peak_min[0][i]<low)low=frame.peak_min[0][i];
+        if(frame.peak_max[0][i]>high)high=frame.peak_max[0][i];
         /* Connected interpolation has no full-height isolated vertical marks. */
         assert(frame.y_max[0][i]-frame.y_min[0][i]<16);
     }
@@ -580,7 +580,7 @@ static void peak_detect_test(void)
     /* The original extrema remain available when returning to the full view. */
     view.display_samples=0;
     assert(capture_process(&out,&view,&frame));
-    assert(frame.y_min[0][300]<=79 && frame.y_max[0][300]>=201);
+    assert(frame.peak_min[0][300]<=79 && frame.peak_max[0][300]>=201);
 }
 
 static void peak_zoom_continuity_test(void)
@@ -601,20 +601,15 @@ static void peak_zoom_continuity_test(void)
         assert(capture_process(&b,&v,&f));
         assert(fabs(f.minimum[0]+0.56)<1e-12 && fabs(f.maximum[0]-0.64)<1e-12);
         for(x=0;x<SCOPE_PLOT_WIDTH;++x){
-            if(f.y_min[0][x]<low)low=f.y_min[0][x];
-            if(f.y_max[0][x]>high)high=f.y_max[0][x];
-            assert(f.y_min[0][x]<=f.y[0][x] && f.y[0][x]<=f.y_max[0][x]);
-            if(spans[s]==64){
-                double phase=fmod(v.display_first+x*v.display_samples/SCOPE_PLOT_WIDTH,2.0);
-                double code=phase<2.0/3?128-42*phase:
-                    phase<4.0/3?100+90*(phase-2.0/3):160-48*(phase-4.0/3);
-                assert(abs(f.y[0][x]-(int)(200-(code-128)*2))<=1);
-                assert(f.y_max[0][x]-f.y_min[0][x]<=12);
-            }
+            if(f.peak_min[0][x]<low)low=f.peak_min[0][x];
+            if(f.peak_max[0][x]>high)high=f.peak_max[0][x];
+            assert(f.y[0][x]==200 && f.y_min[0][x]==200 && f.y_max[0][x]==200);
+            assert(f.peak_min[0][x]==136 && f.peak_max[0][x]==256);
         }
-        /* The same continuous polygon keeps its amplitude at all zooms. */
+        /* The native range is preserved independently of the sample trace. */
         assert(low==136 && high==256);
     }
+
     v.display_first=3596;v.display_samples=1000;v.density_enabled=1;
     assert(capture_process(&b,&v,&f));
     unsigned hits=0;
@@ -624,29 +619,36 @@ static void peak_zoom_continuity_test(void)
     }
     assert(hits==1000); /* Interpolated vertices never become invented density hits. */
     v.density_enabled=0;
-    /* A hidden pulse becomes a connected triangle inside its own interval.
-       No vertex is assigned to a falsely precise timestamp. */
+    /* Small native noise excursions remain visible as a weak band, never
+       promoted to a thick opaque trace or silently discarded. */
+    for(i=0;i<sizeof(peaks);i+=4){peaks[i]=peaks[i+1]=127;peaks[i+2]=peaks[i+3]=129;}
+    assert(capture_process(&b,&v,&f));
+    assert(f.peak_min[0][300]==198 && f.peak_max[0][300]==202);
+    assert(f.peak_strength[0][300]>0 && f.peak_strength[0][300]<255);
+    /* A hidden pulse remains an interval, without a fabricated timed vertex. */
     memset(peaks,128,sizeof(peaks));peaks[4*2048+2]=255;
     for(s=2;s<sizeof(spans)/sizeof(spans[0]);++s){
         unsigned marks=0;
         v.display_samples=spans[s];v.display_first=4096-spans[s]/2.0;
         assert(capture_process(&b,&v,&f));
-        for(x=0;x<SCOPE_PLOT_WIDTH;++x)if(f.y_min[0][x]<200){
+        for(x=0;x<SCOPE_PLOT_WIDTH;++x)if(f.peak_min[0][x]!=WAVEFORM_NO_SAMPLE){
             double left=v.display_first+x*v.display_samples/SCOPE_PLOT_WIDTH;
             double right=v.display_first+(x+1)*v.display_samples/SCOPE_PLOT_WIDTH;
             assert(left<4098 && right>4096);++marks;
         }
         assert(marks>=1 && marks<=(unsigned)ceil(2.0*SCOPE_PLOT_WIDTH/spans[s])+1);
     }
-    /* With two hidden extrema, the descending trace visits max first. */
+    /* Even with two hidden extrema, original sample direction is unchanged. */
     memset(data,128,sizeof(data));memset(peaks,128,sizeof(peaks));
     data[2048]=100;data[2050]=150;data[2052]=200;
     data[2049]=200;data[2051]=150;data[2053]=100;
     peaks[2048]=peaks[2049]=25;peaks[2050]=peaks[2051]=229;
     v.display_first=1024;v.display_samples=2;
     assert(capture_process(&b,&v,&f));
-    assert(f.y[0][341]>400 && f.y[0][683]<0);
-    assert(f.y[1][341]<0 && f.y[1][683]>400);
+    assert(f.y[0][341]>f.y[0][683]);
+    assert(f.peak_min[0][341]==-2 && f.peak_max[0][341]==406);
+    assert(f.y[1][341]<f.y[1][683]);
+    assert(f.peak_min[1][341]==-2 && f.peak_max[1][341]==406);
 }
 
 static void peak_resolved_trace_test(void)
@@ -705,7 +707,7 @@ static void peak_sine_deviation_test(void)
 {
     uint8_t data[4096],peaks[4096];
     CaptureBuffer b={0};CaptureView v={0};static DisplayFrame raw,peak;
-    const unsigned periods[]={64,32,20,10,4}, limits[]={0,0,8,32,152};
+    const unsigned periods[]={64,32,20,10,4};
     unsigned k,p,i,j,x;
     b.data=data;b.bytes=b.capacity=sizeof(data);b.sample_rate_hz=200000;
     b.trigger_sample=CAPTURE_NO_TRIGGER;b.volts_per_code[0]=b.volts_per_code[1]=1;
@@ -726,10 +728,9 @@ static void peak_sine_deviation_test(void)
         }
         b.peaks=NULL;assert(capture_process(&b,&v,&raw));
         b.peaks=peaks;assert(capture_process(&b,&v,&peak));
-        /* Bound display changes relative to the saved sample line for this
-           sine/phase set; this is not a universal reconstruction guarantee. */
+        /* The displayed sample line is never replaced by invented extrema. */
         for(x=0;x<SCOPE_PLOT_WIDTH;++x)
-            assert((unsigned)abs(peak.y[0][x]-raw.y[0][x])<=limits[k]);
+            assert(peak.y[0][x]==raw.y[0][x]);
     }
 }
 
