@@ -569,13 +569,14 @@ static void peak_detect_test(void)
     assert(frame.minimum[0]<0 && frame.maximum[0]>1.2);
     view.display_first=1024;view.display_samples=64;
     assert(capture_process(&out,&view,&frame));
-    unsigned marks=0;
+    unsigned low=INT16_MAX,high=0;
     for(i=0;i<SCOPE_PLOT_WIDTH;++i){
-        assert(frame.y[0][i]>=198 && frame.y[0][i]<=202);
-        if(frame.y_min[0][i]<=79 && frame.y_max[0][i]>=201)++marks;
-        else assert(frame.y_min[0][i]==frame.y[0][i] && frame.y_max[0][i]==frame.y[0][i]);
+        if(frame.y_min[0][i]<low)low=frame.y_min[0][i];
+        if(frame.y_max[0][i]>high)high=frame.y_max[0][i];
+        /* Connected interpolation has no full-height isolated vertical marks. */
+        assert(frame.y_max[0][i]-frame.y_min[0][i]<16);
     }
-    assert(marks==32); /* One thin mark per two-sample interval, at every zoom. */
+    assert(low<=80 && high>=200);
     /* The original extrema remain available when returning to the full view. */
     view.display_samples=0;
     assert(capture_process(&out,&view,&frame));
@@ -587,7 +588,7 @@ static void peak_zoom_continuity_test(void)
     static const unsigned spans[]={4096,2048,2000,1025,1024,1023,1000,512,128,64};
     uint8_t data[16384],peaks[16384];
     CaptureBuffer b={0};CaptureView v={0};static DisplayFrame f;
-    unsigned s,i,x,previous=0;
+    unsigned s,i,x;
     memset(data,128,sizeof(data));
     for(i=0;i<sizeof(peaks);i+=4){peaks[i]=peaks[i+1]=100;peaks[i+2]=peaks[i+3]=160;}
     b.data=data;b.peaks=peaks;b.capacity=b.bytes=sizeof(data);
@@ -595,26 +596,24 @@ static void peak_zoom_continuity_test(void)
     b.volts_per_code[0]=b.volts_per_code[1]=0.02;b.trigger_sample=CAPTURE_NO_TRIGGER;
     v.zero_y[0]=v.zero_y[1]=200;v.pixels_per_volt[0]=v.pixels_per_volt[1]=100;v.skip_spectrum=1;
     for(s=0;s<sizeof(spans)/sizeof(spans[0]);++s){
-        uint8_t expected[SCOPE_PLOT_WIDTH]={0};unsigned marks=0;
+        int low=INT16_MAX,high=INT16_MIN;
         v.display_samples=spans[s];v.display_first=4096-spans[s]/2.0;
-        /* Project physical bucket midpoints independently of column reduction. */
-        for(i=0;i<b.bytes/4;++i){
-            double p=(2.0*i+1-v.display_first)*SCOPE_PLOT_WIDTH/spans[s];
-            if(p>=0 && p<SCOPE_PLOT_WIDTH)expected[(unsigned)p]=1;
-        }
         assert(capture_process(&b,&v,&f));
         assert(fabs(f.minimum[0]+0.56)<1e-12 && fabs(f.maximum[0]-0.64)<1e-12);
         for(x=0;x<SCOPE_PLOT_WIDTH;++x){
-            assert(f.y[0][x]==200);
-            if(expected[x]){
-                assert(f.y_min[0][x]==136 && f.y_max[0][x]==256);++marks;
-            }else assert(f.y_min[0][x]==200 && f.y_max[0][x]==200);
+            if(f.y_min[0][x]<low)low=f.y_min[0][x];
+            if(f.y_max[0][x]>high)high=f.y_max[0][x];
+            assert(f.y_min[0][x]<=f.y[0][x] && f.y[0][x]<=f.y_max[0][x]);
+            if(spans[s]==64){
+                double phase=fmod(v.display_first+x*v.display_samples/SCOPE_PLOT_WIDTH,2.0);
+                double code=phase<2.0/3?128-42*phase:
+                    phase<4.0/3?100+90*(phase-2.0/3):160-48*(phase-4.0/3);
+                assert(abs(f.y[0][x]-(int)(200-(code-128)*2))<=1);
+                assert(f.y_max[0][x]-f.y_min[0][x]<=12);
+            }
         }
-        if(s>=3)assert(marks<=previous && (s!=5 || previous-marks<=1));
-        previous=marks;
-        if(spans[s]==2000)assert(marks==1000);
-        if(spans[s]==1000)assert(marks==500);
-        if(spans[s]==64)assert(marks==32);
+        /* The same continuous polygon keeps its amplitude at all zooms. */
+        assert(low==136 && high==256);
     }
     v.display_first=3596;v.display_samples=1000;v.density_enabled=1;
     assert(capture_process(&b,&v,&f));
@@ -623,16 +622,114 @@ static void peak_zoom_continuity_test(void)
         if(f.density[0][x][200])++hits;
         assert(f.density[0][x][136]==0 && f.density[0][x][256]==0);
     }
-    assert(hits==1000); /* Peak marks never become invented density hits. */
+    assert(hits==1000); /* Interpolated vertices never become invented density hits. */
     v.density_enabled=0;
-    /* A single hidden pulse never expands horizontally when zooming in. */
+    /* A hidden pulse becomes a connected triangle inside its own interval.
+       No vertex is assigned to a falsely precise timestamp. */
     memset(peaks,128,sizeof(peaks));peaks[4*2048+2]=255;
     for(s=2;s<sizeof(spans)/sizeof(spans[0]);++s){
         unsigned marks=0;
         v.display_samples=spans[s];v.display_first=4096-spans[s]/2.0;
         assert(capture_process(&b,&v,&f));
-        for(x=0;x<SCOPE_PLOT_WIDTH;++x)if(f.y_min[0][x]<200)++marks;
-        assert(marks==1);
+        for(x=0;x<SCOPE_PLOT_WIDTH;++x)if(f.y_min[0][x]<200){
+            double left=v.display_first+x*v.display_samples/SCOPE_PLOT_WIDTH;
+            double right=v.display_first+(x+1)*v.display_samples/SCOPE_PLOT_WIDTH;
+            assert(left<4098 && right>4096);++marks;
+        }
+        assert(marks>=1 && marks<=(unsigned)ceil(2.0*SCOPE_PLOT_WIDTH/spans[s])+1);
+    }
+    /* With two hidden extrema, the descending trace visits max first. */
+    memset(data,128,sizeof(data));memset(peaks,128,sizeof(peaks));
+    data[2048]=100;data[2050]=150;data[2052]=200;
+    data[2049]=200;data[2051]=150;data[2053]=100;
+    peaks[2048]=peaks[2049]=25;peaks[2050]=peaks[2051]=229;
+    v.display_first=1024;v.display_samples=2;
+    assert(capture_process(&b,&v,&f));
+    assert(f.y[0][341]>400 && f.y[0][683]<0);
+    assert(f.y[1][341]<0 && f.y[1][683]>400);
+}
+
+static void peak_resolved_trace_test(void)
+{
+    uint8_t data[4096],peaks[4096];
+    CaptureBuffer b={0};CaptureView v={0};static DisplayFrame raw,peak;
+    const double spans[]={4000,2049,2048,2047,1025,1024,1023,1000,64,4};
+    unsigned kind,i,s,ch;
+    b.data=data;b.capacity=b.bytes=sizeof(data);b.sample_rate_hz=200000;
+    b.zero_code[0]=b.zero_code[1]=128;b.volts_per_code[0]=.02;b.volts_per_code[1]=-.02;
+    b.trigger_sample=CAPTURE_NO_TRIGGER;
+    v.zero_y[0]=v.zero_y[1]=200;v.pixels_per_volt[0]=v.pixels_per_volt[1]=100;v.skip_spectrum=1;
+    for(kind=0;kind<5;++kind){
+        for(i=0;i<2048;++i){
+            unsigned code=kind==0?(unsigned)(128+60*sin(i*.07)):
+                kind==1?60+i%128:kind==2?188-i%128:
+                kind==3?(i%32<16?70:185):100+i*37%57;
+            data[2*i]=data[2*i+1]=(uint8_t)code;
+        }
+        for(i=0;i<2048;i+=2)for(ch=0;ch<2;++ch){
+            unsigned a=data[2*i+ch],c=data[2*(i+1)+ch];
+            peaks[2*i+ch]=(uint8_t)(a<c?a:c);
+            peaks[2*i+2+ch]=(uint8_t)(a>c?a:c);
+        }
+        for(s=0;s<sizeof(spans)/sizeof(spans[0]);++s){
+            v.display_first=1024-spans[s]/2+.123;v.display_samples=spans[s];
+            b.peaks=NULL;assert(capture_process(&b,&v,&raw));
+            b.peaks=peaks;assert(capture_process(&b,&v,&peak));
+            /* A resolved sine, rising/falling slope, square or noise retains
+               exactly the original raster, including negative gain and gaps. */
+            assert(!memcmp(raw.y,peak.y,sizeof(raw.y)));
+            assert(!memcmp(raw.y_min,peak.y_min,sizeof(raw.y_min)));
+            assert(!memcmp(raw.y_max,peak.y_max,sizeof(raw.y_max)));
+            assert(!memcmp(raw.mean,peak.mean,sizeof(raw.mean)));
+            assert(!memcmp(raw.rms,peak.rms,sizeof(raw.rms)));
+            assert(!memcmp(raw.frequency_hz,peak.frequency_hz,sizeof(raw.frequency_hz)));
+        }
+    }
+    /* Even extreme display interpolation cannot enter FFT, mean or RMS. */
+    v.display_first=0;v.display_samples=2048;v.skip_spectrum=0;
+    b.peaks=NULL;assert(capture_process(&b,&v,&raw));
+    for(i=0;i<sizeof(peaks);i+=4){peaks[i]=peaks[i+1]=0;peaks[i+2]=peaks[i+3]=255;}
+    b.peaks=peaks;assert(capture_process(&b,&v,&peak));
+    assert(!memcmp(raw.fft,peak.fft,sizeof(raw.fft)));
+    assert(!memcmp(raw.mean,peak.mean,sizeof(raw.mean)));
+    assert(!memcmp(raw.rms,peak.rms,sizeof(raw.rms)));
+    assert(!memcmp(raw.frequency_hz,peak.frequency_hz,sizeof(raw.frequency_hz)));
+}
+
+static unsigned sampled_sine_code(double sample, double period, double phase)
+{
+    return (unsigned)floor(128+60*sin(6.283185307179586*(sample/period+phase))+.5);
+}
+
+static void peak_sine_deviation_test(void)
+{
+    uint8_t data[4096],peaks[4096];
+    CaptureBuffer b={0};CaptureView v={0};static DisplayFrame raw,peak;
+    const unsigned periods[]={64,32,20,10,4}, limits[]={0,0,8,32,152};
+    unsigned k,p,i,j,x;
+    b.data=data;b.bytes=b.capacity=sizeof(data);b.sample_rate_hz=200000;
+    b.trigger_sample=CAPTURE_NO_TRIGGER;b.volts_per_code[0]=b.volts_per_code[1]=1;
+    v.zero_y[0]=v.zero_y[1]=300;v.pixels_per_volt[0]=v.pixels_per_volt[1]=8;
+    v.skip_spectrum=1;v.display_first=768;v.display_samples=128;
+    for(k=0;k<sizeof(periods)/sizeof(periods[0]);++k)for(p=0;p<32;++p){
+        for(i=0;i<2048;++i)
+            data[2*i]=data[2*i+1]=(uint8_t)sampled_sine_code(i,periods[k],p/32.0);
+        for(i=0;i<2048;i+=2){
+            unsigned low=255,high=0;
+            /* Peak Detect sees 32 native conversions per retained sample. */
+            for(j=0;j<64;++j){
+                unsigned c=sampled_sine_code(i+j/32.,periods[k],p/32.0);
+                if(c<low)low=c;if(c>high)high=c;
+            }
+            peaks[2*i]=peaks[2*i+1]=(uint8_t)low;
+            peaks[2*i+2]=peaks[2*i+3]=(uint8_t)high;
+        }
+        b.peaks=NULL;assert(capture_process(&b,&v,&raw));
+        b.peaks=peaks;assert(capture_process(&b,&v,&peak));
+        /* Bound display changes relative to the saved sample line for this
+           sine/phase set; this is not a universal reconstruction guarantee. */
+        for(x=0;x<SCOPE_PLOT_WIDTH;++x)
+            assert((unsigned)abs(peak.y[0][x]-raw.y[0][x])<=limits[k]);
     }
 }
 
@@ -641,6 +738,8 @@ int main(void)
     processor_density_test();
     peak_detect_test();
     peak_zoom_continuity_test();
+    peak_resolved_trace_test();
+    peak_sine_deviation_test();
     protocol_test();
     queue_test();
     ring_test();
