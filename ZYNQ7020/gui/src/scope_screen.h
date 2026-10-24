@@ -104,6 +104,7 @@ typedef struct {
     uint8_t peak_detect;
     const int16_t *peak_min_samples[2], *peak_max_samples[2];
     const uint8_t *peak_strength[2];
+    const uint8_t *connections[2];
     const uint8_t *fft_ch2_bins;
     const char *fft_frequency_labels[SCOPE_FFT_TICKS];
     const char *fft_sampling_info;

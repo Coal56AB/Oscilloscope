@@ -216,6 +216,40 @@ static void test_plain_noise_intensity(uint32_t *pixels,int stride)
     demo.screen.peak_detect=0;
 }
 
+static void test_connected_front(uint32_t *pixels,int stride)
+{
+    static uint8_t hits[SCOPE_PLOT_WIDTH][SCOPE_PLOT_HEIGHT];
+    static uint8_t coverage[SCOPE_PLOT_WIDTH][SCOPE_PLOT_HEIGHT];
+    static uint8_t strength[SCOPE_PLOT_WIDTH];
+    static uint32_t background[SCOPE_WIDTH*SCOPE_HEIGHT];
+    int ch,mode,x,y;
+    demo_signal_init(&demo);demo.screen.measurement_count=0;
+    demo.screen.density_rows=SCOPE_PLOT_HEIGHT;demo.screen.density_samples=8192;
+    demo.screen.peak_detect=1;
+    for(x=0;x<SCOPE_PLOT_WIDTH;++x){
+        demo.ch1[x]=demo.ch2[x]=x<300?180:340;
+        hits[x][x<300?180:340]=255;
+        strength[x]=255; /* Missing native extrema must not erase a real edge. */
+    }
+    for(y=180;y<=340;++y){coverage[300][y]=64;if(y%24==0)hits[300][y]=16;}
+    demo.screen.ch1_enabled=demo.screen.ch2_enabled=0;
+    scope_screen_render(background,SCOPE_WIDTH,&demo.screen);
+    for(ch=0;ch<2;++ch)for(mode=0;mode<2;++mode){
+        demo.screen.ch1_enabled=ch==0;demo.screen.ch2_enabled=ch==1;
+        demo.screen.intensity_coloring=(uint8_t)mode;
+        demo.screen.connections[ch]=&coverage[0][0];
+        demo.screen.density_levels[ch]=&hits[0][0];
+        demo.screen.peak_strength[ch]=strength;
+        scope_screen_render(pixels,stride,&demo.screen);
+        for(y=181;y<340;++y)
+            assert(pixels[(SCOPE_PLOT_Y+y)*stride+300]!=background[(SCOPE_PLOT_Y+y)*SCOPE_WIDTH+300]);
+        if(mode)assert((pixels[(SCOPE_PLOT_Y+201)*stride+300]&255)>=90);
+        /* The adjacent column has no recorded transition: do not fill it. */
+        for(y=200;y<320;++y)
+            assert(pixels[(SCOPE_PLOT_Y+y)*stride+299]==background[(SCOPE_PLOT_Y+y)*SCOPE_WIDTH+299]);
+    }
+}
+
 static void test_fft_cursor_label(uint32_t *pixels, int stride)
 {
     int side, x, y;
@@ -418,6 +452,7 @@ int main(void)
     test_trace_gaps(pixels, SCOPE_WIDTH + 3);
     test_density_connections_and_battery(pixels, SCOPE_WIDTH + 3);
     test_plain_noise_intensity(pixels, SCOPE_WIDTH + 3);
+    test_connected_front(pixels, SCOPE_WIDTH + 3);
     test_external_without_samples(pixels, SCOPE_WIDTH + 3);
     test_trigger_icons(pixels, SCOPE_WIDTH + 3);
     test_lowercase_n(pixels, SCOPE_WIDTH + 3);

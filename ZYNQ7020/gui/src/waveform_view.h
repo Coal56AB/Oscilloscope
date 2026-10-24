@@ -32,6 +32,11 @@ void waveform_view_peak_bounds(const WaveformSource *source, double first, doubl
                                unsigned channel, double zero_y, double pixels_per_unit,
                                double quantum, size_t columns, int16_t *minimum, int16_t *maximum,
                                uint8_t *strength);
+/* Rasterize consecutive byte samples, not a decimated representative curve.
+   Coverage is display-only; it never contributes to sample hit counts. */
+int waveform_view_connect_u8(const uint8_t *data, size_t count, size_t stride,
+                              const double positions[256], double first, double samples,
+                              size_t columns, size_t rows, uint8_t *coverage);
 /* Count original samples, without interpolated hits, envelope filling or blur. */
 void waveform_density_column(const WaveformSource *source, double first, double samples,
                              unsigned channel, double zero_y, double pixels_per_unit,

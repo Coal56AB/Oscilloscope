@@ -248,7 +248,7 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
     source.value = b->peaks?source_value:NULL;
     source.envelope = b->peaks?source_envelope:NULL;
     source.envelope_samples = b->peaks?2:0;
-    memset(f, 0, offsetof(DisplayFrame,density));
+    memset(f, 0, offsetof(DisplayFrame,connections));
     f->sequence = b->sequence;
     f->sample_rate_hz = b->sample_rate_hz;
     f->peak_detect = b->peaks!=NULL;
@@ -386,6 +386,15 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
                                  SCOPE_PLOT_WIDTH, f->peak_min[ch], f->peak_max[ch], f->peak_strength[ch]);
         if (!v->skip_spectrum && !spectrum(b, v, ch, f->fft_size, f->fft[ch])) return 0;
         if (v->density_enabled && !density(b,v,display_first,display_samples,ch,&f->density[ch][0][0])) return 0;
+        if(v->density_enabled){
+            double positions[256];unsigned code;
+            unsigned rows=v->density_rows?v->density_rows:SCOPE_PLOT_HEIGHT;
+            for(code=0;code<256;++code)
+                positions[code]=(v->zero_y[ch]-(code-b->zero_code[ch])*gain*v->pixels_per_volt[ch])*rows/SCOPE_PLOT_HEIGHT;
+            memset(f->connections[ch],0,sizeof(f->connections[ch]));
+            if(!waveform_view_connect_u8(b->data+ch,b->bytes/2,2,positions,display_first,display_samples,
+                                         SCOPE_PLOT_WIDTH,rows,&f->connections[ch][0][0]))return 0;
+        }
     }
     f->density_valid = v->density_enabled;
     f->density_rows = v->density_rows?v->density_rows:SCOPE_PLOT_HEIGHT;

@@ -534,6 +534,7 @@ static void processor_density_test(void)
     assert(frame.density[0][300][200]==255);
     assert(frame.density[0][300][180]==16);
     assert(frame.density[0][300][190]==0); /* No invented hits inside min/max. */
+    assert(frame.connections[0][300][190]>0); /* Real sample-to-sample connection, separate from hits. */
     v.display_first=2048;v.display_samples=1024;
     assert(capture_process(&b,&v,&frame) && frame.density_valid);
     assert(frame.density[0][300][200]==255);
@@ -547,6 +548,58 @@ static void processor_density_test(void)
     assert(capture_process(&b,&v,&frame) && frame.density_rows==240);
     /* Logical rows 200 and 201 share a physical pixel: sum before coloring. */
     assert(frame.density[0][300][100]==255 && frame.density[0][300][101]==0);
+    assert((&frame.connections[0][0][0])[300*240+100]);
+    assert(!(&frame.connections[0][0][0])[300*240+101]);
+}
+
+static void connected_projection_test(void)
+{
+    uint8_t data[32768];
+    static uint8_t coverage[1024*480];
+    double positions[256];unsigned i,x,y;
+    const unsigned spans[]={32768,20480,16384,8192};
+    for(i=0;i<256;++i)positions[i]=100+i;
+    /* Every column contains complete periods. Picking its first sample would
+       produce DC or a false slow beat; all real transitions must form a wall. */
+    for(i=0;i<sizeof(data);++i)data[i]=i%8<4?0:200;
+    for(i=0;i<sizeof(spans)/sizeof(spans[0]);++i){
+        assert(waveform_view_connect_u8(data,sizeof(data),1,positions,.25,spans[i]-1,
+                                        1024,480,coverage));
+        for(x=0;x<1024;++x){
+            for(y=100;y<=300;++y)assert(coverage[x*480+y]);
+            assert(!coverage[x*480+99] && !coverage[x*480+301]);
+        }
+    }
+    /* A resolved period keeps its two crossings; drawing cannot invent a
+       lower-frequency envelope when the view is shifted by a fractional sample. */
+    for(i=0;i<sizeof(data);++i)data[i]=i%128<64?0:200;
+    for(i=0;i<4;++i){
+        unsigned crossings=0,previous=0;
+        assert(waveform_view_connect_u8(data,sizeof(data),1,positions,i*.23,4096,
+                                        1024,480,coverage));
+        for(x=0;x<1024;++x){
+            unsigned current=coverage[x*480+200]!=0;
+            if(current && !previous)++crossings;
+            previous=current;
+        }
+        assert(crossings==64);
+    }
+    /* Interpolated front at sparse zoom: every pixel along it is connected,
+       but the native peak bucket never turns into a stretched rectangle. */
+    data[0]=0;data[1]=200;
+    assert(waveform_view_connect_u8(data,2,1,positions,0,1,100,480,coverage));
+    for(x=0;x<100;++x){
+        assert(coverage[x*480+100+2*x]==255);
+        assert(coverage[x*480+102+2*x]==255);
+        assert(!coverage[x*480+99+2*x]);
+        assert(!coverage[x*480+103+2*x]);
+    }
+    /* Clip lines crossing the visible vertical range, including reversed gain. */
+    for(i=0;i<256;++i)positions[i]=600-5.0*i;
+    assert(waveform_view_connect_u8(data,2,1,positions,0,1,1,480,coverage));
+    for(y=0;y<480;++y)assert(coverage[y]);
+    assert(waveform_view_connect_u8(data,2,1,positions,4,1,1,480,coverage));
+    for(y=0;y<480;++y)assert(!coverage[y]);
 }
 
 static void peak_detect_test(void)
@@ -737,6 +790,7 @@ static void peak_sine_deviation_test(void)
 int main(void)
 {
     processor_density_test();
+    connected_projection_test();
     peak_detect_test();
     peak_zoom_continuity_test();
     peak_resolved_trace_test();

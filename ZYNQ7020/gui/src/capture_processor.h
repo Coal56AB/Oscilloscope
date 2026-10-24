@@ -28,6 +28,7 @@ typedef struct {
     int density_valid;
     unsigned density_rows;
     int peak_detect;
+    uint8_t connections[2][SCOPE_PLOT_WIDTH][SCOPE_PLOT_HEIGHT];
     uint8_t density[2][SCOPE_PLOT_WIDTH][SCOPE_PLOT_HEIGHT];
 } DisplayFrame;
 /* Scans the recorded overlap, preserves spikes using per-column min/max;

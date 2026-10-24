@@ -490,6 +490,7 @@ static void render_generator_view(DemoSignal *demo, double start_us, double us_p
         double zero = channel_zero(demo, x) +
                       (demo->coupling[x] ? (x ? 1.60 : 1.20) * scale * 0.5 : 0.0);
         demo->screen.density_levels[x] = NULL;
+        demo->screen.connections[x] = NULL;
         demo->screen.peak_detect = 0;
         demo->screen.density_source[x].context = demo->source_samples[x];
         demo->screen.density_source[x].samples = demo->source_count;
@@ -589,6 +590,7 @@ void demo_signal_begin_external(DemoSignal *demo)
     demo->screen.peak_detect = 0;
     for (ch=0;ch<2;++ch) {
         demo->screen.density_levels[ch]=NULL;
+        demo->screen.connections[ch]=NULL;
         demo->screen.density_source[ch].samples=0;
         demo->screen.peak_min_samples[ch]=demo->screen.peak_max_samples[ch]=NULL;
         demo->screen.peak_strength[ch]=NULL;
@@ -2401,6 +2403,7 @@ void demo_signal_ui_show_wave(DemoSignal *demo, const char *name,
     for(channel=0;channel<2;++channel){
         demo->screen.density_source[channel].samples=0;
         demo->screen.density_levels[channel]=NULL;
+        demo->screen.connections[channel]=NULL;
         demo->screen.peak_min_samples[channel]=demo->screen.peak_max_samples[channel]=NULL;
         demo->screen.peak_strength[channel]=NULL;
     }

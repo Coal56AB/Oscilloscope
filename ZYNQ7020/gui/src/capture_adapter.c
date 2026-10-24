@@ -56,6 +56,7 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
     for(i=0;i<2;++i){
         d->screen.density_source[i].samples=0;
         d->screen.density_levels[i]=f->density_valid?&f->density[i][0][0]:NULL;
+        d->screen.connections[i]=f->density_valid?&f->connections[i][0][0]:NULL;
         d->screen.peak_min_samples[i]=f->peak_detect?f->peak_min[i]:NULL;
         d->screen.peak_max_samples[i]=f->peak_detect?f->peak_max[i]:NULL;
         d->screen.peak_strength[i]=f->peak_detect?f->peak_strength[i]:NULL;

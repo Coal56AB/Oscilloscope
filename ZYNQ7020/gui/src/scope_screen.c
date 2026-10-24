@@ -678,10 +678,11 @@ static void trace_density(const ScopeScreen *screen, unsigned channel, uint32_t 
        to ADC hit counts, and unknown peak intervals never get a made-up curve. */
     draw_alpha=screen->intensity_coloring || screen->density_samples<=SCOPE_PLOT_WIDTH?
         saved_alpha:saved_alpha*160/255;
-    trace(channel ? screen->ch2_samples : screen->ch1_samples,
-          screen->peak_detect?screen->peak_strength[channel]:NULL,
-          opacity,
-          screen->intensity_coloring?RGB(0,35,150):color);
+    if(!screen->connections[channel])
+        trace(channel ? screen->ch2_samples : screen->ch1_samples,
+              screen->peak_detect?screen->peak_strength[channel]:NULL,
+              opacity,
+              screen->intensity_coloring?RGB(0,35,150):color);
     draw_alpha=saved_alpha;
     if (!levels) {
         for(x=0;x<SCOPE_PLOT_WIDTH;++x) {
@@ -696,6 +697,15 @@ static void trace_density(const ScopeScreen *screen, unsigned channel, uint32_t 
             channel,screen->density_zero[channel]*ratio,screen->density_scale[channel]*ratio,
             SCOPE_PLOT_WIDTH,x,rows,counts);
         for(y=0;y<rows;++y) {
+            if(screen->connections[channel]){
+                unsigned coverage=screen->connections[channel][x*rows+y];
+                if(coverage){
+                    if(screen->intensity_coloring && coverage<160)coverage=160;
+                    draw_alpha=saved_alpha*coverage/255;
+                    pixel(PLOT_X+x,view_top+y*view_height/rows,
+                          screen->intensity_coloring?RGB(0,35,150):color);
+                }
+            }
             unsigned level=levels?levels[x*SCOPE_PLOT_HEIGHT+y]:waveform_density_level(counts[y],peak);
             if(level){
                 draw_alpha=screen->intensity_coloring?saved_alpha:saved_alpha*level/255;

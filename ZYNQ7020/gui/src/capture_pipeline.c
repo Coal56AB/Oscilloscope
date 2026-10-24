@@ -451,7 +451,7 @@ int capture_pipeline_frame(CapturePipeline *p, DisplayFrame *f)
     scope_mutex_unlock(&p->mutex);
     if(!slot)return 0;
     ready=&p->frames[slot-1];
-    memcpy(f,ready,ready->density_valid?sizeof(*f):offsetof(DisplayFrame,density));
+    memcpy(f,ready,ready->density_valid?sizeof(*f):offsetof(DisplayFrame,connections));
     scope_mutex_lock(&p->mutex);
     p->reading_slot=0;
     scope_mutex_unlock(&p->mutex);
