@@ -14,11 +14,11 @@ set_property -dict {CONFIG.TDATA_NUM_BYTES 8 CONFIG.HAS_TKEEP 1 CONFIG.HAS_TLAST
 generate_target simulation [get_ips {adc_fifo_test adc_cdc_test}]
 add_files [file join $source_dir axis_capture_pack.v]
 add_files [list [file join $source_dir axis_capture_frame.v] [file join $source_dir ad9288_input.v] [file join $source_dir axis_capture_decimate.v] [file join $source_dir capture_config.v]]
-foreach top {axis_capture_pack_tb axis_capture_frame_tb axis_capture_stream_tb ad9288_input_tb adc_stream_ip_tb axis_capture_decimate_tb capture_config_tb ad9288_clock_tb} {
+foreach top {axis_capture_pack_tb axis_capture_frame_tb axis_capture_stream_tb ad9288_input_tb adc_stream_ip_tb axis_capture_decimate_tb capture_config_tb ad9288_clock_tb ad9288_settle_tb} {
     add_files -fileset sim_1 [file join $source_dir tests ${top}.v]
     set_property file_type SystemVerilog [get_files ${top}.v]
 }
-foreach top {axis_capture_pack_tb axis_capture_frame_tb axis_capture_stream_tb ad9288_input_tb adc_stream_ip_tb axis_capture_decimate_tb capture_config_tb ad9288_clock_tb} {
+foreach top {axis_capture_pack_tb axis_capture_frame_tb axis_capture_stream_tb ad9288_input_tb adc_stream_ip_tb axis_capture_decimate_tb capture_config_tb ad9288_clock_tb ad9288_settle_tb} {
     set_property top $top [get_filesets sim_1]
     launch_simulation
     run all

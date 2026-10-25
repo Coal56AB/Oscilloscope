@@ -46,9 +46,10 @@ module ad9288_input(
         if (!resetn) begin enable_meta<=0; enable_sync<=0; end
         else begin enable_meta<=enable; enable_sync<=enable_meta; end
         group_data <= {sample_b, sample_a};
-        // Sample B after its encode edge, then register the stable A/B pair.
+        // Divided encode still uses a 100 MHz receiver. Allow the forwarded
+        // clock, ADC tPD and input return path to settle before taking B.
         group_valid<=encode_shift==0 ||
-            encode_count==(((encode_period >> 1)+7'd2)&(encode_period-1'b1));
+            encode_count==(((encode_period >> 1)+7'd3)&(encode_period-1'b1));
         if (!resetn || !enable_sync) begin warmup<=0; overflow<=0; end
         else if (!warm) warmup<=warmup+1'b1;
         else if (m_axis_tvalid && !m_axis_tready) overflow<=1;

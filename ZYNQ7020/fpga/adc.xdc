@@ -1,6 +1,8 @@
 # XS1 uses paired odd/even numbering; CAM1 in the MINI PDF uses two
 # consecutive rows: XS1 even 2*k = CAM1 k; XS1 odd 2*k-1 = CAM1 41-k.
 # Cross-check power: XS1 1/2=5V/GND, 37/38=GND, 39/40=3V3.
+# Logical adc*_a/adc_clk_a connect to physical B, adc*_b/adc_clk_b to A.
+# ADC0 D3A: XS1.15 -> CAM1.33 -> N17; D5A: XS1.17 -> CAM1.32 -> W14.
 set_property PACKAGE_PIN Y19 [get_ports {adc0_a[0]}]
 set_property PACKAGE_PIN W18 [get_ports {adc0_a[1]}]
 set_property PACKAGE_PIN Y18 [get_ports {adc0_a[2]}]
@@ -12,9 +14,9 @@ set_property PACKAGE_PIN W15 [get_ports {adc0_a[7]}]
 set_property PACKAGE_PIN U19 [get_ports {adc0_b[0]}]
 set_property PACKAGE_PIN W19 [get_ports {adc0_b[1]}]
 set_property PACKAGE_PIN U14 [get_ports {adc0_b[2]}]
-set_property PACKAGE_PIN W14 [get_ports {adc0_b[3]}]
+set_property PACKAGE_PIN N17 [get_ports {adc0_b[3]}]
 set_property PACKAGE_PIN Y14 [get_ports {adc0_b[4]}]
-set_property PACKAGE_PIN N17 [get_ports {adc0_b[5]}]
+set_property PACKAGE_PIN W14 [get_ports {adc0_b[5]}]
 set_property PACKAGE_PIN V16 [get_ports {adc0_b[6]}]
 set_property PACKAGE_PIN P16 [get_ports {adc0_b[7]}]
 set_property PACKAGE_PIN R18 [get_ports {adc1_a[0]}]
