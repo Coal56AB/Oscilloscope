@@ -40,15 +40,15 @@ static int16_t pixel_y(double value, double zero, double scale)
     return (int16_t)(y <= INT16_MIN ? INT16_MIN + 1 : y > INT16_MAX ? INT16_MAX : y);
 }
 
-int waveform_view_connect_u8(const uint8_t *data, size_t count, size_t stride,
-                              const double positions[256], double first, double samples,
+static int connect_samples(const uint8_t *data, const double *values, size_t count, size_t stride,
+                              const double positions[256], double zero, double scale, double first, double samples,
                               size_t columns, size_t rows, uint8_t *coverage)
 {
     size_t x, y;
     int32_t *difference;
     if (!coverage || !columns || !rows) return 0;
     memset(coverage,0,columns*rows);
-    if (!data || !stride || !isfinite(first) || !isfinite(samples) || samples<=0) return 0;
+    if ((!values && (!data || !stride)) || !isfinite(first) || !isfinite(samples) || samples<=0) return 0;
     if(count<2)return 1;
     difference=calloc(rows+1,sizeof(*difference));
     if (!difference) return 0;
@@ -61,7 +61,8 @@ int waveform_view_connect_u8(const uint8_t *data, size_t count, size_t stride,
         memset(difference,0,(rows+1)*sizeof(*difference));
         i=(size_t)floor(left);end=(size_t)ceil(right);
         for(;i<end;++i){
-            double a=positions[data[i*stride]],b=positions[data[(i+1)*stride]];
+            double a=values?zero-values[i]*scale:positions[data[i*stride]];
+            double b=values?zero-values[i+1]*scale:positions[data[(i+1)*stride]];
             double start=left>i?a+(b-a)*(left-i):a;
             double finish=right<i+1?a+(b-a)*(right-i):b;
             int low,high;
@@ -80,6 +81,20 @@ int waveform_view_connect_u8(const uint8_t *data, size_t count, size_t stride,
     }
     free(difference);
     return 1;
+}
+
+int waveform_view_connect_u8(const uint8_t *data, size_t count, size_t stride,
+                              const double positions[256], double first, double samples,
+                              size_t columns, size_t rows, uint8_t *coverage)
+{
+    return connect_samples(data,NULL,count,stride,positions,0,0,first,samples,columns,rows,coverage);
+}
+
+int waveform_view_connect_f64(const double *values, size_t count, double zero_y, double scale,
+                              double first, double samples, size_t columns, size_t rows, uint8_t *coverage)
+{
+    if (!values || !isfinite(zero_y) || !isfinite(scale)) return 0;
+    return connect_samples(NULL,values,count,0,NULL,zero_y,scale,first,samples,columns,rows,coverage);
 }
 
 void waveform_view_reduce(const WaveformSource *source, double first, double samples,

@@ -41,6 +41,7 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     if (r->pan_fraction > 1)
         r->pan_fraction = 1;
     for (ch = 0; ch < 2; ++ch) {
+        r->filter_level[ch] = (unsigned)d->filter_level[ch];
         r->zero_y[ch] = wave.zero_y[ch];
         r->pixels_per_volt[ch] = (SCOPE_PLOT_HEIGHT / 8.0) * 1000 / wave.mv_per_div[ch];
         r->adc_volts_per_code[ch] = input_range_volts_per_code((unsigned)d->scale_index[ch]) *

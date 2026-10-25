@@ -122,6 +122,10 @@ static void test_external_trigger_marker(void)
     assert(demo.screen.trigger_marker_x==400&&demo.screen.zoom_window_start==200&&demo.screen.zoom_window_end==700);
     demo.fft_enabled=0;capture_request_from_demo(&demo,&r);assert(!r.spectrum_enabled);
     demo.fft_enabled=1;capture_request_from_demo(&demo,&r);assert(r.spectrum_enabled);
+    assert(demo_signal_set_option(&demo,DEMO_MENU_PROCESSING,0,2));
+    assert(demo_signal_set_option(&demo,DEMO_MENU_PROCESSING,1,3));
+    capture_request_from_demo(&demo,&r);
+    assert(r.filter_level[0]==2 && r.filter_level[1]==3);
 }
 
 static void test_adc_vertical_ranges(void)
@@ -314,6 +318,9 @@ static void test_fft_fine_touch(void)
 static void test_remote_commands(void)
 {
     FILE *response;int previous=demo.time_index;char header[32];
+    response=tmpfile();assert(response);
+    assert(remote_command("set record_depth_index 4",response,NULL));
+    assert(demo.record_depth_index==4);fclose(response);
     response=tmpfile();assert(response);
     assert(remote_command("set time_index 4",response,NULL));
     assert(demo.time_index!=previous);fclose(response);

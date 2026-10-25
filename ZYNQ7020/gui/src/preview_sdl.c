@@ -914,7 +914,7 @@ static int remote_set(const char *key,double number)
         {"ch1_probe_ten",DEMO_MENU_CH1,2},{"ch2_probe_ten",DEMO_MENU_CH2,2},
         {"ch1_scale_index",DEMO_MENU_CH1,3},{"ch2_scale_index",DEMO_MENU_CH2,3},
         {"ch1_filter",DEMO_MENU_PROCESSING,0},{"ch2_filter",DEMO_MENU_PROCESSING,1},
-        {"record_depth_index",DEMO_MENU_TIME,2},{"time_index",DEMO_MENU_TIME,0},{"trigger_mode",DEMO_MENU_TRIGGER,0},
+        {"record_depth_index",DEMO_MENU_PROCESSING,5},{"time_index",DEMO_MENU_TIME,0},{"trigger_mode",DEMO_MENU_TRIGGER,0},
         {"generator_frequency_index",DEMO_MENU_GENERATOR,2},{"ch1_wave",DEMO_MENU_GENERATOR,0},
         {"ch2_wave",DEMO_MENU_GENERATOR,1},{"simulation",DEMO_MENU_DEBUG,3},
         {"fft",DEMO_MENU_PROCESSING,4},{"persistence",DEMO_MENU_PROCESSING,3},

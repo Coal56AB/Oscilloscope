@@ -1,6 +1,7 @@
 #include "demo_signal.h"
 #include "capture_settings.h"
 #include "signal_generator.h"
+#include "signal_filter.h"
 #include "spectrum_bins.h"
 #include "battery_level.h"
 #include "waveform_view.h"
@@ -77,7 +78,6 @@ static const struct {
 #if DEMO_ENABLE_GENERATOR
     {"DEBUG", DEMO_MENU_DEBUG},
 #endif
-    {"TIME", DEMO_MENU_TIME}
 };
 static const char *debug_labels[] = {"GENERATOR", "LONG PRESS", "DOUBLE CLICK", "SIMULATION", "ADC CH1", "ADC CH2"};
 static const char *generator_labels[] = {"CH1 WAVE", "CH2 WAVE", "FREQUENCY"};
@@ -96,10 +96,10 @@ unsigned demo_signal_pc_baud(int index)
 {
     return index >= 0 && index < PC_BAUD_COUNT ? pc_bauds[index] : 0;
 }
-static const char *time_labels[] = {"TIME / DIV", "RESET POSITION", "RECORD LENGTH", "SAMPLE RATE"};
+static const char *time_labels[] = {"TIME / DIV", "RESET POSITION", "SAMPLE RATE"};
 static const char *record_names[] = {"10 K", "50 K", "100 K", "500 K", "1 M"};
 static const char *processing_labels[] = {
-    "CH1 FILTER", "CH2 FILTER", "COLORING", "PERSISTENCE", "FFT"
+    "CH1 FILTER", "CH2 FILTER", "COLORING", "PERSISTENCE", "FFT", "RECORD LENGTH"
 };
 static const char *display_labels[] = {"GRID"};
 static const char *filter_names[] = {"OFF", "LOW", "MEDIUM", "HIGH"};
@@ -372,21 +372,14 @@ static int sample_noise(uint32_t sequence, size_t x, int channel)
 
 static void filter_samples(int16_t *samples, int level)
 {
-    int16_t filtered[SCOPE_PLOT_WIDTH];
-    int radius = level == 1 ? 1 : level == 2 ? 2 : 4;
-    int x, offset;
+    double source[SCOPE_PLOT_WIDTH], filtered[SCOPE_PLOT_WIDTH];
+    int x;
     if (!level) return;
-    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x) {
-        int sum = 0, count = 0;
-        filtered[x] = WAVEFORM_NO_SAMPLE;
-        if (samples[x] == WAVEFORM_NO_SAMPLE) continue;
-        for (offset = -radius; offset <= radius; ++offset) {
-            int value = samples[clamp(x + offset, 0, SCOPE_PLOT_WIDTH - 1)];
-            if (value != WAVEFORM_NO_SAMPLE) {sum += value; ++count;}
-        }
-        filtered[x] = (int16_t)((sum + count / 2) / count);
-    }
-    memcpy(samples, filtered, sizeof(filtered));
+    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x)
+        source[x] = samples[x] == WAVEFORM_NO_SAMPLE ? NAN : samples[x];
+    signal_filter_apply(source, SCOPE_PLOT_WIDTH, (unsigned)level, filtered);
+    for (x = 0; x < SCOPE_PLOT_WIDTH; ++x)
+        samples[x] = isfinite(filtered[x]) ? (int16_t)lround(filtered[x]) : WAVEFORM_NO_SAMPLE;
 }
 
 static void spectrum(const int16_t *samples, uint8_t *bins)
@@ -455,7 +448,7 @@ static void generator_source_range(const void *context, size_t first, size_t end
                                    unsigned channel, double *minimum, double *maximum)
 {
     const DemoSignal *demo = context;
-    const double *values = demo->source_samples[channel];
+    const double *values = demo->filter_level[channel] ? demo->filtered_samples[channel] : demo->source_samples[channel];
     size_t i;
     *minimum = *maximum = values[first];
     for (i = first + 1; i < end; ++i) {
@@ -492,7 +485,10 @@ static void render_generator_view(DemoSignal *demo, double start_us, double us_p
         demo->screen.density_levels[x] = NULL;
         demo->screen.connections[x] = NULL;
         demo->screen.peak_detect = 0;
-        demo->screen.density_source[x].context = demo->source_samples[x];
+        if (demo->filter_level[x])
+            signal_filter_apply(demo->source_samples[x], demo->source_count,
+                                (unsigned)demo->filter_level[x], demo->filtered_samples[x]);
+        demo->screen.density_source[x].context = demo->filter_level[x] ? demo->filtered_samples[x] : demo->source_samples[x];
         demo->screen.density_source[x].samples = demo->source_count;
         demo->screen.density_source[x].range = density_source_range;
         demo->screen.density_first = (start_us-demo->capture_start_us)/demo->source_step_us;
@@ -503,12 +499,6 @@ static void render_generator_view(DemoSignal *demo, double start_us, double us_p
                              SCOPE_PLOT_WIDTH * us_per_pixel / demo->source_step_us,
                              x, zero, scale, SCOPE_PLOT_WIDTH, x ? demo->ch2 : demo->ch1,
                              demo->minimum[x], demo->maximum[x]);
-    }
-    filter_samples(demo->ch1, demo->filter_level[0]);
-    filter_samples(demo->ch2, demo->filter_level[1]);
-    for (x = 0; x < 2; ++x) {
-        filter_samples(demo->minimum[x], demo->filter_level[x]);
-        filter_samples(demo->maximum[x], demo->filter_level[x]);
     }
     bind_envelopes(demo);
 }
@@ -611,13 +601,6 @@ void demo_signal_begin_external(DemoSignal *demo)
 
 void demo_signal_present_external(DemoSignal *demo, uint64_t sequence)
 {
-    int ch;
-    filter_samples(demo->ch1, demo->filter_level[0]);
-    filter_samples(demo->ch2, demo->filter_level[1]);
-    for (ch = 0; ch < 2; ++ch) {
-        filter_samples(demo->minimum[ch], demo->filter_level[ch]);
-        filter_samples(demo->maximum[ch], demo->filter_level[ch]);
-    }
     bind_envelopes(demo);
     if (!demo->screen.running) demo->history_count = demo->screen.history_count = 0;
     if (!demo->external_frame_valid || demo->external_sequence != sequence) {
@@ -906,10 +889,10 @@ static int menu_item_count(DemoMenu kind)
     if (kind == DEMO_MENU_TRIGGER) return 7;
     if (kind == DEMO_MENU_CURSOR) return 1;
     if (kind == DEMO_MENU_DISPLAY) return 1;
-    if (kind == DEMO_MENU_TIME) return 4;
+    if (kind == DEMO_MENU_TIME) return 3;
     if (kind == DEMO_MENU_BROWSE) return DEMO_BROWSE_PAGE;
     if (kind == DEMO_MENU_PC) return 2;
-    if (kind == DEMO_MENU_PROCESSING) return 5;
+    if (kind == DEMO_MENU_PROCESSING) return 6;
     if (kind == DEMO_MENU_DEBUG) return 6;
     if (kind == DEMO_MENU_GENERATOR) return 3;
     if (kind == DEMO_MENU_FONT) return SCOPE_FONT_COUNT;
@@ -953,11 +936,12 @@ static int current_menu_value(const DemoSignal *demo)
         return demo->screen.grid_enabled;
     if (demo->menu_kind == DEMO_MENU_PC) return demo->pc_baud_index;
     if (demo->menu_kind == DEMO_MENU_TIME)
-        return item == 2 ? demo->record_depth_index : (demo->screen.zoom_enabled ? demo->zoom_time_index : demo->time_index);
+        return demo->screen.zoom_enabled ? demo->zoom_time_index : demo->time_index;
     if (demo->menu_kind == DEMO_MENU_PROCESSING)
         return item < 2 ? demo->filter_level[item] :
                item == 2 ? demo->intensity_coloring :
-               item == 3 ? demo->persistence_index : demo->fft_enabled;
+               item == 3 ? demo->persistence_index :
+               item == 5 ? demo->record_depth_index : demo->fft_enabled;
     if (demo->menu_kind == DEMO_MENU_GENERATOR)
         return item < 2 ? demo->generator_wave[item] :
                           demo->generator_frequency_index;
@@ -977,9 +961,9 @@ static int menu_value_count(const DemoSignal *demo)
                item == 6 ? SCOPE_PLOT_HEIGHT : 2;
     if (demo->menu_kind == DEMO_MENU_CURSOR) return 3;
     if (demo->menu_kind == DEMO_MENU_TIME) return item == 0 ?
-        (demo->screen.zoom_enabled ? demo->time_index + 1 : TIME_SCALE_COUNT) : item == 2 ? CAPTURE_DEPTH_COUNT : 1;
+        (demo->screen.zoom_enabled ? demo->time_index + 1 : TIME_SCALE_COUNT) : 1;
     if (demo->menu_kind == DEMO_MENU_PROCESSING)
-        return item < 2 ? 4 : item == 3 ? 3 : 2;
+        return item < 2 ? 4 : item == 3 ? 3 : item == 5 ? CAPTURE_DEPTH_COUNT : 2;
     if (demo->menu_kind == DEMO_MENU_GENERATOR)
         return item < 2 ? DEMO_WAVE_COUNT :
                           (int)(sizeof(generator_period_us) /
@@ -1111,16 +1095,14 @@ static void refresh_menu(DemoSignal *demo)
         set_menu_options(screen, 0, on_off_names, 2, screen->grid_enabled);
     } else if (demo->menu_kind == DEMO_MENU_TIME) {
         screen->menu_title = "TIME SETTINGS";
-        for (i = 0; i < 4; ++i) screen->menu_labels[i] = time_labels[i];
-        screen->menu_values[2] = record_names[demo->record_depth_index];
-        set_menu_options(screen, 2, record_names, CAPTURE_DEPTH_COUNT, demo->record_depth_index);
-        screen->menu_values[3] = demo->acquisition_rate_text;
+        for (i = 0; i < 3; ++i) screen->menu_labels[i] = time_labels[i];
+        screen->menu_values[2] = demo->acquisition_rate_text;
         screen->menu_values[0] = demo->time_text;
         screen->menu_values[1] = "CENTER";
         screen->menu_stepper[0] = 1;
     } else if (demo->menu_kind == DEMO_MENU_PROCESSING) {
         screen->menu_title = "PROCESSING";
-        for (i = 0; i < 5; ++i) screen->menu_labels[i] = processing_labels[i];
+        for (i = 0; i < 6; ++i) screen->menu_labels[i] = processing_labels[i];
         screen->menu_values[0] = filter_names[demo->filter_level[0]];
         screen->menu_values[1] = filter_names[demo->filter_level[1]];
         screen->menu_values[2] = demo->intensity_coloring ? "ON" : "OFF";
@@ -1131,6 +1113,8 @@ static void refresh_menu(DemoSignal *demo)
         set_menu_options(screen, 2, on_off_names, 2, demo->intensity_coloring);
         set_menu_options(screen, 3, persistence_names, 3, demo->persistence_index);
         set_menu_options(screen, 4, on_off_names, 2, demo->fft_enabled);
+        screen->menu_values[5] = record_names[demo->record_depth_index];
+        set_menu_options(screen, 5, record_names, CAPTURE_DEPTH_COUNT, demo->record_depth_index);
     } else if (demo->menu_kind == DEMO_MENU_DEBUG) {
         screen->menu_title = "DEBUG";
         screen->menu_labels[0] = debug_labels[0];
@@ -1200,11 +1184,12 @@ static void refresh_menu(DemoSignal *demo)
                 format_time_scale(demo->edit_scale_text, sizeof(demo->edit_scale_text),
                                   demo->edit_value);
                 screen->menu_values[i] = demo->edit_scale_text;
-            } else if (i == 2) screen->menu_values[i] = record_names[demo->edit_value];
+            }
         }
         else if (demo->menu_kind == DEMO_MENU_PROCESSING)
             screen->menu_values[i] = i < 2 ? filter_names[demo->edit_value] :
                                      i == 3 ? persistence_names[demo->edit_value] :
+                                     i == 5 ? record_names[demo->edit_value] :
                                               demo->edit_value ? "ON" : "OFF";
         else if (demo->menu_kind == DEMO_MENU_GENERATOR)
             screen->menu_values[i] = i < 2 ? generator_wave_names[demo->edit_value] :
@@ -1679,8 +1664,7 @@ static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     } else if (kind == DEMO_MENU_DISPLAY) {
         demo->screen.grid_enabled = (uint8_t)value;
     } else if (kind == DEMO_MENU_TIME) {
-        if (item == 2) demo->record_depth_index = value;
-        else if (demo->screen.zoom_enabled) demo->zoom_time_index = clamp(value, 0, demo->time_index);
+        if (demo->screen.zoom_enabled) demo->zoom_time_index = clamp(value, 0, demo->time_index);
         else demo->time_index = value;
         if (demo->waveform_loaded) {
             int limit = loaded_pan_limit(demo);
@@ -1691,9 +1675,14 @@ static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
                 SCOPE_PLOT_WIDTH / 2.0 - SCOPE_PLOT_WIDTH / (2 * zoom_ratio(demo)));
         }
     } else if (kind == DEMO_MENU_PROCESSING) {
-        if (item < 2) demo->filter_level[item] = value;
+        if (item < 2) {
+            if (demo->filter_level[item] != value)
+                demo->history_count = demo->screen.history_count = 0;
+            demo->filter_level[item] = value;
+        }
         else if (item == 2) demo->intensity_coloring = value;
         else if (item == 3) demo->persistence_index = value;
+        else if (item == 5) demo->record_depth_index = value;
         else {
             demo->fft_enabled = value;
             if (demo->fft_enabled && demo->screen.zoom_enabled)
@@ -1730,9 +1719,8 @@ int demo_signal_set_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     if(!demo||item<0||value<0)return 0;
     if((kind==DEMO_MENU_CH1||kind==DEMO_MENU_CH2)&&item<4)count=item==3?6:2;
     else if(kind==DEMO_MENU_TRIGGER&&item<4)count=item==0||item==2?3:item==3?4:2;
-    else if(kind==DEMO_MENU_TIME&&item==2)count=CAPTURE_DEPTH_COUNT;
     else if(kind==DEMO_MENU_TIME&&item==0)count=demo->screen.zoom_enabled?demo->time_index+1:TIME_SCALE_COUNT;
-    else if(kind==DEMO_MENU_PROCESSING&&item<5)count=item<2?4:item==3?3:2;
+    else if(kind==DEMO_MENU_PROCESSING&&item<6)count=item<2?4:item==3?3:item==5?CAPTURE_DEPTH_COUNT:2;
     else if(kind==DEMO_MENU_CURSOR&&item==0)count=3;
     else if(kind==DEMO_MENU_PC&&item==0)count=PC_BAUD_COUNT;
     else if(kind==DEMO_MENU_DEBUG&&item>0&&item<4)count=item==3?2:item==1?27:29;
@@ -1990,7 +1978,7 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
         demo_signal_force_trigger(demo);
     } else if (demo->menu_kind == DEMO_MENU_TRIGGER && item == 5) {
         reset_trigger_level(demo);
-    } else if (demo->menu_kind == DEMO_MENU_TIME && item == 3) {
+    } else if (demo->menu_kind == DEMO_MENU_TIME && item == 2) {
         return DEMO_ACTION_NONE;
     } else if (demo->menu_kind == DEMO_MENU_TIME && item == 1) {
         if (demo->screen.zoom_enabled) demo->zoom_offset = 0;
@@ -2002,7 +1990,6 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
                           demo->menu_kind == DEMO_MENU_CH2) &&
                          (item == 0 || item == 1 || item == 2);
         short_list |= demo->menu_kind == DEMO_MENU_TRIGGER && item < 4;
-        short_list |= demo->menu_kind == DEMO_MENU_TIME && item == 2;
         short_list |= demo->menu_kind == DEMO_MENU_CURSOR ||
                       demo->menu_kind == DEMO_MENU_DISPLAY ||
                       demo->menu_kind == DEMO_MENU_PROCESSING ||
@@ -2046,10 +2033,8 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
             apply_edit(demo);
             return DEMO_ACTION_NONE;
         }
-    } else if (demo->menu_kind == DEMO_MENU_TIME && index == 3) {
-        return DEMO_ACTION_NONE;
     } else if (demo->menu_kind == DEMO_MENU_TIME && index == 2) {
-        small_choice = 1;
+        return DEMO_ACTION_NONE;
     } else if (demo->menu_kind == DEMO_MENU_TIME && index == 0) {
         int step = direction < 0 ? -1 : 1;
         demo_signal_zoom_time(demo, demo->screen.zoom_enabled ? step : -step);

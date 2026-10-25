@@ -1,6 +1,7 @@
 #include "spectrum_bins.h"
 #include "capture_processor.h"
 #include "waveform_view.h"
+#include "signal_filter.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -179,7 +180,7 @@ static int spectrum(const CaptureBuffer *b, const CaptureView *v, unsigned ch, u
 /* Count original ADC hits before reduction. Lookup tables avoid floating point
    work per sample; the retained raw record remains the source for STOP/ZOOM. */
 static int density(const CaptureBuffer *b, const CaptureView *v, double first,
-                   double samples, unsigned ch, uint8_t *levels)
+                   double samples, unsigned ch, const double *filtered, uint8_t *levels)
 {
     size_t x, i;
     unsigned peak = 0, code;
@@ -196,7 +197,11 @@ static int density(const CaptureBuffer *b, const CaptureView *v, double first,
         size_t a = (size_t)ceil(fmax(0, fmin(first + x * samples / SCOPE_PLOT_WIDTH, b->bytes / 2)));
         size_t end = (size_t)ceil(fmax(0, fmin(first + (x + 1) * samples / SCOPE_PLOT_WIDTH, b->bytes / 2)));
         for (i = a; i < end; ++i) {
-            int y = rows[b->data[2*i+ch]];
+            int y;
+            if (filtered) {
+                double position = (v->zero_y[ch] - filtered[i] * v->pixels_per_volt[ch]) * height/SCOPE_PLOT_HEIGHT;
+                y = position >= 0 && position < height ? (int)position : -1;
+            } else y = rows[b->data[2*i+ch]];
             if (y >= 0) {
                 uint16_t *count = &counts[x*SCOPE_PLOT_HEIGHT+y];
                 if (*count < UINT16_MAX) ++*count;
@@ -212,16 +217,92 @@ static int density(const CaptureBuffer *b, const CaptureView *v, double first,
     return 1;
 }
 
+static double filtered_value(const void *context, size_t sample, unsigned channel)
+{
+    (void)channel;
+    return ((const double *)context)[sample];
+}
+
+static void filtered_range(const void *context, size_t first, size_t end, unsigned channel,
+                            double *minimum, double *maximum)
+{
+    const double *values = context;
+    size_t i;
+    (void)channel;
+    *minimum = *maximum = values[first];
+    for (i = first + 1; i < end; ++i) {
+        if (values[i] < *minimum) *minimum = values[i];
+        if (values[i] > *maximum) *maximum = values[i];
+    }
+}
+
+/* Filtering precedes every display representation. The immutable ADC record
+   remains the source for trigger, measurements and FFT, including in STOP. */
+static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *f,
+                           unsigned ch, double first, double samples)
+{
+    WaveformSource source = {0};
+    size_t count = b->bytes / 2, i;
+    double *workspace = NULL, *filtered = NULL;
+    int ok = 1;
+    unsigned rows = v->density_rows ? v->density_rows : SCOPE_PLOT_HEIGHT;
+    source.samples = count;
+    source.context = b;
+    source.range = source_range;
+    source.value = b->peaks ? source_value : NULL;
+    source.envelope = b->peaks ? source_envelope : NULL;
+    source.envelope_samples = b->peaks ? 2 : 0;
+    if (v->filter_level[ch]) {
+        if (count > SIZE_MAX / (2 * sizeof(*workspace))) return 0;
+        workspace = malloc(2 * count * sizeof(*workspace));
+        if (!workspace) return 0;
+        filtered = workspace + count;
+        for (i = 0; i < count; ++i) workspace[i] = sample_voltage(b, i, ch);
+        signal_filter_apply(workspace, count, v->filter_level[ch], filtered);
+        source.context = filtered;
+        source.range = filtered_range;
+        source.value = filtered_value;
+        /* Peak buckets have no known extrema timestamps; they cannot pass
+           through a time-domain filter or overlay its smoothed result. */
+        source.envelope = NULL;
+        source.envelope_samples = 0;
+    }
+    waveform_view_reduce(&source, first, samples, ch, v->zero_y[ch], v->pixels_per_volt[ch],
+                         SCOPE_PLOT_WIDTH, f->y[ch], f->y_min[ch], f->y_max[ch]);
+    waveform_view_peak_bounds(&source, first, samples, ch, v->zero_y[ch], v->pixels_per_volt[ch],
+                             fabs(b->volts_per_code[ch]), SCOPE_PLOT_WIDTH,
+                             f->peak_min[ch], f->peak_max[ch], f->peak_strength[ch]);
+    if (v->density_enabled) {
+        ok = density(b, v, first, samples, ch, filtered, &f->density[ch][0][0]);
+        memset(f->connections[ch], 0, sizeof(f->connections[ch]));
+        if (ok && filtered)
+            ok = waveform_view_connect_f64(filtered, count,
+                v->zero_y[ch] * rows / SCOPE_PLOT_HEIGHT,
+                v->pixels_per_volt[ch] * rows / SCOPE_PLOT_HEIGHT,
+                first, samples, SCOPE_PLOT_WIDTH, rows, &f->connections[ch][0][0]);
+        else if (ok) {
+            double positions[256];
+            unsigned code;
+            for (code = 0; code < 256; ++code)
+                positions[code] = (v->zero_y[ch] - (code - b->zero_code[ch]) *
+                    b->volts_per_code[ch] * v->pixels_per_volt[ch]) * rows / SCOPE_PLOT_HEIGHT;
+            ok = waveform_view_connect_u8(b->data + ch, count, 2, positions, first, samples,
+                                          SCOPE_PLOT_WIDTH, rows, &f->connections[ch][0][0]);
+        }
+    }
+    free(workspace);
+    return ok;
+}
+
 int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *f)
 {
     unsigned ch;
-    WaveformSource source={0};
     CaptureView overlap;
     double display_first, display_samples;
     uint64_t start_ns = scope_clock_ns();
     if (!capture_buffer_valid(b) || !v || !f)
         return 0;
-    if(v->density_rows>SCOPE_PLOT_HEIGHT)return 0;
+    if(v->density_rows>SCOPE_PLOT_HEIGHT || v->filter_level[0]>3 || v->filter_level[1]>3)return 0;
     if (v->display_samples != 0) {
         double first, end;
         if (!isfinite(v->display_first) || !isfinite(v->display_samples) || v->display_samples <= 0)
@@ -242,12 +323,6 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         if (!isfinite(b->volts_per_code[ch]) || !isfinite(b->zero_code[ch]) ||
             !isfinite(v->pixels_per_volt[ch]) || !isfinite(v->zero_y[ch]))
             return 0;
-    source.context = b;
-    source.samples = b->bytes / 2;
-    source.range = source_range;
-    source.value = b->peaks?source_value:NULL;
-    source.envelope = b->peaks?source_envelope:NULL;
-    source.envelope_samples = b->peaks?2:0;
     memset(f, 0, offsetof(DisplayFrame,connections));
     f->sequence = b->sequence;
     f->sample_rate_hz = b->sample_rate_hz;
@@ -378,23 +453,8 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         if (crossings > 1 && last > first)
             f->frequency_hz[ch] = (double)(crossings - 1) * b->sample_rate_hz / (last - first);
         f->duty[ch] = v->samples ? 100.0 * high / v->samples : NAN;
-        waveform_view_reduce(&source, display_first, display_samples, ch,
-                             v->zero_y[ch], v->pixels_per_volt[ch], SCOPE_PLOT_WIDTH,
-                             f->y[ch], f->y_min[ch], f->y_max[ch]);
-        waveform_view_peak_bounds(&source, display_first, display_samples, ch,
-                                 v->zero_y[ch], v->pixels_per_volt[ch], fabs(gain),
-                                 SCOPE_PLOT_WIDTH, f->peak_min[ch], f->peak_max[ch], f->peak_strength[ch]);
         if (!v->skip_spectrum && !spectrum(b, v, ch, f->fft_size, f->fft[ch])) return 0;
-        if (v->density_enabled && !density(b,v,display_first,display_samples,ch,&f->density[ch][0][0])) return 0;
-        if(v->density_enabled){
-            double positions[256];unsigned code;
-            unsigned rows=v->density_rows?v->density_rows:SCOPE_PLOT_HEIGHT;
-            for(code=0;code<256;++code)
-                positions[code]=(v->zero_y[ch]-(code-b->zero_code[ch])*gain*v->pixels_per_volt[ch])*rows/SCOPE_PLOT_HEIGHT;
-            memset(f->connections[ch],0,sizeof(f->connections[ch]));
-            if(!waveform_view_connect_u8(b->data+ch,b->bytes/2,2,positions,display_first,display_samples,
-                                         SCOPE_PLOT_WIDTH,rows,&f->connections[ch][0][0]))return 0;
-        }
+        if (!render_channel(b, v, f, ch, display_first, display_samples)) return 0;
     }
     f->density_valid = v->density_enabled;
     f->density_rows = v->density_rows?v->density_rows:SCOPE_PLOT_HEIGHT;

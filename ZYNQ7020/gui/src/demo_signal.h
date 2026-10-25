@@ -148,6 +148,7 @@ typedef struct {
     double capture_start_us, capture_step_us, source_step_us;
     size_t source_count;
     double source_samples[2][DEMO_CAPTURE_POINTS];
+    double filtered_samples[2][DEMO_CAPTURE_POINTS];
     int menu_position_x;
     int menu_position_y;
     DemoMenu menu_kind;

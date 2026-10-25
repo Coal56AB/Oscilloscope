@@ -11,6 +11,7 @@ typedef struct {
     int skip_spectrum;
     int density_enabled;
     unsigned density_rows;
+    unsigned filter_level[2];
 } CaptureView;
 typedef struct {
     int16_t y[2][SCOPE_PLOT_WIDTH], y_min[2][SCOPE_PLOT_WIDTH], y_max[2][SCOPE_PLOT_WIDTH];

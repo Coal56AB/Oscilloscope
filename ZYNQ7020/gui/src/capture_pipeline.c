@@ -105,6 +105,7 @@ static void process_frame(CapturePipeline *p, const CaptureBuffer *b,
     view.skip_spectrum = !request->spectrum_enabled;
     view.density_enabled = request->density_enabled;
     view.density_rows = request->density_rows;
+    memcpy(view.filter_level, request->filter_level, sizeof(view.filter_level));
     memcpy(view.zero_y, request->zero_y, sizeof(view.zero_y));
     memcpy(view.pixels_per_volt, request->pixels_per_volt, sizeof(view.pixels_per_volt));
     if (capture_process(b, &view, frame)) {
@@ -415,7 +416,7 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
         !isfinite(r->pan_fraction) || r->pan_fraction < 0 || r->pan_fraction > 1)
         return;
     for (ch = 0; ch < 2; ++ch)
-        if (!isfinite(r->zero_y[ch]) || !isfinite(r->pixels_per_volt[ch]))
+        if (!isfinite(r->zero_y[ch]) || !isfinite(r->pixels_per_volt[ch]) || r->filter_level[ch] > 3)
             return;
     if (!isfinite(r->overview_duration_seconds) || r->overview_duration_seconds < 0 ||
         !isfinite(r->zoom_offset_seconds) || !isfinite(r->trigger_voltage) ||
@@ -429,6 +430,7 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
         p->request.spectrum_enabled != r->spectrum_enabled ||
         p->request.density_enabled != r->density_enabled ||
         p->request.density_rows != r->density_rows ||
+        memcmp(p->request.filter_level, r->filter_level, sizeof(r->filter_level)) ||
         p->request.roll != r->roll || p->request.record_samples != r->record_samples ||
         p->request.overview_duration_seconds != r->overview_duration_seconds ||
         p->request.zoom_offset_seconds != r->zoom_offset_seconds ||

@@ -17,6 +17,7 @@ typedef struct {
     int roll;
     int density_enabled;
     unsigned density_rows;
+    unsigned filter_level[2];
 } CaptureRequest;
 typedef struct {
     uint64_t blocks, bytes, dropped, overwritten, display_replaced, processing_ns, waveforms;

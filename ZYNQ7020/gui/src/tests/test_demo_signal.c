@@ -917,16 +917,15 @@ int main(void)
 
     demo_signal_init(&demo);
     demo_signal_press(&demo, DEMO_BTN_MENU, 0);
-    assert(demo.screen.menu_count == 7);
+    assert(demo.screen.menu_count == 6);
     assert(strcmp(demo.screen.menu_labels[0], "BROWSE") == 0);
     assert(strcmp(demo.screen.menu_labels[1], "PC CONNECTION") == 0);
     assert(strcmp(demo.screen.menu_labels[3], "MEASUREMENTS") == 0);
     assert(strcmp(demo.screen.menu_labels[4], "PROCESSING") == 0);
     assert(strcmp(demo.screen.menu_labels[5], "DEBUG") == 0);
-    assert(strcmp(demo.screen.menu_labels[6], "TIME") == 0);
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
-    assert(demo.menu_kind == DEMO_MENU_TIME && demo.menu_parent == DEMO_MENU_MAIN);
+    assert(demo.menu_kind == DEMO_MENU_DEBUG && demo.menu_parent == DEMO_MENU_MAIN);
     demo_signal_press(&demo, DEMO_BTN_MENU, 0);
     assert(demo.menu_kind == DEMO_MENU_MAIN);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_MEASURE);
@@ -993,7 +992,10 @@ int main(void)
     demo_signal_ui_menu_select(&demo, 1);
     demo_signal_ui_menu_activate(&demo);
     assert(demo.time_position == 0);
-    demo_signal_ui_menu_select(&demo, 2);
+    assert(demo.screen.menu_count == 3 && !strcmp(demo.screen.menu_labels[2], "SAMPLE RATE"));
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
+    assert(demo.screen.menu_count == 6 && !strcmp(demo.screen.menu_labels[5], "RECORD LENGTH"));
+    demo_signal_ui_menu_select(&demo, 5);
     previous = demo.record_depth_index;
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.record_depth_index == (previous + 1) % CAPTURE_DEPTH_COUNT);
@@ -1069,7 +1071,7 @@ int main(void)
     demo_signal_init(&demo);
     memcpy(synchronized_ch1, demo.ch1, sizeof(synchronized_ch1));
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    assert(demo.screen.menu_count == 5);
+    assert(demo.screen.menu_count == 6);
     assert(strcmp(demo.screen.menu_labels[0], "CH1 FILTER") == 0);
     assert(demo.screen.menu_option_count[0] == 4);
     demo_signal_ui_menu_choose(&demo, 0, 1);
@@ -1328,7 +1330,7 @@ int main(void)
 
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_MAIN);
-    assert(demo.screen.menu_count == 7);
+    assert(demo.screen.menu_count == 6);
     previous = (SCOPE_WIDTH - SCOPE_MENU_WIDTH) / 2;
     edge = (SCOPE_HEIGHT - (SCOPE_MENU_ROW_Y - SCOPE_MENU_Y +
             demo.screen.menu_count * SCOPE_MENU_ROW_HEIGHT + 6)) / 2;
@@ -1534,7 +1536,7 @@ int main(void)
         assert(pixels[(SCOPE_BOTTOM_Y + 1) * SCOPE_WIDTH + 860] == 0xb696f1);
         assert(pixels[546 * SCOPE_WIDTH + 82] == 0x6977ad);
         demo_signal_ui_open_menu(&demo, DEMO_MENU_MAIN);
-        assert(demo.screen.menu_count == 6);
+        assert(demo.screen.menu_count == 5);
         assert(strcmp(demo.screen.menu_labels[0], "PC CONNECTION") == 0);
         demo_signal_ui_menu_activate(&demo);
         assert(demo.menu_kind == DEMO_MENU_PC);

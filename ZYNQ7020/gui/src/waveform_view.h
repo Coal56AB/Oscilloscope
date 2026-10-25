@@ -26,6 +26,10 @@ typedef struct {
 void waveform_view_reduce(const WaveformSource *source, double first, double samples,
                           unsigned channel, double zero_y, double pixels_per_unit,
                           size_t columns, int16_t *representative, int16_t *minimum, int16_t *maximum);
+/* The same segment rasterizer for filtered samples, retaining fractional codes. */
+int waveform_view_connect_f64(const double *values, size_t count, double zero_y, double scale,
+                              double first, double samples, size_t columns, size_t rows,
+                              uint8_t *coverage);
 /* Hidden excursions in native peak intervals, separate from acquired samples.
    Strength rises to 255 over four source quanta; every excursion is retained. */
 void waveform_view_peak_bounds(const WaveformSource *source, double first, double samples,
