@@ -22,20 +22,22 @@ static void controls_test(void)
 {
     const DemoMenu menus[]={DEMO_MENU_CH1,DEMO_MENU_CH2,DEMO_MENU_TRIGGER,DEMO_MENU_CURSOR,
         DEMO_MENU_DISPLAY,DEMO_MENU_TIME,DEMO_MENU_PROCESSING,DEMO_MENU_PC,DEMO_MENU_DEBUG,
-        DEMO_MENU_GENERATOR,DEMO_MENU_SETUP,DEMO_MENU_RESPONSE};
+        DEMO_MENU_GENERATOR,DEMO_MENU_SETUP,DEMO_MENU_RESPONSE,DEMO_MENU_LAYOUT};
     unsigned kind;int row;
     for(kind=0;kind<sizeof(menus)/sizeof(menus[0]);++kind){
-        demo_signal_init(&demo);demo_signal_ui_open_menu(&demo,menus[kind]);
+        demo_signal_init(&demo);demo.preset_valid=31;demo.pc_available=1;demo_signal_ui_open_menu(&demo,menus[kind]);
         int rows=demo.screen.menu_count;
         for(row=0;row<rows;++row){
             int choices,stepper,before;
             DemoSettings original,current;
-            demo_signal_init(&demo);demo_signal_ui_open_menu(&demo,menus[kind]);
+            demo_signal_init(&demo);demo.preset_valid=31;demo.pc_available=1;demo_signal_ui_open_menu(&demo,menus[kind]);
             demo_signal_ui_menu_select(&demo,row);
             if(menus[kind]==DEMO_MENU_RESPONSE){
                 channel_response_add(&demo.response[2],1000,1);
                 channel_response_add(&demo.response[2],10000,.5);
             }
+            demo_signal_refresh(&demo);
+            if(demo.screen.menu_disabled[row])continue;
             choices=demo.screen.menu_option_count[row];stepper=demo.screen.menu_stepper[row];
             if(!choices && !stepper)continue;
             before=demo.screen.menu_option_selected[row];
@@ -59,16 +61,16 @@ static void controls_test(void)
                 if(demo.edit_value==before)demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);
                 demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
                 assert(!demo.screen.menu_editing);
-                demo_settings_capture(&demo,&current);assert(memcmp(&original,&current,sizeof(original)));
+                demo_settings_capture(&demo,&current);if(!memcmp(&original,&current,sizeof(original)))fprintf(stderr,"unchanged menu=%d row=%d edit=%d before=%d\n",menus[kind],row,demo.edit_value,before);assert(memcmp(&original,&current,sizeof(original)));
             }
         }
     }
     demo_signal_init(&demo);demo_signal_press(&demo,DEMO_BTN_MENU,0);
     demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
     assert(demo.menu_kind==DEMO_MENU_SETUP);
-    /* TIME is reachable via SETUP without returning to the main menu. */
-    demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-3);demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
-    assert(demo.menu_kind==DEMO_MENU_TIME);
+    assert(demo.screen.menu_count==3);
+    for(row=0;row<demo.screen.menu_count;++row)assert(strcmp(demo.screen.menu_labels[row],"TIME SETTINGS"));
+    demo.preset_valid=31;
     for(row=0;row<5;++row){
         demo_signal_ui_open_menu(&demo,DEMO_MENU_SETUP);
         demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);
@@ -81,6 +83,46 @@ static void controls_test(void)
         demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);
         assert(demo_signal_press(&demo,DEMO_ENC_FUNCTION,0)==DEMO_ACTION_PRESET_LOAD);
     }
+}
+
+static void availability_test(void)
+{
+    demo_signal_init(&demo);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);demo_signal_ui_menu_select(&demo,4);
+    demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);assert(demo.menu_kind==DEMO_MENU_RESPONSE);
+    assert(demo.screen.menu_disabled[1] && demo.screen.menu_disabled[2]);
+    demo_signal_ui_menu_choose(&demo,1,1);demo_signal_ui_menu_tap(&demo,1,1);
+    assert(!demo.response_enabled[0] && !demo.screen.menu_editing);
+    demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);assert(demo.screen.menu_selected==3);
+    channel_response_add(&demo.response[2],1000,1);demo_signal_refresh(&demo);
+    assert(demo.screen.menu_disabled[1] && !demo.screen.menu_disabled[2]);
+    channel_response_add(&demo.response[2],10000,.5);demo_signal_refresh(&demo);
+    assert(!demo.screen.menu_disabled[1]);demo_signal_ui_menu_choose(&demo,1,1);assert(demo.response_enabled[0]);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_SETUP);
+    assert(demo.screen.menu_count==3 && demo.screen.menu_option_disabled[0]==62);
+    demo_signal_ui_menu_choose(&demo,0,3);assert(!demo.startup_preset);
+    demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);assert(!demo.startup_preset);
+    demo.preset_valid=4;demo_signal_refresh(&demo);demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
+    assert(demo.startup_preset==3);demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);assert(!demo.startup_preset);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_PRESET);demo.preset_selected=0;demo_signal_refresh(&demo);
+    assert(demo.screen.menu_disabled[1]);demo_signal_ui_menu_select(&demo,1);
+    assert(demo_signal_press(&demo,DEMO_ENC_FUNCTION,0)==DEMO_ACTION_NONE);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_FILES);
+    assert(demo.screen.menu_disabled[3] && demo.screen.menu_disabled[4] && demo.screen.menu_disabled[5]);
+    assert(demo_signal_press(&demo,DEMO_ENC_FUNCTION,0)==DEMO_ACTION_SCREENSHOT);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_FILES);demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);
+    assert(demo_signal_press(&demo,DEMO_ENC_FUNCTION,0)==DEMO_ACTION_WAVEFORM);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_LAYOUT);
+    assert(demo.screen.menu_disabled[6]);demo_signal_ui_menu_select(&demo,0);demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
+    assert(demo.screen.measurement_hidden && demo.screen.menu_disabled[2] && demo.screen.menu_disabled[3]);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_BROWSE);
+    const char *names[]={"capture_0001.csv","capture_0002.csv"};demo_signal_ui_set_browse_files(&demo,names,2);
+    demo_signal_press(&demo,DEMO_ENC_FUNCTION,1);assert(demo.screen.browser_delete_confirm);
+    demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);
+    assert(demo_signal_press(&demo,DEMO_ENC_FUNCTION,0)==DEMO_ACTION_BROWSE_DELETE);
+    demo.screen.browser_visible=1;
+    assert(demo_signal_press(&demo,DEMO_ENC_FUNCTION,0)==DEMO_ACTION_BROWSE_NEXT);
+    assert(demo_signal_press(&demo,DEMO_ENC_FUNCTION,1)==DEMO_ACTION_BROWSE_PREV);
 }
 
 static void document_test(void)
@@ -107,6 +149,41 @@ static void document_test(void)
     assert(!demo_settings_apply(&restored,&roundtrip));
     roundtrip=captured;roundtrip.values[DEMO_SETTING_TRIGGER_VOLTAGE]=NAN;
     assert(!demo_settings_valid(&roundtrip));
+}
+
+static void menu_encoder_test(void)
+{
+    const DemoMenu menus[]={DEMO_MENU_CH1,DEMO_MENU_CH2,DEMO_MENU_CURSOR,DEMO_MENU_TRIGGER,DEMO_MENU_TIME};
+    const DemoControl encoders[]={DEMO_ENC_CH1,DEMO_ENC_CH2,DEMO_ENC_TIME,DEMO_ENC_TRIGGER,DEMO_ENC_TIME};
+    for(unsigned i=0;i<sizeof(menus)/sizeof(*menus);++i){
+        demo_signal_init(&demo);demo_signal_begin_external(&demo);
+        demo_signal_ui_open_menu(&demo,menus[i]);
+        int scale0=demo.scale_index[0],scale1=demo.scale_index[1],time=demo.time_index;
+        double trigger=demo.trigger_voltage;
+        assert(demo_signal_menu_encoder(&demo,encoders[i]));
+        int next=1%demo.screen.menu_count;while(demo.screen.menu_disabled[next])next=(next+1)%demo.screen.menu_count;
+        demo_signal_rotate(&demo,encoders[i],-1);
+        if(demo.screen.menu_selected!=next)fprintf(stderr,"menu=%d selected=%d next=%d\n",menus[i],demo.screen.menu_selected,next);
+        assert(demo.screen.menu_selected==next);
+        demo_signal_rotate(&demo,encoders[i],1);assert(demo.screen.menu_selected==0);
+        assert(demo.scale_index[0]==scale0 && demo.scale_index[1]==scale1 && demo.time_index==time && demo.trigger_voltage==trigger);
+        unsigned selected=demo.screen.menu_option_selected[0];
+        demo_signal_press(&demo,encoders[i],0);
+        if(demo.screen.menu_option_count[0])assert(demo.screen.menu_option_selected[0]!=selected);
+        if(demo.screen.menu_editing)demo_signal_press(&demo,encoders[i],1);
+        demo_signal_press(&demo,encoders[i],1);assert(!demo.screen.menu_open);
+        assert(!demo_signal_menu_encoder(&demo,encoders[i]));
+    }
+    demo_signal_init(&demo);demo_signal_begin_external(&demo);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);demo_signal_ui_menu_select(&demo,3);
+    int scale=demo.scale_index[0];demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    assert(demo.screen.menu_editing);demo_signal_rotate(&demo,DEMO_ENC_CH1,1);
+    assert(demo.scale_index[0]==scale);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    assert(!demo.screen.menu_editing && demo.scale_index[0]!=scale);
+    demo_signal_ui_menu_select(&demo,4);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    assert(demo.menu_kind==DEMO_MENU_RESPONSE && demo_signal_menu_encoder(&demo,DEMO_ENC_CH1));
+    assert(!demo_signal_menu_encoder(&demo,DEMO_ENC_CH2));
+    demo_signal_press(&demo,DEMO_ENC_CH1,1);assert(demo.menu_kind==DEMO_MENU_CH1);
 }
 
 static void persistence_test(void)
@@ -146,5 +223,5 @@ static void persistence_test(void)
 
 int main(void)
 {
-    controls_test();document_test();persistence_test();return 0;
+    controls_test();availability_test();menu_encoder_test();document_test();persistence_test();return 0;
 }

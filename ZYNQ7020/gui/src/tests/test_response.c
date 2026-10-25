@@ -96,7 +96,7 @@ static void navigation_test(void)
 {
     demo_signal_init(&demo);demo_signal_press(&demo,DEMO_BTN_MENU,0);
     assert(!strcmp(demo.screen.menu_labels[0],"SETUP"));demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
-    assert(demo.menu_kind==DEMO_MENU_SETUP && demo.screen.menu_count==4);
+    assert(demo.menu_kind==DEMO_MENU_SETUP && demo.screen.menu_count==3);
     demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
     assert(demo.menu_kind==DEMO_MENU_PRESETS && demo.screen.menu_count==5);
     demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);assert(demo.menu_kind==DEMO_MENU_PRESET);

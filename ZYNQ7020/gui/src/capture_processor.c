@@ -313,6 +313,7 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
             return 0;
     memset(f, 0, offsetof(DisplayFrame,connections));
     f->sequence = b->sequence;
+    f->capture_id = b->accepted_ns;
     f->calibration_mask=v->calibration_mask;
     f->sample_rate_hz = b->sample_rate_hz;
     f->peak_detect = b->peaks!=NULL;

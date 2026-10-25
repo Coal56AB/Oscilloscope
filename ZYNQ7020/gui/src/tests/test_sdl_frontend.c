@@ -426,6 +426,14 @@ static void test_panel_battery(void)
 
 int main(void)
 {
+    CaptureMetrics pending={0};pending.waiting=1;
+    assert(capture_waiting(&pending,0,1,1));
+    pending.triggered_ns=1000000000;pending.processing_ns=9000000000ULL;
+    assert(!capture_waiting(&pending,0,1,1)); /* Neither processing nor painting is required. */
+    assert(!capture_waiting(&pending,999999999,1,1));
+    assert(capture_waiting(&pending,1000000000,1,1)); /* Only the matching displayed plot completes RUN. */
+    assert(!capture_waiting(&pending,1000000000,0,1));
+    assert(!capture_waiting(&pending,1000000000,1,0));
     test_restored_settings();
     test_response_capture();
     test_delayed_panel_release();

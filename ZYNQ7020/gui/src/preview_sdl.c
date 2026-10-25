@@ -4,6 +4,7 @@
 #include "linux_serial.h"
 #include "capture_adapter.h"
 #include "settings_session.h"
+#include "scope_renderer.h"
 #include "waveform_view.h"
 #include "control_transport.h"
 #include "remote_control.h"
@@ -36,6 +37,8 @@
 
 static DemoSignal demo;
 static SettingsSession settings;
+static ScopeRenderer *renderer;
+static uint64_t render_generation;
 static int restored_scale[2]={-1,-1};
 static uint64_t restore_retry_ms;
 static int restore_capture_pending;
@@ -50,14 +53,16 @@ static int live_snapshot_valid;
 static char browse_names[DEMO_BROWSE_FILES][DEMO_BROWSE_NAME];
 static char application_dir[PATH_MAX];
 static int require_data_device;
-static int dirty = 1;
+static int dirty = 1,plot_dirty=1;
 static int panel_enabled = 1;
 static ControlQueue controls;
 static KeyboardControlTransport keyboard_controls;
 static SerialControlTransport serial_controls;
 static CapturePipeline *capture_pipeline;
 static DisplayFrame capture_frame;
+static const DisplayFrame *leased_frame;
 static int capture_frame_valid;
+static uint64_t single_capture_id;
 static const char *console_path;
 static unsigned console_baud = 115200;
 static char startup_error[64];
@@ -139,7 +144,12 @@ static uint64_t now_ms(void)
     previous = current;
     return high + current;
 }
-static void invalidate(void) { dirty = 1; }
+static void invalidate(void) { dirty = plot_dirty = 1; }
+
+static int capture_waiting(const CaptureMetrics *metrics,uint64_t presented,int running,int mode)
+{
+    return running && mode!=0 && metrics->triggered_ns<=presented;
+}
 
 static int has_hold_action(DemoControl control)
 {
@@ -160,19 +170,37 @@ static DemoControl active_control(int *progress)
     return held->control;
 }
 
+static void retain_display_frame(const void *frame,void *context)
+{ capture_pipeline_retain_frame(context,frame); }
+static void release_display_frame(const void *frame,void *context)
+{ capture_pipeline_release_frame(context,frame); }
+
+#ifdef SCOPE_ENABLE_LINUX_DISPLAY
+static int present_display(const uint32_t *pixels,void *context)
+{ return linux_display_present(context,pixels); }
+#endif
+
 static void draw_all(void)
 {
     int progress;
+    const DisplayFrame *frame=leased_frame?leased_frame:&capture_frame;
     DemoControl active = active_control(&progress);
     if(capture_pipeline&&capture_frame_valid&&!demo.waveform_loaded&&!demo.screen.browser_visible)
-        capture_display_apply(&demo,&capture_frame);
+        capture_display_apply(&demo,frame);
     else {
         demo.screen.ch1_min_samples=demo.minimum[0];
         demo.screen.ch1_max_samples=demo.maximum[0];
         demo.screen.ch2_min_samples=demo.minimum[1];
         demo.screen.ch2_max_samples=demo.maximum[1];
     }
-    scope_screen_render(screen_pixels, SCOPE_WIDTH, &demo.screen);
+    if(renderer){
+        ScopeRenderRegion regions[]={{&demo,sizeof(demo)},{frame,0,capture_frame_valid && leased_frame?retain_display_frame:NULL,
+             capture_frame_valid && leased_frame?release_display_frame:NULL,capture_pipeline},
+            {browse_pixels,demo.screen.browser_visible?sizeof(browse_pixels):0}};
+        render_generation=plot_dirty?scope_renderer_submit(renderer,&demo.screen,regions,3):
+            scope_renderer_submit_overlay(renderer,&demo.screen,regions,3);
+        plot_dirty=0;
+    }else scope_screen_render(screen_pixels, SCOPE_WIDTH, &demo.screen);
     if(panel_enabled)
         panel_sdl_draw(panel_pixels, &demo, active, hovered, progress, demo.hold_time_ms);
 }
@@ -337,7 +365,11 @@ static int capture(DemoAction action)
     if(index<=9999) {
         ok=1;
         if(action!=DEMO_ACTION_WAVEFORM) {
-            scope_screen_render(screen_pixels,SCOPE_WIDTH,&demo.screen);
+            if(renderer){plot_dirty=1;draw_all();
+                if(!scope_renderer_flush_plot(renderer,1000)){close(directory);return 0;}
+                plot_dirty=0;draw_all();
+                if(!scope_renderer_flush(renderer,render_generation,screen_pixels,1000)){close(directory);return 0;}}
+            else scope_screen_render(screen_pixels,SCOPE_WIDTH,&demo.screen);
             ok=save_bmp(image_path,screen_pixels,SCOPE_WIDTH,SCOPE_HEIGHT);
         }
         if(ok && action!=DEMO_ACTION_SCREENSHOT) ok=save_wave(wave_path);
@@ -495,7 +527,7 @@ static TouchZone touch_zone_at(int x, int y, int *row)
        y<menu_row_y+demo.screen.menu_count*SCOPE_MENU_ROW_HEIGHT+6) {
         if(y<menu_row_y) return x>=menu_x+SCOPE_MENU_WIDTH-104?TOUCH_MENU_BACK:TOUCH_MENU_DRAG;
         *row=(y-menu_row_y)/SCOPE_MENU_ROW_HEIGHT;
-        return *row<demo.screen.menu_count?TOUCH_MENU_ROW:TOUCH_NONE;
+        return *row<demo.screen.menu_count && !demo.screen.menu_disabled[*row]?TOUCH_MENU_ROW:TOUCH_NONE;
     }
     if(y<SCOPE_PLOT_Y) {
         if(x>=4&&x<184)return TOUCH_TOP_MENU;
@@ -866,7 +898,7 @@ static void logical_point(SDL_Window *window, int logical_w, int logical_h, int 
 
 static SDL_Renderer *make_renderer(SDL_Window *window)
 {
-    SDL_Renderer *renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC);
+    SDL_Renderer *renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
     if(!renderer)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
     return renderer;
 }
@@ -909,6 +941,9 @@ static int unsigned_option(const char *text, unsigned *value)
 static void remote_state(FILE *response)
 {
     int channel,i;
+    uint64_t frames=0,render_ns=0,output_ns=0;CaptureMetrics capture={0};
+    if(renderer)scope_renderer_metrics(renderer,&frames,&render_ns,&output_ns);
+    if(capture_pipeline)capture_pipeline_metrics(capture_pipeline,&capture);
     fprintf(response,"{\"version\":1,\"source\":\"%s\",\"running\":%d,\"waiting\":%d,\"plot_height\":%d,\"pixels_per_div\":%.9g,\"time_divisions\":10,",
         capture_pipeline?"raw":"demo",demo.screen.running,demo.screen.waiting_for_trigger,SCOPE_PLOT_HEIGHT,SCOPE_PLOT_HEIGHT/8.0);
     for(channel=0;channel<2;++channel){
@@ -931,7 +966,11 @@ static void remote_state(FILE *response)
     for(i=0;demo_signal_time_scale_us(i)>0;++i)fprintf(response,"%s%.9g",i?",":"",demo_signal_time_scale_us(i));
     fputs("],\"channel_scales_mv\":[",response);
     for(i=0;demo_signal_scale_mv(i)>0;++i)fprintf(response,"%s%d",i?",":"",demo_signal_scale_mv(i));
-    fprintf(response,"],\"uart_baud\":%u,\"pc_active\":%d}\n",console_baud,demo.pc_active);
+    fprintf(response,"],\"uart_baud\":%u,\"pc_active\":%d,\"render_frames\":%llu,\"render_ns\":%llu,\"output_ns\":%llu,\"processing_ns\":%llu,\"waveforms\":%llu,\"triggered_ns\":%llu,\"presented_ns\":%llu,\"menu_open\":%d,\"menu_kind\":%d,\"menu_selected\":%d}\n",
+        console_baud,demo.pc_active,(unsigned long long)frames,(unsigned long long)render_ns,
+        (unsigned long long)output_ns,(unsigned long long)capture.processing_ns,(unsigned long long)capture.waveforms,(unsigned long long)capture.triggered_ns,
+        (unsigned long long)(renderer?scope_renderer_presented_plot(renderer):0),
+        demo.screen.menu_open,demo.menu_kind,demo.screen.menu_selected);
 }
 
 static int remote_set(const char *key,double number)
@@ -1171,7 +1210,7 @@ int main(int argc, char **argv)
     RemoteControl *remote=NULL;
     const char *status_path=NULL;int status_fd=-1;uint64_t status_time=0;
     int panel_snapshot=0,raw_demo=0,diagnostics=0;uint64_t diagnostic_time=0,render_time=0,render_frames=0,frame_deadline=0;
-    int running=1,windowed=0,kiosk=0,i,exit_status=0;
+    int running=1,windowed=0,kiosk=0,i,exit_status=0,worker_present=0;
     char default_settings[1024];const char *settings_path=NULL;int no_settings=0;
 #ifdef SCOPE_ENABLE_LINUX_DISPLAY
     const char *drm_device=NULL,*fb_device=NULL,*touch_device=NULL;unsigned touch_rotation=0;
@@ -1303,7 +1342,13 @@ int main(int argc, char **argv)
         if(loaded && serial_device)for(i=0;i<2;++i)restored_scale[i]=demo_signal_scale_mv(demo.scale_index[i]);
         if(loaded && capture_pipeline && !demo.screen.running)restore_capture_pending=1;
     }
+    demo.settings_available=settings.store!=NULL;demo_signal_refresh(&demo);
     draw_all();
+    renderer=scope_renderer_create(sizeof(demo)+sizeof(browse_pixels),NULL);
+    if(!renderer || !scope_renderer_enable_plot_layer(renderer,NULL)){fprintf(stderr,"Cannot start display renderer\n");exit_status=1;goto cleanup;}
+#ifdef SCOPE_ENABLE_LINUX_DISPLAY
+    if(drm_display){scope_renderer_set_output(renderer,present_display,drm_display);worker_present=1;}
+#endif
     if(remote_path){remote=remote_control_open(remote_path,remote_command,NULL);
         if(!remote){perror("Remote socket");running=0;exit_status=1;}}
     while(running&&!stop_requested){SDL_Event event;uint64_t now;
@@ -1317,9 +1362,7 @@ int main(int argc, char **argv)
 #endif
         /* Rendering/presenting is part of the frame budget, not an extra delay. */
         now=now_ms();
-        int event_wait=frame_deadline>now?(int)(frame_deadline-now):0;
-        if(!dirty&&(!demo.screen.running||demo.external_capture))event_wait=16;
-        if(event_wait>16)event_wait=16;
+        int event_wait=2;
         if(SDL_WaitEventTimeout(&event,event_wait))do{
             demo_signal_update_time(&demo,now_ms());
             if(event.type==SDL_QUIT)running=0;
@@ -1356,7 +1399,8 @@ int main(int argc, char **argv)
             SerialControlMetrics panel;
             uint64_t panel_now=scope_clock_ns()/1000000;
             serial_control_set_run(&serial_controls,demo.screen.running);
-            for(i=0;i<2;++i)serial_control_set_encoder_mode(&serial_controls,(unsigned)i,demo.position_mode[i]||demo.waveform_loaded);
+            for(i=0;i<2;++i)serial_control_set_encoder_mode(&serial_controls,(unsigned)i,
+                demo.position_mode[i]||demo.waveform_loaded||demo_signal_menu_encoder(&demo,(DemoControl)i));
             serial_control_metrics(&serial_controls,&panel);
             if(panel_now>=restore_retry_ms){
                 for(i=0;i<2;++i)if(restored_scale[i]>=0)serial_control_set_scale(&serial_controls,(unsigned)i,restored_scale[i]);
@@ -1374,25 +1418,42 @@ int main(int argc, char **argv)
             capture_request_from_demo(&demo,&request);
             if(restoring || demo.waveform_loaded||demo.screen.browser_visible)request.running=0;
             capture_pipeline_request(capture_pipeline,&request);
-            if(capture_pipeline_frame(capture_pipeline,&capture_frame)){capture_frame_valid=1;
-                if(raw_file||(adc_device&&demo.trigger_mode_index==2))demo.screen.running=0;invalidate();}
+            const DisplayFrame *next_frame=capture_pipeline_acquire(capture_pipeline);
+            if(next_frame){leased_frame=next_frame;capture_frame_valid=1;
+                if(raw_file)demo.screen.running=0;
+                if(adc_device&&demo.trigger_mode_index==2)single_capture_id=next_frame->capture_id;
+                invalidate();}
             capture_pipeline_metrics(capture_pipeline,&metrics);
             if(demo_signal_set_adc_level(&demo,metrics.adc_code,
                 metrics.adc_valid&&metrics.adc_age_ms<=STATUS_HEARTBEAT_MS)&&
                 demo.screen.menu_open&&demo.menu_kind==DEMO_MENU_DEBUG)invalidate();
-            if(adc_device && demo.screen.waiting_for_trigger!=(metrics.waiting&&demo.screen.running)){
-                demo.screen.waiting_for_trigger=metrics.waiting&&demo.screen.running;invalidate();}
+            if(adc_device){
+                uint64_t presented=scope_renderer_presented_plot(renderer);
+                if(single_capture_id && demo.trigger_mode_index==2 && presented>=single_capture_id){
+                    single_capture_id=0;demo.screen.running=0;invalidate();
+                }else if(demo.trigger_mode_index!=2)single_capture_id=0;
+                /* Accepted source record -> RUN; actual plot presentation -> HOLD. */
+                int waiting=capture_waiting(&metrics,presented,demo.screen.running,demo.trigger_mode_index);
+                if(demo.screen.waiting_for_trigger!=waiting){demo.screen.waiting_for_trigger=waiting;invalidate();}
+            }
             if(metrics.source_error&&demo.screen.running){demo.screen.running=0;demo_signal_notify(&demo,"ADC CAPTURE ERROR");invalidate();}}
-        if(demo.screen.running&&!demo.external_capture){demo_signal_advance(&demo);invalidate();}
+        if(demo.screen.running&&!demo.external_capture){demo_signal_advance(&demo);demo.screen.plot_id=demo.capture_sequence;invalidate();}
+        if(!demo.external_capture && demo.screen.running && demo.trigger_mode_index!=0){
+            int waiting=demo.capture_sequence<=scope_renderer_presented_plot(renderer);
+            if(demo.screen.waiting_for_trigger!=waiting){demo.screen.waiting_for_trigger=waiting;invalidate();}
+        }
         if(settings_session_poll(&settings,live_settings()))invalidate();
         if(demo.response_active)invalidate();
         if(demo.screen.status_visible||mouse_hold.active||key_holds[0].active||key_holds[1].active)invalidate();
-        if(dirty&&running){uint64_t render_begin=scope_clock_ns();frame_deadline=now_ms()+16;draw_all();render_time+=scope_clock_ns()-render_begin;++render_frames;
-#ifdef SCOPE_ENABLE_LINUX_DISPLAY
-            if(drm_display){int submitted=linux_display_present(drm_display,screen_pixels);if(submitted<0){running=0;exit_status=1;}else dirty=!submitted;}
-            else
-#endif
+        if(scope_renderer_poll_plot(renderer))dirty=1;
+        if(dirty&&running && now_ms()>=frame_deadline){frame_deadline=now_ms()+16;draw_all();dirty=0;}
+        if(worker_present){
+            scope_renderer_metrics(renderer,&render_frames,&render_time,NULL);
+            if(scope_renderer_failed(renderer)){running=0;exit_status=1;}
+        }else if(scope_renderer_take(renderer,screen_pixels)){
+            scope_renderer_metrics(renderer,&render_frames,&render_time,NULL);
             {SDL_UpdateTexture(lcd_texture,NULL,screen_pixels,SCOPE_WIDTH*4);SDL_RenderClear(lcd_renderer);SDL_RenderCopy(lcd_renderer,lcd_texture,NULL,NULL);SDL_RenderPresent(lcd_renderer);
+            scope_renderer_acknowledge(renderer);
             if(panel_texture){SDL_UpdateTexture(panel_texture,NULL,panel_pixels,PANEL_WIDTH*4);SDL_RenderClear(panel_renderer);SDL_RenderCopy(panel_renderer,panel_texture,NULL,NULL);SDL_RenderPresent(panel_renderer);}dirty=0;}}
         remote_control_pump(remote);
         if(status_path && (!status_time || now-status_time>=1000)){
@@ -1426,6 +1487,7 @@ int main(int argc, char **argv)
             diagnostic_time=now;}
     }
 cleanup:
+    scope_renderer_destroy(renderer);renderer=NULL;
     settings_session_close(&settings,live_settings());
     if(status_path){publish_service_status(status_fd,status_path,exit_status?STATUS_FAILED:STATUS_STOPPED,
         adc_device?STATUS_ADC:raw_file?STATUS_FILE:raw_demo?STATUS_RAW_DEMO:STATUS_DEMO,serial_device!=NULL,-1,

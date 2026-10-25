@@ -180,9 +180,11 @@ static void processor_record_bounds_test(void)
     uint8_t data[8192];CaptureBuffer b={0};static DisplayFrame f;
     CaptureView view={0,0,{200,330},{100,100},-2048,8192};
     b.data=data;b.capacity=sizeof(data);fill(&b,77);
+    b.accepted_ns=123456789;
     data[2*2048]=255;
     assert(capture_process(&b,&view,&f));
     assert(f.sequence==77 && f.view_start==0 && f.view_samples==4096);
+    assert(f.capture_id==b.accepted_ns);
     for(unsigned x=0;x<SCOPE_PLOT_WIDTH;++x){
         if(x<256 || x>=768)assert(f.y[0][x]==WAVEFORM_NO_SAMPLE && f.y_min[0][x]==WAVEFORM_NO_SAMPLE);
         else assert(f.y[0][x]!=WAVEFORM_NO_SAMPLE);
@@ -376,6 +378,21 @@ static void processor_fft_test(void)
         assert(frame.fft_size==524288 && fabs(frame.fundamental_hz[0]-10000)<3);
         free(long_data);
     }
+}
+
+static void pipeline_lease_test(void)
+{
+    CapturePipeline *p=capture_pipeline_create(NULL);
+    const DisplayFrame *held=NULL;DisplayFrame *copy=malloc(sizeof(*copy));CaptureMetrics before,after;
+    assert(p && copy);
+    for(unsigned i=0;i<200 && !held;++i){held=capture_pipeline_acquire(p);scope_sleep_ms(5);}
+    assert(held);capture_pipeline_retain_frame(p,held);
+    memcpy(copy,held,sizeof(*copy));capture_pipeline_metrics(p,&before);
+    for(unsigned i=0;i<200;++i){capture_pipeline_metrics(p,&after);if(after.waveforms>before.waveforms+1)break;scope_sleep_ms(5);}
+    assert(after.waveforms>before.waveforms+1 && !memcmp(copy,held,sizeof(*copy)));
+    assert(capture_pipeline_acquire(p));
+    scope_sleep_ms(100);assert(!memcmp(copy,held,sizeof(*copy)));
+    capture_pipeline_release_frame(p,held);capture_pipeline_destroy(p);free(copy);
 }
 
 static void pipeline_test(void)
@@ -831,6 +848,7 @@ int main(void)
     processor_fft_test();
     processor_statistics_test();
     processor_large_statistics_test();
+    pipeline_lease_test();
     pipeline_test();
     capture_debug_test();
     return 0;

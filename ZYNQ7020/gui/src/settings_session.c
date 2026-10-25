@@ -94,6 +94,7 @@ int settings_session_open(SettingsSession *s,DemoSignal *demo,const char *path)
     }else{if(loaded)fprintf(stderr,"Settings: invalid document, using defaults\n");loaded=0;}
     demo->startup_preset=s->document.startup;demo->preset_valid=s->document.valid;
     s->store=settings_store_open(path);
+    demo->settings_available=s->store!=NULL;
     return loaded;
 }
 

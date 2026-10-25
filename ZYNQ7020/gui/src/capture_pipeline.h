@@ -24,6 +24,7 @@ typedef struct {
 } CaptureRequest;
 typedef struct {
     uint64_t blocks, bytes, dropped, overwritten, display_replaced, processing_ns, waveforms;
+    uint64_t triggered_ns; /* Source accepted a record; processing may still be busy. */
     size_t occupancy, peak_occupancy;
     int source_error;
     int waiting;
@@ -41,5 +42,10 @@ void capture_pipeline_destroy(CapturePipeline *pipeline);
 void capture_pipeline_request(CapturePipeline *pipeline, const CaptureRequest *request);
 /* Single consumer; copies a completed immutable slot without holding settings. */
 int capture_pipeline_frame(CapturePipeline *pipeline, DisplayFrame *frame);
+/* Single GUI consumer: lease remains immutable until the next successful
+   acquire or pipeline destruction. Choose either this API or frame copying. */
+const DisplayFrame *capture_pipeline_acquire(CapturePipeline *pipeline);
+void capture_pipeline_retain_frame(CapturePipeline *pipeline,const DisplayFrame *frame);
+void capture_pipeline_release_frame(CapturePipeline *pipeline,const DisplayFrame *frame);
 void capture_pipeline_metrics(CapturePipeline *pipeline, CaptureMetrics *metrics);
 #endif

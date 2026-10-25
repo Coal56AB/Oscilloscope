@@ -623,7 +623,10 @@ static void test_adc_level_menu(void)
     assert(!demo_signal_set_adc_level(&demo,code,1));
     for(int row=4;row<6;++row){
         assert(!demo.screen.menu_stepper[row]);
+        assert(demo.screen.menu_disabled[row]);
         demo_signal_ui_menu_tap(&demo,row,1);
+        assert(demo.menu_kind==DEMO_MENU_DEBUG);
+        demo_signal_ui_menu_select(&demo,row);
         demo_signal_ui_menu_activate(&demo);
         demo_signal_ui_menu_adjust(&demo,1);
         assert(!demo.screen.menu_editing);
@@ -736,12 +739,13 @@ int main(void)
     assert(demo.trigger_source_index == 0);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.trigger_source_index == 1);
-    demo_signal_press(&demo, DEMO_ENC_TRIGGER, 1);
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.trigger_edge_index == 1);
     assert(strcmp(demo.screen.trigger_source, "CH2 FALL") == 0);
     assert(demo.screen.trigger_edge_falling);
+    demo_signal_ui_dismiss_menu(&demo);
+    demo_signal_press(&demo, DEMO_ENC_TRIGGER, 1);
     demo_signal_rotate(&demo, DEMO_ENC_TRIGGER, -5);
     demo_signal_press(&demo, DEMO_ENC_TRIGGER, 0);
     assert(demo.screen.trigger_locked);
@@ -752,9 +756,7 @@ int main(void)
     assert(memcmp(synchronized_ch1, demo.ch2, sizeof(synchronized_ch1)) != 0);
     assert(demo.ch2[demo.screen.trigger_marker_x - 3] <
            demo.ch2[demo.screen.trigger_marker_x + 3]);
-    demo_signal_press(&demo, DEMO_BTN_MENU, 0);
     assert(!demo.screen.menu_open);
-
     demo_signal_press(&demo, DEMO_BTN_MODE, 0);
     assert(strcmp(demo.screen.trigger_mode, "NORMAL") == 0);
     demo_signal_rotate(&demo, DEMO_ENC_TRIGGER, 100);
@@ -872,10 +874,12 @@ int main(void)
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(strcmp(demo.screen.ch2_input, "AC   x10") == 0);
+    demo_signal_ui_dismiss_menu(&demo);
     demo_signal_rotate(&demo, DEMO_ENC_CH2, 1);
     demo_signal_press(&demo, DEMO_ENC_CH2, 0);
     demo_signal_rotate(&demo, DEMO_ENC_CH2, 1);
     assert(demo.channel_position[1] == -8);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_CH2);demo_signal_ui_menu_select(&demo,2);
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -2);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.menu_kind==DEMO_MENU_RESPONSE && demo.response_channel==1 && demo.channel_position[1]==-8);
@@ -919,12 +923,12 @@ int main(void)
 
     demo_signal_init(&demo);
     demo_signal_press(&demo, DEMO_BTN_MENU, 0);
-    assert(demo.screen.menu_count == 6);
+    assert(demo.screen.menu_count == 7);
     assert(strcmp(demo.screen.menu_labels[0], "SETUP") == 0);
     assert(strcmp(demo.screen.menu_labels[1], "BROWSE") == 0);
     assert(strcmp(demo.screen.menu_labels[3], "MEASUREMENTS") == 0);
     assert(strcmp(demo.screen.menu_labels[4], "PROCESSING") == 0);
-    assert(strcmp(demo.screen.menu_labels[5], "DEBUG") == 0);
+    assert(strcmp(demo.screen.menu_labels[6], "DEBUG") == 0);
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.menu_kind == DEMO_MENU_DEBUG && demo.menu_parent == DEMO_MENU_MAIN);
@@ -1324,7 +1328,7 @@ int main(void)
     demo_signal_ui_set_split_height(&demo, 180);
     assert(demo.screen.split_height == 180);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DISPLAY);
-    assert(demo.screen.menu_count == 2);
+    assert(demo.screen.menu_count == 3);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DEBUG);
     assert(demo.screen.menu_count == 6);
     assert(demo.screen.font_index == SCOPE_FONT_INTER);
@@ -1337,7 +1341,7 @@ int main(void)
 
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_MAIN);
-    assert(demo.screen.menu_count == 6);
+    assert(demo.screen.menu_count == 7);
     previous = (SCOPE_WIDTH - SCOPE_MENU_WIDTH) / 2;
     edge = (SCOPE_HEIGHT - (SCOPE_MENU_ROW_Y - SCOPE_MENU_Y +
             demo.screen.menu_count * SCOPE_MENU_ROW_HEIGHT + 6)) / 2;
@@ -1359,7 +1363,7 @@ int main(void)
     assert(demo.menu_kind == DEMO_MENU_MAIN);
     assert(demo.screen.menu_x == previous && demo.screen.menu_y == edge);
 
-    demo_signal_ui_menu_select(&demo, 5);
+    demo_signal_ui_menu_select(&demo, 6);
     demo_signal_ui_menu_activate(&demo);
     assert(demo.menu_kind == DEMO_MENU_DEBUG);
     demo_signal_ui_menu_activate(&demo);
@@ -1460,6 +1464,7 @@ int main(void)
     demo_signal_ui_menu_select(&demo, 2);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.menu_kind == DEMO_MENU_PC);
+    demo_signal_pc_status(&demo,1,115200,0);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.screen.menu_editing && demo.pc_baud_index==4);
     demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,1);
@@ -1551,7 +1556,7 @@ int main(void)
         assert(pixels[(SCOPE_BOTTOM_Y + 1) * SCOPE_WIDTH + 860] == 0xb696f1);
         assert(pixels[546 * SCOPE_WIDTH + 82] == 0x6977ad);
         demo_signal_ui_open_menu(&demo, DEMO_MENU_MAIN);
-        assert(demo.screen.menu_count == 5);
+        assert(demo.screen.menu_count == 6);
         assert(strcmp(demo.screen.menu_labels[0], "SETUP") == 0);
         demo_signal_ui_menu_activate(&demo);
         assert(demo.menu_kind == DEMO_MENU_SETUP);

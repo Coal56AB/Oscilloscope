@@ -2,6 +2,7 @@
 #include "wave_file.h"
 #include "boot_splash.h"
 #include "settings_session.h"
+#include "scope_renderer.h"
 
 #include <shellapi.h>
 #include <windowsx.h>
@@ -13,14 +14,22 @@
 
 static DemoSignal demo;
 static SettingsSession settings;
+static ScopeRenderer *renderer;
+static int plot_dirty=1;
+static uint64_t render_generation;
 static ULONGLONG splash_until;
 
 static void render_lcd(uint32_t *pixels)
 {
     if (GetTickCount64() < splash_until)
         boot_splash_render(pixels, SCOPE_WIDTH, SCOPE_WIDTH, SCOPE_HEIGHT);
-    else
-        scope_screen_render(pixels, SCOPE_WIDTH, &demo.screen);
+    else if(renderer){
+        demo.screen.plot_id=demo.capture_sequence;
+        ScopeRenderRegion regions[]={{&demo,sizeof(demo)},{demo.screen.browser_pixels,demo.screen.browser_visible?SCOPE_WIDTH*SCOPE_HEIGHT*sizeof(uint32_t):0}};
+        render_generation=plot_dirty?scope_renderer_submit(renderer,&demo.screen,regions,2):
+            scope_renderer_submit_overlay(renderer,&demo.screen,regions,2);
+        plot_dirty=0;
+    }else scope_screen_render(pixels, SCOPE_WIDTH, &demo.screen);
 }
 static HBITMAP screen_bitmap;
 static HBITMAP panel_bitmap;
@@ -126,6 +135,8 @@ static BOOL CALLBACK find_display(HMONITOR monitor, HDC dc, LPRECT bounds, LPARA
 
 static void invalidate_windows(void)
 {
+    plot_dirty=1;
+    if(renderer)render_lcd(screen_pixels);
     if (lcd_window) InvalidateRect(lcd_window, NULL, FALSE);
     if (controls_window) InvalidateRect(controls_window, NULL, FALSE);
 }
@@ -347,6 +358,11 @@ static int capture(DemoAction action)
     if (index > 9999) return 0;
     if (action != DEMO_ACTION_WAVEFORM) {
         render_lcd(screen_pixels);
+        if(renderer){
+            if(!scope_renderer_flush_plot(renderer,1000))return 0;
+            plot_dirty=0;render_lcd(screen_pixels);
+            if(!scope_renderer_flush(renderer,render_generation,screen_pixels,1000))return 0;
+        }
         if (!save_bmp(image_path, screen_pixels, SCOPE_WIDTH, SCOPE_HEIGHT)) return 0;
     }
     if (action == DEMO_ACTION_WAVEFORM) return save_wave(wave_path);
@@ -553,7 +569,7 @@ static TouchZone touch_zone_at(int x, int y, int *row)
             return x >= menu_x + SCOPE_MENU_WIDTH - 104 ?
                    TOUCH_MENU_BACK : TOUCH_MENU_DRAG;
         *row = (y - menu_row_y) / SCOPE_MENU_ROW_HEIGHT;
-        return *row < demo.screen.menu_count ? TOUCH_MENU_ROW : TOUCH_NONE;
+        return *row < demo.screen.menu_count && !demo.screen.menu_disabled[*row] ? TOUCH_MENU_ROW : TOUCH_NONE;
     }
     if (y < SCOPE_PLOT_Y) {
         if (x >= 4 && x < 184) return TOUCH_TOP_MENU;
@@ -1054,8 +1070,14 @@ static LRESULT CALLBACK controls_window_proc(HWND window, UINT message, WPARAM w
             if (mouse_hold.active || key_holds[0].active || key_holds[1].active)
                 refresh = 1;
             demo_signal_advance(&demo);
+            if(renderer && demo.screen.running && demo.trigger_mode_index!=0){
+                int waiting=demo.capture_sequence<=scope_renderer_presented_plot(renderer);
+                if(demo.screen.waiting_for_trigger!=waiting){demo.screen.waiting_for_trigger=waiting;refresh=1;}
+            }
             if(settings_session_poll(&settings,live_settings()) || demo.response_active)refresh=1;
             if (refresh) invalidate_windows();
+            if(renderer && scope_renderer_poll_plot(renderer)){plot_dirty=0;render_lcd(screen_pixels);}
+            if(renderer && scope_renderer_take(renderer,screen_pixels) && lcd_window)InvalidateRect(lcd_window,NULL,FALSE);
             return 0;
         }
         case WM_MOUSEMOVE: {
@@ -1345,9 +1367,10 @@ static LRESULT CALLBACK lcd_window_proc(HWND window, UINT message, WPARAM wparam
         case WM_PAINT: {
             PAINTSTRUCT paint;
             HDC dc = BeginPaint(window, &paint);
-            render_lcd(screen_pixels);
+            if(!renderer || GetTickCount64()<splash_until)render_lcd(screen_pixels);
             BitBlt(dc, 0, 0, SCOPE_WIDTH, SCOPE_HEIGHT, screen_dc, 0, 0, SRCCOPY);
             EndPaint(window, &paint);
+            if(renderer)scope_renderer_acknowledge(renderer);
             return 0;
         }
         case WM_DESTROY:
@@ -1492,12 +1515,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         return 1;
     }
     if(settings_enabled)settings_session_open(&settings,&demo,settings_path);
+    demo.settings_available=settings.store!=NULL;demo_signal_refresh(&demo);
+    renderer=scope_renderer_create(sizeof(demo)+sizeof(browse_pixels),NULL);
+    if(!renderer || !scope_renderer_enable_plot_layer(renderer,NULL)){
+        scope_renderer_destroy(renderer);panel_cleanup();release_buffers();return 1;}
+    render_lcd(screen_pixels);
     ShowWindow(lcd_window, SW_SHOWNOACTIVATE);
     ShowWindow(controls_window, show);
     while (GetMessageW(&message, NULL, 0, 0) > 0) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    scope_renderer_destroy(renderer);renderer=NULL;
     settings_session_close(&settings,live_settings());
     release_buffers();
     panel_cleanup();

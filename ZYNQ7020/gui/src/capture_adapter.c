@@ -107,6 +107,7 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
     memcpy(d->saved_ch1, f->overview[0], sizeof(d->saved_ch1));
     memcpy(d->saved_ch2, f->overview[1], sizeof(d->saved_ch2));
     demo_signal_present_external(d, f->sequence);
+    d->screen.plot_id=f->capture_id;
     memcpy(d->fft_ch1, f->fft[0], sizeof(d->fft_ch1));
     memcpy(d->fft_ch2, f->fft[1], sizeof(d->fft_ch2));
     demo_signal_set_fft_range(d, f->sample_rate_hz / 2.0, f->fft_size);

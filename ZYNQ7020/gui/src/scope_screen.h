@@ -52,6 +52,9 @@ enum { SCOPE_FONT_PIXEL, SCOPE_FONT_INTER, SCOPE_FONT_COUNT };
 
 /* Each sample is a Y coordinate within the plot: 0 is the top edge. */
 typedef struct {
+    const uint32_t *plot_pixels; /* Immutable cached plot, without UI overlays. */
+    int plot_only;
+    uint64_t plot_id;
     const ChannelResponse *response_curve;
     int response_visible,response_channel,response_active,response_enabled;
     const int16_t *ch1_samples; /* SCOPE_PLOT_WIDTH entries, or NULL */
@@ -126,6 +129,8 @@ typedef struct {
     uint8_t menu_option_count[SCOPE_MENU_ITEMS];
     uint8_t menu_option_selected[SCOPE_MENU_ITEMS];
     uint8_t menu_stepper[SCOPE_MENU_ITEMS];
+    uint8_t menu_disabled[SCOPE_MENU_ITEMS];
+    uint8_t menu_option_disabled[SCOPE_MENU_ITEMS]; /* Bit per visible choice */
     int trigger_y;             /* Plot coordinate, 0..SCOPE_PLOT_HEIGHT-1 */
     int trigger_preview_y;
     int cursor_a;

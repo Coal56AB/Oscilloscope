@@ -12,6 +12,7 @@ typedef struct {
     uint8_t *data;
     size_t capacity, bytes;
     uint64_t sequence, sample_rate_hz, first_sample, trigger_sample, hardware_ns, software_ns;
+    uint64_t accepted_ns;
     double volts_per_code[2], zero_code[2];
     uint32_t flags;
     /* Optional min(CH1,CH2),max(CH1,CH2) for each two-sample time interval.

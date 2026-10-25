@@ -1,10 +1,11 @@
 #include "rounded_box.h"
+#include "scope_local.h"
 #include <stddef.h>
 
 /* Coverage is measured in screen pixels, independently of stripe thickness. */
-static uint8_t coverage[ROUNDED_BOX_MAX_RADIUS + 1]
+static SCOPE_LOCAL uint8_t coverage[ROUNDED_BOX_MAX_RADIUS + 1]
                        [ROUNDED_BOX_MAX_RADIUS][ROUNDED_BOX_MAX_RADIUS];
-static uint8_t ready[ROUNDED_BOX_MAX_RADIUS + 1];
+static SCOPE_LOCAL uint8_t ready[ROUNDED_BOX_MAX_RADIUS + 1];
 
 static void prepare(int radius)
 {

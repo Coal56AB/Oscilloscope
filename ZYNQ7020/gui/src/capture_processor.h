@@ -26,6 +26,7 @@ typedef struct {
     double minimum[2], maximum[2], mean[2], rms[2], frequency_hz[2], duty[2];
     double fundamental_hz[2],fundamental_amplitude[2];
     uint64_t sequence, sample_rate_hz, processing_ns;
+    uint64_t capture_id;
     unsigned fft_size;
     uint64_t trigger_sample;
     size_t view_start, view_samples;

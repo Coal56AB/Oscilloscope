@@ -430,6 +430,37 @@ static void test_buttons_and_overlay(uint32_t *pixels, int stride)
     assert(strcmp(demo.screen.fft_frequency_labels[8], "100M") == 0);
 }
 
+static void test_persistence(uint32_t *pixels,int stride)
+{
+    uint32_t background;
+    demo_signal_init(&demo);demo.screen.ch2_enabled=0;
+    demo.screen.ch1_samples=demo.history_ch1[0];
+    demo.screen.ch1_min_samples=demo.screen.ch1_max_samples=NULL;
+    demo.screen.density_source[0].samples=0;demo.screen.density_levels[0]=NULL;
+    demo.screen.connections[0]=NULL;
+    demo.screen.history_ch1_min_samples=demo.screen.history_ch1_max_samples=NULL;
+    for(int age=0;age<8;++age)for(int x=0;x<SCOPE_PLOT_WIDTH;++x)demo.history_ch1[age][x]=240-age*17;
+    demo.screen.history_count=1;scope_screen_render(pixels,stride,&demo.screen);
+    background=pixels[(SCOPE_PLOT_Y+240-3*17)*stride+123];
+    demo.screen.history_count=4;scope_screen_render(pixels,stride,&demo.screen);
+    assert(pixels[(SCOPE_PLOT_Y+240-3*17)*stride+123]!=background);
+    background=pixels[(SCOPE_PLOT_Y+240-6*17)*stride+123];
+    demo.screen.history_count=8;scope_screen_render(pixels,stride,&demo.screen);
+    assert(pixels[(SCOPE_PLOT_Y+240-6*17)*stride+123]!=background);
+    assert(pixels[(SCOPE_PLOT_Y+240)*stride+123]==0xffc44d);
+}
+
+static void test_trigger_wait(uint32_t *pixels,int stride)
+{
+    demo_signal_init(&demo);demo_signal_begin_external(&demo);
+    demo.screen.running=1;demo.screen.waiting_for_trigger=0;
+    scope_screen_render(pixels,stride,&demo.screen);assert(pixels[25*stride+860]==0x70dfa3);
+    demo.screen.waiting_for_trigger=1;
+    scope_screen_render(pixels,stride,&demo.screen);assert(pixels[25*stride+860]==0xffc44d);
+    demo.screen.running=0;
+    scope_screen_render(pixels,stride,&demo.screen);assert(pixels[25*stride+860]==0xed555f);
+}
+
 static void test_corner_composition(void)
 {
     int i, x, y, partial = 0, edge = 0;
@@ -468,6 +499,8 @@ int main(void)
     uint32_t *pixels = malloc((SCOPE_WIDTH + 3) * SCOPE_HEIGHT * sizeof(*pixels));
     int mode, menu, x, width;
     assert(pixels);
+    test_persistence(pixels,SCOPE_WIDTH+3);
+    test_trigger_wait(pixels,SCOPE_WIDTH+3);
     test_corner_composition();
     test_trace_width(pixels, SCOPE_WIDTH + 3);
     test_trace_gaps(pixels, SCOPE_WIDTH + 3);

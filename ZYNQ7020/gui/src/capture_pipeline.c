@@ -20,6 +20,7 @@ struct CapturePipeline {
     CaptureRequest request;
     DisplayFrame frames[3];
     unsigned write_slot, ready_slot, reading_slot;
+    unsigned frame_pins[3];
     unsigned revision, arm_revision;
     int stop, source_error;
     uint64_t bytes, display_replaced, processing_ns, waveforms;
@@ -79,19 +80,30 @@ static void acquisition_worker(void *context)
         scope_sleep_ms(20);
     }
 }
-static void process_frame(CapturePipeline *p, const CaptureBuffer *b,
+static int process_frame(CapturePipeline *p, const CaptureBuffer *b,
                            const CaptureRequest *request, uint64_t preprocessing_ns)
 {
     uint64_t started = scope_clock_ns();
     CaptureView view;
-    DisplayFrame *frame = &p->frames[p->write_slot];
+    DisplayFrame *frame;
     double samples = request->duration_seconds * b->sample_rate_hz;
     double base_samples = fmax(request->overview_duration_seconds, request->duration_seconds) * b->sample_rate_hz;
     double base_first;
     /* A live sweep is published as a whole interval, including after a scale
        change that can no longer be rendered from the retained record. */
     if (p->hardware && request->running && !request->roll && b->bytes / 2 < ceil(base_samples))
-        return;
+        return 0;
+    /* A slow painter may retain older maps. Skip a presentation rather than
+       overwriting a leased frame or making the UI wait for channel processing. */
+    scope_mutex_lock(&p->mutex);
+    for(p->write_slot=0;p->write_slot<3;++p->write_slot)
+        if(p->write_slot+1!=p->reading_slot && p->write_slot+1!=p->ready_slot && !p->frame_pins[p->write_slot])break;
+    if(p->write_slot==3 && p->ready_slot && p->ready_slot!=p->reading_slot && !p->frame_pins[p->ready_slot-1]){
+        p->write_slot=p->ready_slot-1;p->ready_slot=0;++p->display_replaced;
+    }
+    scope_mutex_unlock(&p->mutex);
+    if(p->write_slot==3)return 0;
+    frame=&p->frames[p->write_slot];
     memset(&view, 0, sizeof(view));
     view.display_samples = samples < 1 ? 1 : samples;
     base_first = ((double)(b->bytes / 2) - base_samples) * request->pan_fraction;
@@ -133,12 +145,12 @@ static void process_frame(CapturePipeline *p, const CaptureBuffer *b,
         scope_mutex_lock(&p->mutex);
         if (p->ready_slot) ++p->display_replaced;
         p->ready_slot = p->write_slot + 1;
-        for (p->write_slot=0;p->write_slot<3;++p->write_slot)
-            if (p->write_slot+1!=p->ready_slot && p->write_slot+1!=p->reading_slot) break;
         ++p->waveforms;
         p->processing_ns = frame->processing_ns;
         scope_mutex_unlock(&p->mutex);
+        return 1;
     }
+    return 0;
 }
 static void processing_worker(void *context)
 {
@@ -159,8 +171,7 @@ static void processing_worker(void *context)
         revision = p->revision;
         scope_mutex_unlock(&p->mutex);
         if (retained >= 0 && (slot >= 0 || revision != processed_revision)) {
-            process_frame(p, &p->ring.buffer[retained], &request, 0);
-            processed_revision = revision;
+            if(process_frame(p, &p->ring.buffer[retained], &request, 0))processed_revision = revision;
         }
     }
     if (retained >= 0)
@@ -293,6 +304,9 @@ static void hardware_worker(void *context)
                     }
                     scope_mutex_lock(&p->mutex);
                     p->hardware_metrics.waiting = !triggered && request.trigger_mode != 0;
+                    if(complete && (triggered || request.trigger_mode==0)){
+                        candidate.accepted_ns=scope_clock_ns();p->hardware_metrics.triggered_ns=candidate.accepted_ns;
+                    }
                     scope_mutex_unlock(&p->mutex);
                     if (complete && (triggered || request.trigger_mode == 0)) {
                         CaptureBuffer swap = retained;
@@ -308,8 +322,7 @@ static void hardware_worker(void *context)
             }
         } else scope_sleep_ms(5);
         if (have_retained && (fresh || revision != processed_revision)) {
-            process_frame(p, &retained, &request, preprocessing);
-            processed_revision = revision;
+            if(process_frame(p, &retained, &request, preprocessing))processed_revision = revision;
         }
     }
 }
@@ -448,6 +461,29 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
     p->request = *r;
     scope_mutex_unlock(&p->mutex);
 }
+const DisplayFrame *capture_pipeline_acquire(CapturePipeline *p)
+{
+    unsigned slot;
+    scope_mutex_lock(&p->mutex);slot=p->ready_slot;
+    if(slot){p->ready_slot=0;p->reading_slot=slot;}
+    scope_mutex_unlock(&p->mutex);
+    return slot?&p->frames[slot-1]:NULL;
+}
+
+void capture_pipeline_retain_frame(CapturePipeline *p,const DisplayFrame *frame)
+{
+    scope_mutex_lock(&p->mutex);
+    for(unsigned i=0;i<3;++i)if(frame==&p->frames[i]){++p->frame_pins[i];break;}
+    scope_mutex_unlock(&p->mutex);
+}
+
+void capture_pipeline_release_frame(CapturePipeline *p,const DisplayFrame *frame)
+{
+    scope_mutex_lock(&p->mutex);
+    for(unsigned i=0;i<3;++i)if(frame==&p->frames[i]){if(p->frame_pins[i])--p->frame_pins[i];break;}
+    scope_mutex_unlock(&p->mutex);
+}
+
 /* One GUI consumer leases a completed slot. Neither copying the density map
    nor processing a new frame holds the configuration/metrics mutex. */
 int capture_pipeline_frame(CapturePipeline *p, DisplayFrame *f)

@@ -33,6 +33,7 @@ void scope_condition_signal(ScopeCondition *condition);
 void scope_condition_wait(ScopeCondition *condition, ScopeMutex *mutex, unsigned timeout_ms);
 int scope_thread_start(ScopeThread *thread, void (*function)(void *), void *context);
 void scope_thread_join(ScopeThread *thread);
+void scope_thread_background(void);
 uint64_t scope_clock_ns(void);
 uint64_t scope_process_cpu_ns(void);
 void scope_sleep_ms(unsigned milliseconds);

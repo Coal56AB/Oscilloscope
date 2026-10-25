@@ -3,6 +3,7 @@
 #include "rounded_box.h"
 #include "boot_splash.h"
 #include "waveform_view.h"
+#include "scope_local.h"
 #include <assert.h>
 #include <math.h>
 
@@ -15,15 +16,17 @@
 #define PLOT_X SCOPE_PLOT_X
 #define PLOT_Y SCOPE_PLOT_Y
 
-static uint32_t *frame;
-static int pitch;
-static int view_top;
-static int view_height;
-static int active_font;
-static int active_rounding;
-static int draw_alpha = 255;
-static RoundedBox rounded_layers[8];
-static int rounded_depth;
+static SCOPE_LOCAL uint32_t *frame;
+static SCOPE_LOCAL int pitch;
+static SCOPE_LOCAL int view_top;
+static SCOPE_LOCAL int view_height;
+static SCOPE_LOCAL int active_font;
+static SCOPE_LOCAL int active_rounding;
+static SCOPE_LOCAL int draw_alpha = 255;
+static SCOPE_LOCAL uint8_t history_coverage[SCOPE_WIDTH*SCOPE_HEIGHT];
+static SCOPE_LOCAL int collecting_history;
+static SCOPE_LOCAL RoundedBox rounded_layers[8];
+static SCOPE_LOCAL int rounded_depth;
 
 static int view_y(int plot_y)
 {
@@ -144,6 +147,11 @@ static int glyph_index(char c)
 static void pixel(int x, int y, uint32_t color)
 {
     if ((unsigned)x < SCOPE_WIDTH && (unsigned)y < SCOPE_HEIGHT) {
+        if(collecting_history){
+            uint8_t *coverage=&history_coverage[(size_t)x*SCOPE_HEIGHT+y];
+            *coverage=(uint8_t)(255-(255-*coverage)*(255-draw_alpha)/255);
+            return;
+        }
         uint32_t *target = &frame[(size_t)y * pitch + x];
         if (draw_alpha == 255) *target = color;
         else {
@@ -167,7 +175,7 @@ static void fill(int x, int y, int w, int h, uint32_t color)
     if (x + w > SCOPE_WIDTH) w = SCOPE_WIDTH - x;
     if (y + h > SCOPE_HEIGHT) h = SCOPE_HEIGHT - y;
     if (w <= 0 || h <= 0) return;
-    if (draw_alpha == 255) {
+    if (draw_alpha == 255 && !collecting_history) {
         for (yy = y; yy < y + h; ++yy)
             for (xx = x; xx < x + w; ++xx)
                 frame[(size_t)yy * pitch + xx] = color;
@@ -388,11 +396,11 @@ static void navigation_box(const ScopeScreen *screen, uint32_t color, uint32_t g
     rounded_done();
 }
 
-static void acquisition_box(int running, int waveform_loaded)
+static void acquisition_box(int running, int waveform_loaded,int waiting)
 {
-    const char *label = waveform_loaded ? "BACK" : running ? "RUN" : "STOP";
+    const char *label = waveform_loaded ? "BACK" : !running ? "STOP" : waiting ? "HOLD" : "RUN";
     uint32_t color = waveform_loaded ? RGB(255, 196, 77) :
-                     running ? RGB(112, 223, 163) : RGB(237, 85, 95);
+                     !running ? RGB(237, 85, 95) : waiting ? RGB(255, 196, 77) : RGB(112, 223, 163);
     rounded_fill(856, 2, 164, 46, color);
     rounded_frame(856, 2, 164, 46, color);
     text(856 + (164 - text_width(label, 4)) / 2, 11, label, 4, RGB(12, 19, 44));
@@ -655,6 +663,34 @@ static void trace_envelope(const int16_t *minimum, const int16_t *maximum,
     }
 }
 
+static void trace_history(const ScopeScreen *screen,unsigned channel,uint32_t color)
+{
+    const int16_t *samples=channel?screen->history_ch2_samples:screen->history_ch1_samples;
+    const int16_t *low=channel?screen->history_ch2_min_samples:screen->history_ch1_min_samples;
+    const int16_t *high=channel?screen->history_ch2_max_samples:screen->history_ch1_max_samples;
+    unsigned count=screen->history_count>8?8:screen->history_count;
+    int saved_alpha=draw_alpha;
+    if(!samples || count<2)return;
+    /* Collect the faded layers in a byte coverage map, then touch each output
+       pixel once. Repeated translucent vertical writes thrash the ARM cache. */
+    memset(history_coverage,0,sizeof(history_coverage));collecting_history=1;
+    for(unsigned age=count-1;age>0;--age){
+        draw_alpha=saved_alpha*180*(count-age)/(255*(count-1));
+        if(low && high && screen->density_samples>SCOPE_PLOT_WIDTH)
+            trace_envelope(low+age*SCOPE_PLOT_WIDTH,high+age*SCOPE_PLOT_WIDTH,0,color);
+        else trace(samples+age*SCOPE_PLOT_WIDTH,NULL,0,color);
+    }
+    collecting_history=0;
+    for(int bx=PLOT_X;bx<PLOT_X+SCOPE_PLOT_WIDTH;bx+=16)
+        for(int by=view_top;by<view_top+view_height;by+=16)
+            for(int y=by;y<by+16 && y<view_top+view_height;++y)
+                for(int x=bx;x<bx+16 && x<PLOT_X+SCOPE_PLOT_WIDTH;++x){
+                    draw_alpha=history_coverage[(size_t)x*SCOPE_HEIGHT+y];
+                    if(draw_alpha)pixel(x,y,color);
+                }
+    draw_alpha=saved_alpha;
+}
+
 static uint32_t density_color(int level)
 {
     static const struct { int level, r, g, b; } palette[] = {
@@ -680,6 +716,24 @@ static uint32_t density_color(int level)
     return RGB(255, 25, 20);
 }
 
+static void density_pixel(const ScopeScreen *screen,unsigned channel,int x,int y,int rows,
+                          unsigned level,const uint32_t *palette,const uint8_t *alphas,
+                          unsigned attenuation,const int *screen_y,int saved_alpha,uint32_t color)
+{
+    if(screen->connections[channel]){
+        unsigned coverage=screen->connections[channel][x*rows+y];
+        if(coverage){
+            if(screen->intensity_coloring && coverage<160)coverage=160;
+            draw_alpha=saved_alpha*coverage/255;
+            pixel(PLOT_X+x,screen_y[y],screen->intensity_coloring?RGB(0,35,150):color);
+        }
+    }
+    if(level){
+        draw_alpha=alphas[level]*attenuation/255;
+        pixel(PLOT_X+x,screen_y[y],palette[level]);
+    }
+}
+
 /* Colors depend only on counts of original samples at the screen pixel. */
 static void trace_density(const ScopeScreen *screen, unsigned channel, uint32_t color)
 {
@@ -687,13 +741,20 @@ static void trace_density(const ScopeScreen *screen, unsigned channel, uint32_t 
     const WaveformSource *source=&screen->density_source[channel];
     uint16_t counts[SCOPE_PLOT_HEIGHT];
     uint32_t palette[256];
+    uint8_t alphas[256];
+    unsigned attenuation[SCOPE_PLOT_WIDTH];
+    int screen_y[SCOPE_PLOT_HEIGHT];
     int rows=levels && screen->density_rows?(int)screen->density_rows:view_height;
     double ratio=(double)view_height/SCOPE_PLOT_HEIGHT;
     unsigned peak=0;
     unsigned opacity=peak_opacity(screen);
     int saved_alpha=draw_alpha;
     int x,y;
-    for(y=0;y<256;++y)palette[y]=screen->intensity_coloring?density_color(y):color;
+    for(y=0;y<256;++y){palette[y]=screen->intensity_coloring?density_color(y):color;
+        alphas[y]=(uint8_t)(screen->intensity_coloring?saved_alpha:saved_alpha*y/255);}
+    for(y=0;y<rows;++y)screen_y[y]=view_top+y*view_height/rows;
+    for(x=0;x<SCOPE_PLOT_WIDTH;++x)attenuation[x]=screen->peak_detect && screen->peak_strength[channel]?
+        255-screen->peak_strength[channel][x]*opacity*159/(255*255):255;
     /* One thin connection preserves continuity. Its coverage never contributes
        to ADC hit counts, and unknown peak intervals never get a made-up curve. */
     draw_alpha=screen->intensity_coloring || screen->density_samples<=SCOPE_PLOT_WIDTH?
@@ -704,6 +765,17 @@ static void trace_density(const ScopeScreen *screen, unsigned channel, uint32_t 
               opacity,
               screen->intensity_coloring?RGB(0,35,150):color);
     draw_alpha=saved_alpha;
+    if(levels){
+        /* Both maps are column-major; the framebuffer is row-major. Small
+           tiles keep both working sets cached, even for a dense waveform. */
+        for(int bx=0;bx<SCOPE_PLOT_WIDTH;bx+=16)
+            for(int by=0;by<rows;by+=16)
+                for(y=by;y<by+16 && y<rows;++y)
+                    for(x=bx;x<bx+16 && x<SCOPE_PLOT_WIDTH;++x)
+                        density_pixel(screen,channel,x,y,rows,levels[x*SCOPE_PLOT_HEIGHT+y],
+                            palette,alphas,attenuation[x],screen_y,saved_alpha,color);
+        draw_alpha=saved_alpha;return;
+    }
     if (!levels) {
         for(x=0;x<SCOPE_PLOT_WIDTH;++x) {
             waveform_density_column(source,screen->density_first,screen->density_samples,
@@ -717,22 +789,8 @@ static void trace_density(const ScopeScreen *screen, unsigned channel, uint32_t 
             channel,screen->density_zero[channel]*ratio,screen->density_scale[channel]*ratio,
             SCOPE_PLOT_WIDTH,x,rows,counts);
         for(y=0;y<rows;++y) {
-            if(screen->connections[channel]){
-                unsigned coverage=screen->connections[channel][x*rows+y];
-                if(coverage){
-                    if(screen->intensity_coloring && coverage<160)coverage=160;
-                    draw_alpha=saved_alpha*coverage/255;
-                    pixel(PLOT_X+x,view_top+y*view_height/rows,
-                          screen->intensity_coloring?RGB(0,35,150):color);
-                }
-            }
-            unsigned level=levels?levels[x*SCOPE_PLOT_HEIGHT+y]:waveform_density_level(counts[y],peak);
-            if(level){
-                draw_alpha=screen->intensity_coloring?saved_alpha:saved_alpha*level/255;
-                if(screen->peak_detect && screen->peak_strength[channel])
-                    draw_alpha=draw_alpha*(255-screen->peak_strength[channel][x]*opacity*159/(255*255))/255;
-                pixel(PLOT_X+x,view_top+y*view_height/rows,palette[level]);
-            }
+            density_pixel(screen,channel,x,y,rows,waveform_density_level(counts[y],peak),
+                palette,alphas,attenuation[x],screen_y,saved_alpha,color);
         }
     }
     draw_alpha=saved_alpha;
@@ -888,6 +946,44 @@ void scope_startup_render(uint32_t *pixels, int stride, const char *phase, unsig
     progress_render(pixels,stride,failed?"STARTUP FAILED":"STARTUP CHECK",phase,percent,failed);
 }
 
+static void fft_cursor(const ScopeScreen *screen)
+{
+    int i,top=scope_screen_spectrum_top(screen),upper=scope_screen_spectrum_height(screen);
+    if (screen->fft_cursor_visible) {
+        uint32_t color = RGB(207, 183, 255);
+        int x = screen->fft_cursor_x;
+        int width = text_width(screen->fft_cursor_value, 2) + 12;
+        int left;
+        if (x < 0) x = 0;
+        if (x >= SCOPE_PLOT_WIDTH) x = SCOPE_PLOT_WIDTH - 1;
+        if (screen->cursor_mode == SCOPE_CURSOR_VOLTAGE) {
+            int level = screen->fft_cursor_level;
+            int y, label_y;
+            if (level < 0) level = 0;
+            if (level > 255) level = 255;
+            y = top + upper - 5 - level * (upper - 53) / 255;
+            label_y = y - 22;
+            if (label_y < top + 48) label_y = y + 3;
+            if (label_y > top + upper - 37) label_y = top + upper - 37;
+            if (label_y < top + 48) label_y = top + 48;
+            for (i = 1; i < SCOPE_WIDTH; i += 10)
+                fill(i, y, SCOPE_WIDTH - i < 5 ? SCOPE_WIDTH - i : 5, 1, color);
+            pixel(SCOPE_WIDTH - 1, y, color);
+            fill(SCOPE_WIDTH - width - 8, label_y, width, 20, RGB(27, 25, 45));
+            text(SCOPE_WIDTH - width - 2, label_y + 3, screen->fft_cursor_value, 2, color);
+        } else {
+            left = x + 8;
+            if (left + width > SCOPE_WIDTH - 4) left = x - width - 8;
+            if (left < 4) left = 4;
+            for (i = 49; i < upper; i += 10)
+                fill(x, top + i, 1, upper - i < 5 ? upper - i : 5, color);
+            pixel(x, top + upper - 1, color);
+            fill(left, top + 54, width, 20, RGB(27, 25, 45));
+            text(left + 6, top + 57, screen->fft_cursor_value, 2, color);
+        }
+    }
+}
+
 void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen)
 {
     const uint32_t yellow = RGB(255, 196, 77);
@@ -946,11 +1042,17 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
     action_box(552, 140, screen->fine_mode ? "FINE" : "COARSE",
                screen->fine_mode ? green : white);
     action_box(696, 156, "PROCESSING", white);
-    acquisition_box(screen->response_visible?screen->response_active:screen->running, screen->waveform_loaded);
+    acquisition_box(screen->response_visible?screen->response_active:screen->running, screen->waveform_loaded,
+                    !screen->response_visible && screen->waiting_for_trigger);
 
     fill(0, 50, SCOPE_WIDTH, SCOPE_BOTTOM_Y - 50, RGB(8, 9, 16));
     fill(PLOT_X, PLOT_Y, SCOPE_PLOT_WIDTH, SCOPE_PLOT_HEIGHT, RGB(7, 8, 14));
     if(screen->response_visible){response_plot(screen);goto bottom_cards;}
+    if(screen->plot_pixels){
+        for(int y=PLOT_Y;y<PLOT_Y+SCOPE_PLOT_HEIGHT;++y)
+            memcpy(frame+(size_t)y*pitch,screen->plot_pixels+(size_t)y*SCOPE_WIDTH,SCOPE_WIDTH*sizeof(uint32_t));
+        goto plot_ready;
+    }
     if (screen->zoom_enabled) {
         const char *zoom_label = screen->zoom_label ? screen->zoom_label : "ZOOM";
         int overview_height = screen->split_height - 26;
@@ -1009,39 +1111,7 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
             fill(x, top + 44, 1, 4, muted);
             text(left, top + 26, label, 2, white);
         }
-        if (screen->fft_cursor_visible) {
-            uint32_t color = RGB(207, 183, 255);
-            int x = screen->fft_cursor_x;
-            int width = text_width(screen->fft_cursor_value, 2) + 12;
-            int left;
-            if (x < 0) x = 0;
-            if (x >= SCOPE_PLOT_WIDTH) x = SCOPE_PLOT_WIDTH - 1;
-            if (screen->cursor_mode == SCOPE_CURSOR_VOLTAGE) {
-                int level = screen->fft_cursor_level;
-                int y, label_y;
-                if (level < 0) level = 0;
-                if (level > 255) level = 255;
-                y = top + upper - 5 - level * (upper - 53) / 255;
-                label_y = y - 22;
-                if (label_y < top + 48) label_y = y + 3;
-                if (label_y > top + upper - 37) label_y = top + upper - 37;
-                if (label_y < top + 48) label_y = top + 48;
-                for (i = 1; i < SCOPE_WIDTH; i += 10)
-                    fill(i, y, SCOPE_WIDTH - i < 5 ? SCOPE_WIDTH - i : 5, 1, color);
-                pixel(SCOPE_WIDTH - 1, y, color);
-                fill(SCOPE_WIDTH - width - 8, label_y, width, 20, RGB(27, 25, 45));
-                text(SCOPE_WIDTH - width - 2, label_y + 3, screen->fft_cursor_value, 2, color);
-            } else {
-                left = x + 8;
-                if (left + width > SCOPE_WIDTH - 4) left = x - width - 8;
-                if (left < 4) left = 4;
-                for (i = 49; i < upper; i += 10)
-                    fill(x, top + i, 1, upper - i < 5 ? upper - i : 5, color);
-                pixel(x, top + upper - 1, color);
-                fill(left, top + 54, width, 20, RGB(27, 25, 45));
-                text(left + 6, top + 57, screen->fft_cursor_value, 2, color);
-            }
-        }
+
     }
     if (screen->grid_enabled) {
         int j;
@@ -1071,19 +1141,8 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
                  2 * half_width + 1, 1, yellow);
         }
     }
-    ty = screen->trigger_y;
-    if (ty < 8) ty = 8;
-    if (ty > SCOPE_PLOT_HEIGHT - 9) ty = SCOPE_PLOT_HEIGHT - 9;
-    ty = view_y(ty);
-    fill(PLOT_X, ty, SCOPE_PLOT_WIDTH, 1, trigger_color);
-    if (screen->trigger_preview) {
-        int py = screen->trigger_preview_y;
-        if (py < 8) py = 8;
-        if (py > SCOPE_PLOT_HEIGHT - 9) py = SCOPE_PLOT_HEIGHT - 9;
-        py = view_y(py);
-        for (i = 0; i < SCOPE_PLOT_WIDTH; i += 14)
-            fill(PLOT_X + i, py, 7, 1, trigger_color);
-    }
+    if(screen->ch1_enabled)trace_history(screen,0,yellow);
+    if(screen->ch2_enabled)trace_history(screen,1,cyan);
     if(screen->ch1_enabled)trace_peak_band(screen,0,screen->intensity_coloring?RGB(0,35,150):yellow);
     if(screen->ch2_enabled)trace_peak_band(screen,1,screen->intensity_coloring?RGB(0,35,150):cyan);
     if (screen->ch1_enabled) {
@@ -1100,6 +1159,22 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
             trace_envelope(screen->ch2_min_samples, screen->ch2_max_samples, RGB(27, 66, 78), cyan);
         else trace(screen->ch2_samples,NULL,0,cyan);
     }
+    if(screen->plot_only)return;
+plot_ready:
+    ty = screen->trigger_y;
+    if (ty < 8) ty = 8;
+    if (ty > SCOPE_PLOT_HEIGHT - 9) ty = SCOPE_PLOT_HEIGHT - 9;
+    ty = view_y(ty);
+    fill(PLOT_X, ty, SCOPE_PLOT_WIDTH, 1, trigger_color);
+    if (screen->trigger_preview) {
+        int py = screen->trigger_preview_y;
+        if (py < 8) py = 8;
+        if (py > SCOPE_PLOT_HEIGHT - 9) py = SCOPE_PLOT_HEIGHT - 9;
+        py = view_y(py);
+        for (i = 0; i < SCOPE_PLOT_WIDTH; i += 14)
+            fill(PLOT_X + i, py, 7, 1, trigger_color);
+    }
+    if(screen->fft_enabled && !screen->zoom_enabled)fft_cursor(screen);
     if (screen->cursor_mode != SCOPE_CURSOR_OFF) {
         const uint32_t cursor = RGB(207, 183, 255);
         if (screen->cursor_mode == SCOPE_CURSOR_TIME) {
@@ -1382,18 +1457,19 @@ bottom_cards:
             int row = i % 8;
             int x = col ? 522 : 30;
             int y = SCOPE_MEASURE_MENU_ROW_Y + row * SCOPE_MEASURE_MENU_ROW_HEIGHT;
-            int selected = i == screen->menu_selected;
+            int disabled=screen->menu_disabled[i];
+            int selected = i == screen->menu_selected && !disabled;
             uint32_t accent = selected ? green : RGB(57, 63, 89);
             rounded_fill(x, y, 472, 40,
                          selected ? RGB(43, 51, 82) : RGB(25, 28, 45));
             rounded_frame(x, y, 472, 40,
                           selected ? RGB(113, 130, 172) : accent);
             fill(x, y, 5, 40, accent);
-            text(x + 14, y + 12, screen->menu_labels[i], 2, white);
+            text(x + 14, y + 12, screen->menu_labels[i], 2, disabled?RGB(94,100,111):white);
             rounded_fill(x + 344, y + 3, 124, 34, RGB(12, 15, 27));
             rounded_frame(x + 344, y + 3, 124, 34, RGB(61, 76, 100));
             text(x + 355, y + 12, screen->menu_values[i], 2,
-                 screen->menu_values[i] && screen->menu_values[i][0] == 'R' ? yellow : green);
+                 screen->menu_values[i] && screen->menu_values[i][0] == 'R' ? yellow : disabled?RGB(94,100,111):green);
             rounded_done();
             rounded_done();
         }
@@ -1455,7 +1531,8 @@ bottom_cards:
         rounded_done();
         for (i = 0; i < screen->menu_count && i < SCOPE_MENU_ITEMS; ++i) {
             int row = row_y + i * SCOPE_MENU_ROW_HEIGHT;
-            int selected = i == screen->menu_selected;
+            int disabled=screen->menu_disabled[i];
+            int selected = i == screen->menu_selected && !disabled;
             int body_x = menu_x + 10;
             int control_w = SCOPE_MENU_CONTROL_WIDTH;
             int debug_item = debug_menu ||
@@ -1468,35 +1545,36 @@ bottom_cards:
             fill(body_x, row, 5, 50,
                  selected ? screen->menu_editing ? yellow : green : RGB(57, 63, 89));
             text(body_x + 16, row + 18, screen->menu_labels[i], 2,
-                 debug_item ? yellow : white);
+                 disabled?RGB(94,100,111):debug_item ? yellow : white);
             if (screen->menu_option_count[i] && screen->menu_options[i]) {
                 int choice, count = screen->menu_option_count[i];
                 if (count > SCOPE_MENU_CHOICES) count = SCOPE_MENU_CHOICES;
                 for (choice = 0; choice < count; ++choice) {
                     int left = control_x + choice * control_w / count;
                     int right = control_x + (choice + 1) * control_w / count;
-                    int active = choice == screen->menu_option_selected[i];
+                    int unavailable=disabled || (screen->menu_option_disabled[i]&(1U<<choice));
+                    int active = choice == screen->menu_option_selected[i] && !unavailable;
                     const char *label = screen->menu_options[i][choice];
-                    uint32_t background = active ? RGB(33, 117, 196) : RGB(44, 49, 59);
+                    uint32_t background = unavailable?RGB(27,30,37):active ? RGB(33, 117, 196) : RGB(44, 49, 59);
                     rounded_fill(left + 2, row + 7, right - left - 4, 36,
                                  background);
                     rounded_frame(left + 2, row + 7, right - left - 4, 36,
                                   active ? RGB(91, 186, 255) : RGB(71, 78, 91));
                     text(left + (right - left - text_width(label, 2)) / 2,
-                         row + 18, label, 2, active ? white : muted);
+                         row + 18, label, 2, unavailable?RGB(94,100,111):active ? white : muted);
                     rounded_done();
                 }
             } else if (screen->menu_stepper[i]) {
                 const char *value = screen->menu_values[i];
-                uint32_t value_color = selected && screen->menu_editing ? yellow : white;
+                uint32_t value_color = disabled?RGB(94,100,111):selected && screen->menu_editing ? yellow : white;
                 rounded_fill(control_x + 2, row + 7, control_w - 4, 36,
                              RGB(15, 19, 32));
                 rounded_frame(control_x + 2, row + 7, control_w - 4, 36,
                               RGB(72, 88, 121));
                 fill(control_x + 2, row + 7, 54, 36, RGB(37, 47, 69));
                 fill(control_x + control_w - 56, row + 7, 54, 36, RGB(37, 47, 69));
-                text(control_x + 20, row + 12, "-", 3, yellow);
-                text(control_x + control_w - 39, row + 12, "+", 3, yellow);
+                text(control_x + 20, row + 12, "-", 3, disabled?RGB(94,100,111):yellow);
+                text(control_x + control_w - 39, row + 12, "+", 3, disabled?RGB(94,100,111):yellow);
                 text(control_x + (control_w - text_width(value, 2)) / 2,
                      row + 18, value, 2, value_color);
                 rounded_done();
@@ -1507,7 +1585,7 @@ bottom_cards:
                 rounded_frame(control_x + 2, row + 7, control_w - 4, 36,
                               RGB(72, 88, 121));
                 text(control_x + (control_w - text_width(value, 2)) / 2,
-                     row + 18, value, 2, green);
+                     row + 18, value, 2, disabled?RGB(94,100,111):green);
                 rounded_done();
             }
             rounded_done();

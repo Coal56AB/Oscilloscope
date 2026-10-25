@@ -76,6 +76,7 @@ static const struct {
     {"DISPLAY", DEMO_MENU_DISPLAY},
     {"MEASUREMENTS", DEMO_MENU_MEASURE},
     {"PROCESSING", DEMO_MENU_PROCESSING},
+    {"FILES", DEMO_MENU_FILES},
 #if DEMO_ENABLE_GENERATOR
     {"DEBUG", DEMO_MENU_DEBUG},
 #endif
@@ -534,6 +535,12 @@ static void save_capture(DemoSignal *demo)
 static void record_history(DemoSignal *demo)
 {
     int i, channel;
+    const double view[]={demo->scale_index[0],demo->scale_index[1],demo->channel_position[0],demo->channel_position[1],
+        demo->probe_ten[0],demo->probe_ten[1],demo->coupling[0],demo->coupling[1],demo->time_index,demo->time_position,
+        demo->zoom_time_index,demo->zoom_offset,demo->screen.zoom_enabled,demo->fft_enabled,demo->fft_split_height,
+        demo->zoom_split_height,demo->filter_level[0],demo->filter_level[1],demo->intensity_coloring,
+        demo->response_enabled[0],demo->response_enabled[1],demo->adc_simulation,demo->acquisition_rate_hz};
+    if(memcmp(demo->history_view,view,sizeof(view))){demo->history_count=0;memcpy(demo->history_view,view,sizeof(view));}
     for (i = 7; i > 0; --i) {
         memcpy(demo->history_ch1[i], demo->history_ch1[i - 1], sizeof(demo->ch1));
         memcpy(demo->history_ch2[i], demo->history_ch2[i - 1], sizeof(demo->ch2));
@@ -823,14 +830,24 @@ static void format_cursor_measurement(const DemoSignal *demo, int id, int channe
 
 static void update_measurements(DemoSignal *demo)
 {
-    ChannelStats stats[2] = {channel_stats(demo, 0), channel_stats(demo, 1)};
+    ChannelStats stats[2] = {0};
+    int external=demo->external_capture && !demo->waveform_loaded;
     int i, row, x, y;
+    if(!external){stats[0]=channel_stats(demo,0);stats[1]=channel_stats(demo,1);}
     demo->screen.measurement_count = demo->measurement_count;
     for (i = 0; i < demo->measurement_count; ++i) {
         int id = demo->measurement_ids[i];
         demo->screen.measurement_labels[i] = measurement_labels[id];
-        format_measurement(demo, id, stats, demo->measurement_value_text[i],
-                           sizeof(demo->measurement_value_text[i]));
+        /* Hardware measurements arrive with the completed capture. UI edits
+           never recalculate them from reduced coordinates or simulation. */
+        if(external && id<DEMO_MEAS_CURSOR_DT){
+            int ch=id<=DEMO_MEAS_CH1_MAX?0:id<=DEMO_MEAS_CH2_MAX?1:id<=DEMO_MEAS_CH1_DUTY?0:1;
+            if(!(ch?demo->screen.ch2_enabled:demo->screen.ch1_enabled))
+                snprintf(demo->measurement_value_text[i],sizeof(demo->measurement_value_text[i]),"OFF");
+            else if(!demo->external_frame_valid)
+                snprintf(demo->measurement_value_text[i],sizeof(demo->measurement_value_text[i]),"--");
+        }else format_measurement(demo, id, stats, demo->measurement_value_text[i],
+                                sizeof(demo->measurement_value_text[i]));
         demo->screen.measurement_values[i] = demo->measurement_value_text[i];
     }
     demo->screen.cursor_measurement_count = demo->screen.cursor_mode == SCOPE_CURSOR_TIME ?
@@ -874,7 +891,7 @@ static int menu_item_count(DemoMenu kind)
     if (kind == DEMO_MENU_CH1 || kind == DEMO_MENU_CH2) return 5;
     if (kind == DEMO_MENU_TRIGGER) return 7;
     if (kind == DEMO_MENU_CURSOR) return 1;
-    if (kind == DEMO_MENU_DISPLAY) return 2;
+    if (kind == DEMO_MENU_DISPLAY) return 3;
     if (kind == DEMO_MENU_TIME) return 3;
     if (kind == DEMO_MENU_BROWSE) return DEMO_BROWSE_PAGE;
     if (kind == DEMO_MENU_PC) return 2;
@@ -882,7 +899,9 @@ static int menu_item_count(DemoMenu kind)
     if (kind == DEMO_MENU_DEBUG) return 6;
     if (kind == DEMO_MENU_GENERATOR) return 3;
     if (kind == DEMO_MENU_FONT) return SCOPE_FONT_COUNT;
-    if (kind == DEMO_MENU_SETUP) return 4;
+    if (kind == DEMO_MENU_SETUP) return 3;
+    if (kind == DEMO_MENU_FILES) return 6;
+    if (kind == DEMO_MENU_LAYOUT) return 7;
     if (kind == DEMO_MENU_PRESETS) return 5;
     if (kind == DEMO_MENU_PRESET) return 2;
     if (kind == DEMO_MENU_RESPONSE) return 4;
@@ -927,6 +946,9 @@ static int current_menu_value(const DemoSignal *demo)
     if (demo->menu_kind == DEMO_MENU_PC) return demo->pc_baud_index;
     if (demo->menu_kind == DEMO_MENU_SETUP) return demo->startup_preset;
     if (demo->menu_kind == DEMO_MENU_RESPONSE) return demo->response_enabled[demo->response_channel];
+    if(demo->menu_kind==DEMO_MENU_LAYOUT)return item==0?!demo->screen.measurement_hidden:item==1?demo->screen.measurement_horizontal:
+        item==2?demo->screen.measurement_x:item==3?demo->screen.measurement_y:item==4?demo->menu_position_x:
+        item==5?demo->menu_position_y:demo->screen.split_height-70;
     if (demo->menu_kind == DEMO_MENU_TIME)
         return demo->screen.zoom_enabled ? demo->zoom_time_index : demo->time_index;
     if (demo->menu_kind == DEMO_MENU_PROCESSING)
@@ -960,10 +982,57 @@ static int menu_value_count(const DemoSignal *demo)
         return item < 2 ? DEMO_WAVE_COUNT :
                           (int)(sizeof(generator_period_us) /
                                 sizeof(generator_period_us[0]));
+    if(demo->menu_kind==DEMO_MENU_LAYOUT){
+        int x,y,width,height;
+        if(item<2)return 2;
+        if(item==6)return 181;
+        if(item<4){scope_screen_measurement_bounds(&demo->screen,&x,&y,&width,&height);
+            return item==2?SCOPE_WIDTH-width+1:scope_screen_measurement_bottom(&demo->screen,x,width)-height+1;}
+        height=SCOPE_MENU_ROW_Y-SCOPE_MENU_Y+demo->screen.menu_count*SCOPE_MENU_ROW_HEIGHT+6;
+        return item==4?SCOPE_WIDTH-SCOPE_MENU_WIDTH+1:SCOPE_HEIGHT-height+1;
+    }
     if (demo->menu_kind == DEMO_MENU_PC) return PC_BAUD_COUNT;
     if (demo->menu_kind == DEMO_MENU_SETUP) return 6;
     if (demo->menu_kind == DEMO_MENU_DEBUG) return item == 3 ? 2 : item == 1 ? 27 : 29;
     return 2;
+}
+
+/* Availability is shared by rendering, touch, the panel and remote settings. */
+static int menu_disabled(const DemoSignal *d,DemoMenu kind,int row)
+{
+    if(kind==DEMO_MENU_PC)return row==1 || !d->pc_available;
+    if(kind==DEMO_MENU_TIME)return row==2;
+    if(kind==DEMO_MENU_DEBUG)return row>=4;
+    if(kind==DEMO_MENU_BROWSE)return !d->browse_count;
+    if(kind==DEMO_MENU_SETUP && row==0)return !d->settings_available;
+    if(kind==DEMO_MENU_PRESET)return row==0?!d->settings_available:!(d->preset_valid&(1U<<d->preset_selected));
+    if(kind==DEMO_MENU_TRIGGER && row==4)return d->waveform_loaded;
+    if(kind==DEMO_MENU_CH1 || kind==DEMO_MENU_CH2)return row==4 && d->waveform_loaded;
+    if(kind==DEMO_MENU_RESPONSE){
+        unsigned count=demo_signal_response_curve((DemoSignal *)d,(unsigned)d->response_channel)->count;
+        return (row==1 && count<2) || (row==2 && !count);
+    }
+    if(kind==DEMO_MENU_PROCESSING)return d->waveform_loaded && (row==3 || row==5);
+    if(kind==DEMO_MENU_MEASURE)return row==SCOPE_MEASURE_CATALOG_ITEMS?!d->measurement_count:
+        d->measurement_count==SCOPE_MEASURE_SLOTS && measurement_slot(d,catalog_id(row))<0;
+    if(kind==DEMO_MENU_FILES)return row>=3 && (!d->waveform_loaded || (row<5 && d->browse_count<2));
+    if(kind==DEMO_MENU_LAYOUT)return ((row==2 || row==3) && d->screen.measurement_hidden) ||
+        (row==6 && !d->fft_enabled && !d->screen.zoom_enabled);
+    return 0;
+}
+
+static unsigned option_disabled(const DemoSignal *d,DemoMenu kind,int row)
+{
+    if(kind==DEMO_MENU_SETUP && row==0)return (31U&~d->preset_valid)<<1;
+    return 0;
+}
+
+static int next_menu_option(const DemoSignal *d)
+{
+    int current=current_menu_value(d),count=menu_value_count(d);
+    unsigned unavailable=option_disabled(d,d->menu_kind,d->screen.menu_selected);
+    for(int step=1;step<=count;++step){int value=(current+step)%count;if(!(unavailable&(1U<<value)))return value;}
+    return current;
 }
 
 static void set_menu_options(ScopeScreen *screen, int row,
@@ -999,6 +1068,8 @@ static void refresh_menu(DemoSignal *demo)
         screen->menu_option_count[i] = 0;
         screen->menu_option_selected[i] = 0;
         screen->menu_stepper[i] = 0;
+        screen->menu_disabled[i] = 0;
+        screen->menu_option_disabled[i] = 0;
     }
     if (demo->menu_kind == DEMO_MENU_MAIN) {
         screen->menu_title = "MAIN MENU";
@@ -1089,6 +1160,7 @@ static void refresh_menu(DemoSignal *demo)
         screen->menu_labels[1] = display_labels[1];
         screen->menu_values[1] = font_names[screen->font_index];
         set_menu_options(screen, 1, font_names, SCOPE_FONT_COUNT, screen->font_index);
+        screen->menu_labels[2]="LAYOUT";screen->menu_values[2]="OPEN";
     } else if (demo->menu_kind == DEMO_MENU_TIME) {
         screen->menu_title = "TIME SETTINGS";
         for (i = 0; i < 3; ++i) screen->menu_labels[i] = time_labels[i];
@@ -1148,7 +1220,7 @@ static void refresh_menu(DemoSignal *demo)
         set_menu_options(screen,0,startup_names,6,demo->startup_preset);
         screen->menu_labels[1]="PRESETS";screen->menu_values[1]="OPEN";
         screen->menu_labels[2]="PC CONNECTION";screen->menu_values[2]="OPEN";
-        screen->menu_labels[3]="TIME SETTINGS";screen->menu_values[3]="OPEN";
+
     } else if (demo->menu_kind == DEMO_MENU_PRESETS) {
         screen->menu_title="PRESETS";
         for(i=0;i<5;++i){screen->menu_labels[i]=preset_names[i];screen->menu_values[i]=(demo->preset_valid&(1U<<i))?"SAVED":"EMPTY";}
@@ -1163,12 +1235,33 @@ static void refresh_menu(DemoSignal *demo)
         set_menu_options(screen,1,on_off_names,2,demo->response_enabled[demo->response_channel]);
         screen->menu_labels[2]="CLEAR POINTS";screen->menu_values[2]="CLEAR";
         screen->menu_labels[3]="EXIT CALIBRATION";screen->menu_values[3]="BACK";
+    } else if(demo->menu_kind==DEMO_MENU_FILES){
+        static const char *labels[]={"SCREENSHOT","SAVE WAVE","SCREEN + WAVE","PREVIOUS FILE","NEXT FILE","CLOSE FILE"};
+        screen->menu_title="FILES";
+        for(i=0;i<6;++i){screen->menu_labels[i]=labels[i];screen->menu_values[i]=i<3?"SAVE":i==5?"CLOSE":"OPEN";}
+    } else if(demo->menu_kind==DEMO_MENU_LAYOUT){
+        static const char *labels[]={"MEASUREMENTS","MEASURE LAYOUT","MEASURE X","MEASURE Y","MENU X","MENU Y","SPLIT HEIGHT"};
+        static const char *layouts[]={"COLUMN","ROW"};
+        screen->menu_title="LAYOUT";
+        for(i=0;i<7;++i)screen->menu_labels[i]=labels[i];
+        set_menu_options(screen,0,on_off_names,2,!screen->measurement_hidden);
+        set_menu_options(screen,1,layouts,2,screen->measurement_horizontal);
+        for(i=2;i<7;++i){
+            int value=i==2?screen->measurement_x:i==3?screen->measurement_y:i==4?demo->menu_position_x:
+                i==5?demo->menu_position_y:screen->split_height;
+            snprintf(demo->layout_value_text[i-2],sizeof(demo->layout_value_text[0]),"%d",screen->menu_editing && screen->menu_selected==i?demo->edit_value+(i==6?70:0):value);
+            screen->menu_values[i]=demo->layout_value_text[i-2];screen->menu_stepper[i]=1;
+        }
     } else if (demo->menu_kind == DEMO_MENU_FONT) {
         screen->menu_title = "DEBUG / FONT";
         for (i = 0; i < SCOPE_FONT_COUNT; ++i) {
             screen->menu_labels[i] = font_names[i];
             screen->menu_values[i] = i == screen->font_index ? "ACTIVE" : "USE";
         }
+    }
+    for(i=0;i<screen->menu_count;++i){
+        screen->menu_disabled[i]=(uint8_t)menu_disabled(demo,demo->menu_kind,i);
+        screen->menu_option_disabled[i]=(uint8_t)option_disabled(demo,demo->menu_kind,i);
     }
     if (screen->menu_editing) {
         i = screen->menu_selected;
@@ -1512,6 +1605,8 @@ static void back_menu(DemoSignal *demo)
     } else if (demo->menu_parent == DEMO_MENU_MAIN) {
         open_menu(demo, DEMO_MENU_MAIN, DEMO_MENU_NONE);
         demo_signal_notify(demo, "MAIN MENU");
+    } else if(demo->menu_parent==DEMO_MENU_DISPLAY){
+        open_menu(demo,DEMO_MENU_DISPLAY,DEMO_MENU_MAIN);
     } else if(demo->menu_parent==DEMO_MENU_SETUP){
         open_menu(demo,DEMO_MENU_SETUP,DEMO_MENU_MAIN);
     } else if(demo->menu_parent==DEMO_MENU_PRESETS){
@@ -1563,6 +1658,7 @@ void demo_signal_init(DemoSignal *demo)
     demo->time_index = DEFAULT_TIME_INDEX;
     demo->record_depth_index = 2;
     demo->pc_baud_index = 4;
+    demo->settings_available = 1;
     demo->hold_time_ms = 300;
     demo->double_click_ms = 300;
     demo->generator_wave[0] = DEMO_WAVE_SQUARE;
@@ -1719,6 +1815,14 @@ static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     } else if (kind == DEMO_MENU_DISPLAY) {
         if(item)demo->screen.font_index = (uint8_t)value;
         else demo->screen.grid_enabled = (uint8_t)value;
+    } else if(kind==DEMO_MENU_LAYOUT){
+        if(item==0){if(demo->screen.measurement_hidden==value)demo_signal_ui_toggle_measurements_visible(demo);}
+        else if(item==1){if(demo->screen.measurement_horizontal!=value)demo_signal_ui_toggle_measurement_layout(demo);}
+        else if(item<4){
+            demo_signal_ui_move_measurements(demo,item==2?value-demo->screen.measurement_x:0,item==3?value-demo->screen.measurement_y:0);
+        }else if(item<6){
+            demo_signal_ui_move_menu(demo,item==4?value-demo->screen.menu_x:0,item==5?value-demo->screen.menu_y:0);
+        }else demo_signal_ui_set_split_height(demo,value+70);
     } else if (kind == DEMO_MENU_TIME) {
         if (demo->screen.zoom_enabled) demo->zoom_time_index = clamp(value, 0, demo->time_index);
         else demo->time_index = value;
@@ -1783,7 +1887,8 @@ static void apply_edit(DemoSignal *demo)
 int demo_signal_set_option(DemoSignal *demo, DemoMenu kind, int item, int value)
 {
     int count=0;
-    if(!demo||item<0||value<0)return 0;
+    if(!demo||item<0||item>=menu_item_count(kind)||value<0 || menu_disabled(demo,kind,item))return 0;
+    if(value<8 && (option_disabled(demo,kind,item)&(1U<<value)))return 0;
     if((kind==DEMO_MENU_CH1||kind==DEMO_MENU_CH2)&&item<4)count=item==3?6:2;
     else if(kind==DEMO_MENU_TRIGGER&&item<4)count=item==0||item==2?3:item==3?4:2;
     else if(kind==DEMO_MENU_TIME&&item==0)count=demo->screen.zoom_enabled?demo->time_index+1:TIME_SCALE_COUNT;
@@ -1795,6 +1900,7 @@ int demo_signal_set_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     else if(kind==DEMO_MENU_GENERATOR&&item<3)count=item<2?DEMO_WAVE_COUNT:
         (int)(sizeof(generator_period_us)/sizeof(generator_period_us[0]));
     else if(kind==DEMO_MENU_SETUP&&item==0)count=6;
+    else if(kind==DEMO_MENU_LAYOUT)count=item<2?2:item==6?181:(item==2 || item==4)?1025:601;
     else if(kind==DEMO_MENU_RESPONSE&&item==1)count=2;
     if(!count||value>=count)return 0;
     apply_option(demo,kind,item,value);return 1;
@@ -1890,7 +1996,8 @@ void demo_signal_ui_menu_choose(DemoSignal *demo, int index, int option)
         demo->screen.browser_delete_confirm ||
         demo->screen.measurement_clear_confirm ||
         index < 0 || index >= demo->screen.menu_count ||
-        option < 0 || option >= demo->screen.menu_option_count[index]) return;
+        option < 0 || option >= demo->screen.menu_option_count[index] ||
+        menu_disabled(demo,demo->menu_kind,index) || (option_disabled(demo,demo->menu_kind,index)&(1U<<option))) return;
     if (demo->screen.menu_option_selected[index] == option) return;
     demo_signal_ui_menu_select(demo, index);
     demo->edit_value = option;
@@ -1937,6 +2044,8 @@ void demo_signal_ui_menu_adjust(DemoSignal *demo, int steps)
         count = demo->screen.menu_count;
         index = (demo->screen.menu_selected + steps) % count;
         if (index < 0) index += count;
+        int direction=steps<0?-1:1;
+        for(int attempt=0;attempt<count && menu_disabled(demo,demo->menu_kind,index);++attempt)index=(index+direction+count)%count;
         demo_signal_ui_menu_select(demo, index);
     }
     update_text(demo, 0);
@@ -1995,6 +2104,7 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
     int measurement_docked = 0;
     if (!demo->screen.menu_open) return DEMO_ACTION_NONE;
     item = demo->screen.menu_selected;
+    if(!demo->screen.browser_delete_confirm && !demo->screen.measurement_clear_confirm && menu_disabled(demo,demo->menu_kind,item))return DEMO_ACTION_NONE;
     if (demo->screen.browser_delete_confirm) {
         int remove = demo->screen.browser_delete_choice;
         demo->screen.browser_delete_confirm = 0;
@@ -2019,7 +2129,13 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
         open_menu(demo, main_items[item + (demo->waveform_loaded && item>=1 ? 1 : 0)].target,
                   DEMO_MENU_MAIN);
     } else if (demo->menu_kind == DEMO_MENU_SETUP && item) {
-        open_menu(demo,item==1?DEMO_MENU_PRESETS:item==2?DEMO_MENU_PC:DEMO_MENU_TIME,DEMO_MENU_SETUP);
+        open_menu(demo,item==1?DEMO_MENU_PRESETS:DEMO_MENU_PC,DEMO_MENU_SETUP);
+    } else if(demo->menu_kind==DEMO_MENU_DISPLAY && item==2){
+        open_menu(demo,DEMO_MENU_LAYOUT,DEMO_MENU_DISPLAY);
+    } else if(demo->menu_kind==DEMO_MENU_FILES){
+        static const DemoAction actions[]={DEMO_ACTION_SCREENSHOT,DEMO_ACTION_WAVEFORM,DEMO_ACTION_SCREEN_AND_WAVE,
+            DEMO_ACTION_BROWSE_PREV,DEMO_ACTION_BROWSE_NEXT,DEMO_ACTION_BROWSE_CLOSE};
+        close_menu(demo);return actions[item];
     } else if (demo->menu_kind == DEMO_MENU_PRESETS) {
         demo->preset_selected=item;open_menu(demo,DEMO_MENU_PRESET,DEMO_MENU_PRESETS);
     } else if (demo->menu_kind == DEMO_MENU_PRESET) {
@@ -2074,7 +2190,7 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
     } else {
         int short_list = demo->screen.menu_option_count[item]>0;
         if (short_list) {
-            demo->edit_value = (current_menu_value(demo) + 1) % menu_value_count(demo);
+            demo->edit_value = next_menu_option(demo);
             apply_edit(demo);
         } else {
             demo->edit_value = current_menu_value(demo);
@@ -2094,15 +2210,19 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
     int small_choice = 0;
     int count;
     if (!demo->screen.menu_open || demo->screen.measurement_clear_confirm ||
-        index < 0 || index >= demo->screen.menu_count)
+        index < 0 || index >= demo->screen.menu_count || menu_disabled(demo,demo->menu_kind,index))
         return DEMO_ACTION_NONE;
     if (demo->screen.menu_editing) back_menu(demo);
     demo_signal_ui_menu_select(demo, index);
     if(demo->screen.menu_option_count[index]){
-        demo->edit_value=(current_menu_value(demo)+1)%menu_value_count(demo);
+        demo->edit_value=next_menu_option(demo);
         apply_edit(demo);return DEMO_ACTION_NONE;
     }
 
+    if(demo->menu_kind==DEMO_MENU_LAYOUT && index>=2){
+        demo->edit_value=clamp(current_menu_value(demo)+(direction<0?-1:1),0,menu_value_count(demo)-1);
+        apply_edit(demo);return DEMO_ACTION_NONE;
+    }
     if (demo->menu_kind == DEMO_MENU_CH1 || demo->menu_kind == DEMO_MENU_CH2) {
         if (index == 3) {
             demo_signal_zoom_channel(demo, demo->menu_kind == DEMO_MENU_CH2,
@@ -2502,10 +2622,25 @@ void demo_signal_ui_close_capture(DemoSignal *demo)
     open_menu(demo, DEMO_MENU_BROWSE, DEMO_MENU_BROWSE_TYPE);
 }
 
+int demo_signal_menu_encoder(const DemoSignal *demo,DemoControl control)
+{
+    if(!demo->screen.menu_open)return 0;
+    if(control==DEMO_ENC_FUNCTION)return 1;
+    DemoMenu kind=demo->menu_kind,parent=demo->menu_parent;
+    if(control==DEMO_ENC_CH1)return kind==DEMO_MENU_CH1 || parent==DEMO_MENU_CH1;
+    if(control==DEMO_ENC_CH2)return kind==DEMO_MENU_CH2 || parent==DEMO_MENU_CH2;
+    if(control==DEMO_ENC_TIME)return kind==DEMO_MENU_CURSOR || kind==DEMO_MENU_TIME;
+    if(control==DEMO_ENC_TRIGGER)return kind==DEMO_MENU_TRIGGER || parent==DEMO_MENU_TRIGGER;
+    return 0;
+}
+
 void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps)
 {
     int channel;
     if (steps == 0) return;
+    if(demo_signal_menu_encoder(demo,control)){
+        demo_signal_ui_menu_adjust(demo,demo->screen.menu_editing?steps:-steps);return;
+    }
     if (control == DEMO_ENC_CH1 || control == DEMO_ENC_CH2) {
         channel = control == DEMO_ENC_CH2;
         if (demo->position_mode[channel]) {
@@ -2549,10 +2684,7 @@ void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps)
         demo_signal_move_trigger(demo, -steps * (demo->screen.fine_mode ? 1 : 8));
         return;
     } else if (control == DEMO_ENC_FUNCTION) {
-        if (demo->screen.menu_open) {
-            demo_signal_ui_menu_adjust(demo, demo->screen.menu_editing ? steps : -steps);
-            return;
-        } else if (demo->fft_enabled && demo->screen.cursor_selected == SCOPE_CURSOR_SELECT_FFT) {
+        if (demo->fft_enabled && demo->screen.cursor_selected == SCOPE_CURSOR_SELECT_FFT) {
             int value = demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE ?
                         demo->screen.fft_cursor_level : demo->screen.fft_cursor_x;
             demo_signal_ui_move_fft_cursor(demo, value + steps * (demo->screen.fine_mode ? 1 : 8));
@@ -2574,6 +2706,14 @@ DemoAction demo_signal_press_at(DemoSignal *demo, DemoControl control,
 {
     DemoAction action = DEMO_ACTION_NONE;
     int forced_frame = 0;
+    if(demo->screen.browser_visible && control==DEMO_ENC_FUNCTION)return long_press?DEMO_ACTION_BROWSE_PREV:DEMO_ACTION_BROWSE_NEXT;
+    if(demo->menu_kind==DEMO_MENU_BROWSE && control==DEMO_ENC_FUNCTION && long_press){
+        demo_signal_ui_request_browse_delete(demo,demo->screen.menu_selected);return DEMO_ACTION_NONE;
+    }
+    if(demo_signal_menu_encoder(demo,control)){
+        if(long_press){back_menu(demo);update_text(demo,0);return DEMO_ACTION_NONE;}
+        return demo_signal_ui_menu_activate(demo);
+    }
     if (long_press && demo->screen.menu_open &&
         ((control == DEMO_BTN_CH1 && demo->menu_kind == DEMO_MENU_CH1) ||
          (control == DEMO_BTN_CH2 && demo->menu_kind == DEMO_MENU_CH2) ||
@@ -2609,13 +2749,9 @@ DemoAction demo_signal_press_at(DemoSignal *demo, DemoControl control,
         } else demo_signal_ui_apply_trigger(demo);
     } else if (control == DEMO_ENC_FUNCTION) {
         if (long_press) {
-            if (demo->screen.menu_open) {
-                back_menu(demo);
-            } else demo_signal_ui_toggle_fine(demo);
+            demo_signal_ui_toggle_fine(demo);
         } else if(demo->screen.response_visible && !demo->screen.menu_open){
             demo_signal_ui_toggle_run(demo);
-        } else if (demo->screen.menu_open) {
-            action = demo_signal_ui_menu_activate(demo);
         } else if (demo->screen.cursor_mode != SCOPE_CURSOR_OFF) {
             demo->screen.cursor_selected = (demo->screen.cursor_selected + 1) % (demo->fft_enabled ? 3 : 2);
         }

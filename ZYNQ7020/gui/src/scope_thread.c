@@ -3,6 +3,7 @@
 #endif
 #include "scope_thread.h"
 #ifdef _WIN32
+void scope_thread_background(void) { SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_BELOW_NORMAL); }
 void scope_mutex_init(ScopeMutex *m) { InitializeCriticalSection(m); }
 void scope_mutex_destroy(ScopeMutex *m) { DeleteCriticalSection(m); }
 void scope_mutex_lock(ScopeMutex *m) { EnterCriticalSection(m); }
@@ -76,6 +77,8 @@ void scope_sleep_ms(unsigned ms)
 #else
 #include <errno.h>
 #include <time.h>
+#include <sys/resource.h>
+void scope_thread_background(void) { setpriority(PRIO_PROCESS,0,5); }
 void scope_mutex_init(ScopeMutex *m) { pthread_mutex_init(m, NULL); }
 void scope_mutex_destroy(ScopeMutex *m) { pthread_mutex_destroy(m); }
 void scope_mutex_lock(ScopeMutex *m) { pthread_mutex_lock(m); }

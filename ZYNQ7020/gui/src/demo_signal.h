@@ -24,7 +24,8 @@ typedef enum {
     DEMO_MENU_TRIGGER, DEMO_MENU_CURSOR, DEMO_MENU_MEASURE, DEMO_MENU_DISPLAY,
     DEMO_MENU_TIME, DEMO_MENU_PROCESSING, DEMO_MENU_BROWSE_TYPE,
     DEMO_MENU_BROWSE, DEMO_MENU_PC, DEMO_MENU_DEBUG, DEMO_MENU_GENERATOR,
-    DEMO_MENU_FONT, DEMO_MENU_SETUP, DEMO_MENU_PRESET, DEMO_MENU_PRESETS, DEMO_MENU_RESPONSE
+    DEMO_MENU_FONT, DEMO_MENU_SETUP, DEMO_MENU_PRESET, DEMO_MENU_PRESETS, DEMO_MENU_RESPONSE,
+    DEMO_MENU_FILES, DEMO_MENU_LAYOUT
 } DemoMenu;
 
 typedef enum {
@@ -112,7 +113,10 @@ typedef struct {
     char acquisition_rate_text[32];
     int filter_level[2];
     int intensity_coloring;
+    char layout_value_text[5][16];
+    double history_view[23];
     int persistence_index;
+    int settings_available;
     int fft_enabled;
     int zoom_split_height;
     int fft_split_height;
@@ -194,6 +198,7 @@ void demo_signal_update_time(DemoSignal *demo, uint64_t now_ms);
 unsigned demo_signal_pc_baud(int index);
 void demo_signal_pc_status(DemoSignal *demo, int available, unsigned baud, int active);
 void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps);
+int demo_signal_menu_encoder(const DemoSignal *demo,DemoControl control);
 DemoAction demo_signal_press(DemoSignal *demo, DemoControl control, int long_press);
 DemoAction demo_signal_press_at(DemoSignal *demo, DemoControl control,
                                 int long_press, uint64_t now_ms);
