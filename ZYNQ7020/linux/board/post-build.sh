@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-chmod 755 "$1/etc/init.d/S20oscill-status" "$1/etc/init.d/S98oscill-card" "$1/etc/init.d/S99oscill" "$1/usr/sbin/oscill-card"
+chmod 755 "$1/etc/init.d/S20oscill-status" "$1/etc/init.d/S97oscill-settings" "$1/etc/init.d/S98oscill-card" "$1/etc/init.d/S99oscill" "$1/usr/sbin/oscill-card"
 mkdir -p "$1/media/scope"
 # Build identities are descriptive; they do not assert hardware verification.
 {

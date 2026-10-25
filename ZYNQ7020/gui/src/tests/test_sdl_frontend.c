@@ -104,6 +104,62 @@ static void test_debug_hold_threshold(void)
     assert(demo.menu_kind == DEMO_MENU_CURSOR && demo.screen.cursor_mode == SCOPE_CURSOR_TIME);
 }
 
+static void test_restored_settings(void)
+{
+    ControlEvent event={.type=CONTROL_SCALE,.control=0,.value=1000};
+    demo_signal_init(&demo);
+    demo.scale_index[0]=1;
+    restored_scale[0]=200;restored_scale[1]=-1;
+    control_queue_init(&controls);
+    assert(control_queue_push(&controls,&event));
+    drain_controls(100);
+    assert(demo.scale_index[0]==1 && restored_scale[0]==200);
+    event.value=200;assert(control_queue_push(&controls,&event));
+    drain_controls(101);
+    assert(demo.scale_index[0]==1 && restored_scale[0]==-1);
+    event.value=500;assert(control_queue_push(&controls,&event));
+    drain_controls(102);
+    assert(demo.scale_index[0]==2);
+    control_queue_destroy(&controls);
+    live_before_browse=demo;live_snapshot_valid=1;
+    demo.startup_preset=3;demo.preset_valid=7;demo.scale_index[0]=5;
+    assert(live_settings()->scale_index[0]==2);
+    assert(live_settings()->startup_preset==3 && live_settings()->preset_valid==7);
+    act(DEMO_ACTION_BROWSE_CLOSE);
+    assert(!live_snapshot_valid && demo.scale_index[0]==2 && demo.startup_preset==3);
+}
+
+static void test_response_capture(void)
+{
+    static DisplayFrame f;
+    CaptureRequest request;FILE *reply=tmpfile();assert(reply);
+    demo_signal_init(&demo);demo_signal_begin_external(&demo);
+    assert(remote_command("calibrate 1 start",reply,NULL));
+    capture_request_from_demo(&demo,&request);
+    assert(demo.response_active && request.running && request.spectrum_enabled);
+    assert(request.debug.wave[0]==SIGNAL_WAVE_SINE && request.debug.frequency_hz==100);
+    assert(!request.response_enabled[0]);
+    f.sequence=1;f.sample_rate_hz=65536;f.fft_size=1024;f.calibration_mask=1;
+    f.fundamental_hz[0]=1000;f.fundamental_amplitude[0]=1;f.rms[0]=sqrt(.5);
+    capture_display_apply(&demo,&f);
+    f.sequence=2;f.fundamental_hz[0]=10000;f.fundamental_amplitude[0]=.5;f.rms[0]=sqrt(.125);
+    capture_display_apply(&demo,&f);
+    assert(demo.response[2].count==2 && demo.response[0].count==0);
+    f.sequence=3;f.fundamental_hz[0]=3000;f.clipped_mask=1;
+    capture_display_apply(&demo,&f);assert(demo.response[2].count==2);
+    f.sequence=4;f.clipped_mask=0;f.rms[0]=10;
+    capture_display_apply(&demo,&f);assert(demo.response[2].count==2);
+    assert(remote_set("ch1_response",1));
+    capture_request_from_demo(&demo,&request);assert(!request.response_enabled[0]);
+    assert(remote_command("calibrate 1 stop",reply,NULL));
+    assert(remote_command("calibrate 1 exit",reply,NULL));
+    capture_request_from_demo(&demo,&request);assert(request.response_enabled[0]);
+    assert(remote_set("simulation",0));assert(!demo.response_enabled[0]);
+    assert(!demo.response[0].count && demo.response[2].count==2);
+    pc_activity_until=0;
+    fclose(reply);
+}
+
 static void test_external_trigger_marker(void)
 {
     static DisplayFrame f={0};
@@ -287,12 +343,13 @@ static void test_fft_fine_touch(void)
 {
     int mode;
     for(mode=SCOPE_CURSOR_TIME;mode<=SCOPE_CURSOR_VOLTAGE;++mode){
-        int x=300,y=SCOPE_PLOT_Y+45,initial,delta,coarse;
+        int x=300,y,initial,delta,coarse;
         demo_signal_init(&demo);
         demo_signal_ui_open_menu(&demo,DEMO_MENU_PROCESSING);
         demo_signal_ui_menu_choose(&demo,4,1);
         demo_signal_ui_dismiss_menu(&demo);
         demo_signal_ui_cycle_cursor_mode(&demo);
+        y=scope_screen_spectrum_top(&demo.screen)+85;
         if(mode==SCOPE_CURSOR_VOLTAGE)demo_signal_ui_cycle_cursor_mode(&demo);
         lcd_touch_begin(x,y);
         assert(touch.zone==TOUCH_FFT_CURSOR);
@@ -369,6 +426,8 @@ static void test_panel_battery(void)
 
 int main(void)
 {
+    test_restored_settings();
+    test_response_capture();
     test_delayed_panel_release();
     test_panel_battery();
     test_debug_hold_threshold();

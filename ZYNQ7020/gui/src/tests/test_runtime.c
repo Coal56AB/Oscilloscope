@@ -345,7 +345,7 @@ static void processor_fft_test(void)
             if (frequencies[n] >= first && frequencies[n] < end) expected = k;
             if (frame.fft[0][k] > frame.fft[0][peak]) peak = k;
         }
-        assert(abs((int)peak - (int)expected) <= 1 && frame.fft[0][peak] > 200);
+        assert(fabs(spectrum_frequency_at((double)peak/(SCOPE_FFT_BINS-1),512,1024)-frequencies[n])<3 && frame.fft[0][peak] > 200);
     }
     {
         size_t samples = 100000;
@@ -365,6 +365,15 @@ static void processor_fft_test(void)
         assert(fabs(spectrum_frequency_at((double)peak/(SCOPE_FFT_BINS-1),25000000,frame.fft_size)-10000)<1000);
         assert(frame.fft[0][peak] > 200);
         assert(spectrum_frequency_at(0,25000000,frame.fft_size) == 0);
+        samples=1000000;
+        long_data=realloc(long_data,samples*2);assert(long_data);
+        for(i=100000;i<samples;++i){
+            long_data[2*i]=(uint8_t)lround(128+50*cos(6.283185307179586*10000*i/50000000));
+            long_data[2*i+1]=128;
+        }
+        buffer.data=long_data;buffer.bytes=buffer.capacity=samples*2;view.samples=samples;
+        assert(capture_process(&buffer,&view,&frame));
+        assert(frame.fft_size==524288 && fabs(frame.fundamental_hz[0]-10000)<3);
         free(long_data);
     }
 }

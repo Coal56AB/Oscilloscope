@@ -6,6 +6,7 @@ typedef struct {
     int enabled, wave[2];
     unsigned frequency_hz;
     double offset_fraction[2];
+    double amplitude[2]; /* Zero retains the original unit amplitude. */
 } CaptureDebug;
 /* Requires a completed, leased ADC block. Metadata and timing are preserved.
    Destination is separate software storage; DMA memory remains read-only. */

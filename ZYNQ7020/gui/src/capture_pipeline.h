@@ -18,6 +18,9 @@ typedef struct {
     int density_enabled;
     unsigned density_rows;
     unsigned filter_level[2];
+    ChannelResponse response[2];
+    int response_enabled[2];
+    unsigned calibration_mask;
 } CaptureRequest;
 typedef struct {
     uint64_t blocks, bytes, dropped, overwritten, display_replaced, processing_ns, waveforms;

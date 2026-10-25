@@ -2,6 +2,7 @@
 #undef NDEBUG
 #endif
 #include "demo_signal.h"
+#include "spectrum_bins.h"
 #include "capture_settings.h"
 #include "battery_level.h"
 #include "wave_file.h"
@@ -495,7 +496,7 @@ static void test_generator_megahertz_and_fft(void)
     peak = 0;
     for (i = 1; i < SCOPE_FFT_BINS; ++i)
         if (demo.fft_ch1[i] > demo.fft_ch1[peak]) peak = i;
-    assert(peak >= 107 && peak <= 109); /* 1 MHz in the 0..2.56 MHz spectrum. */
+    assert(fabs(spectrum_frequency_at((double)peak/(SCOPE_FFT_BINS-1),2560000,1024)-1000000)<15000); /* 1 MHz in the 0..2.56 MHz spectrum. */
     demo_signal_ui_cycle_cursor_mode(&demo);
     demo_signal_ui_cycle_cursor_mode(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_CURSOR);
@@ -790,14 +791,14 @@ int main(void)
     assert(memcmp(synchronized_ch1, demo.ch1, sizeof(synchronized_ch1)) == 0);
     demo_signal_press(&demo, DEMO_BTN_RUN, 0);
     assert(demo.screen.running);
-    demo_signal_rotate(&demo, DEMO_ENC_TIME, -2);
+    demo_signal_rotate(&demo, DEMO_ENC_TIME, 2);
     assert(demo.zoom_time_index == previous - 3 && demo.time_index == previous);
     assert(strcmp(demo.screen.time_scale, "10 us") == 0);
     assert(demo.screen.zoom_window_start == 460);
     assert(demo.screen.zoom_window_end == 564);
     demo_signal_press(&demo, DEMO_ENC_TIME, 0);
     demo_signal_rotate(&demo, DEMO_ENC_TIME, 1);
-    assert(fabs(demo.zoom_offset + 1.6) < 1e-9 && demo.screen.trigger_y == 128);
+    assert(fabs(demo.zoom_offset - 1.6) < 1e-9 && demo.screen.trigger_y == 128);
     demo_signal_press(&demo, DEMO_BTN_MENU, 1);
     assert(!demo.screen.zoom_enabled && demo.screen.running);
     assert(demo.time_index == previous && demo.time_position == 0);
@@ -877,9 +878,10 @@ int main(void)
     assert(demo.channel_position[1] == -8);
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -2);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
-    demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
-    assert(demo.calibration_count[1] == 1 && demo.channel_position[1] == -90);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 3);
+    assert(demo.menu_kind==DEMO_MENU_RESPONSE && demo.response_channel==1 && demo.channel_position[1]==-8);
+    demo_signal_ui_menu_select(&demo,3);demo_signal_ui_menu_activate(&demo);
+    demo_signal_ui_reset_channel_position(&demo,1);
+    demo_signal_ui_menu_select(&demo,1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.coupling[1] == 0 && demo.screen.menu_option_count[1] == 2);
     assert(demo.screen.channel_zero_y[1] == 240);
@@ -918,8 +920,8 @@ int main(void)
     demo_signal_init(&demo);
     demo_signal_press(&demo, DEMO_BTN_MENU, 0);
     assert(demo.screen.menu_count == 6);
-    assert(strcmp(demo.screen.menu_labels[0], "BROWSE") == 0);
-    assert(strcmp(demo.screen.menu_labels[1], "PC CONNECTION") == 0);
+    assert(strcmp(demo.screen.menu_labels[0], "SETUP") == 0);
+    assert(strcmp(demo.screen.menu_labels[1], "BROWSE") == 0);
     assert(strcmp(demo.screen.menu_labels[3], "MEASUREMENTS") == 0);
     assert(strcmp(demo.screen.menu_labels[4], "PROCESSING") == 0);
     assert(strcmp(demo.screen.menu_labels[5], "DEBUG") == 0);
@@ -1309,7 +1311,12 @@ int main(void)
     demo_signal_ui_menu_select(&demo, 4);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.screen.fft_enabled && !demo.screen.menu_editing);
-    assert(demo.screen.fft_ch1_bins[47] > demo.screen.fft_ch1_bins[40]);
+    {
+        unsigned peak=0;
+        for(unsigned bin=1;bin<SCOPE_FFT_BINS;++bin)
+            if(demo.screen.fft_ch1_bins[bin]>demo.screen.fft_ch1_bins[peak])peak=bin;
+        assert(fabs(spectrum_frequency_at((double)peak/(SCOPE_FFT_BINS-1),512000,1024)-10000)<2000);
+    }
     demo_signal_ui_set_split_height(&demo, 170);
     assert(demo.screen.split_height == 170);
     demo_signal_ui_toggle_zoom(&demo);
@@ -1317,7 +1324,7 @@ int main(void)
     demo_signal_ui_set_split_height(&demo, 180);
     assert(demo.screen.split_height == 180);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DISPLAY);
-    assert(demo.screen.menu_count == 1);
+    assert(demo.screen.menu_count == 2);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DEBUG);
     assert(demo.screen.menu_count == 6);
     assert(demo.screen.font_index == SCOPE_FONT_INTER);
@@ -1395,6 +1402,7 @@ int main(void)
 
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_MAIN);
+    demo_signal_ui_menu_select(&demo,1);
     assert(demo_signal_ui_menu_activate(&demo) == DEMO_ACTION_NONE);
     assert(demo.menu_kind == DEMO_MENU_BROWSE_TYPE);
     assert(strcmp(demo.screen.menu_labels[0], "BMP IMAGES") == 0);
@@ -1446,10 +1454,17 @@ int main(void)
     assert(demo.menu_kind == DEMO_MENU_BROWSE_TYPE);
     demo_signal_ui_menu_back(&demo);
     assert(demo.menu_kind == DEMO_MENU_MAIN);
-    demo_signal_ui_menu_select(&demo, 1);
+    demo_signal_ui_menu_select(&demo, 0);
+    demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
+    assert(demo.menu_kind == DEMO_MENU_SETUP);
+    demo_signal_ui_menu_select(&demo, 2);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.menu_kind == DEMO_MENU_PC);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
+    assert(demo.screen.menu_editing && demo.pc_baud_index==4);
+    demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,1);
+    assert(demo.pc_baud_index==4);
+    demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
     assert(demo.pc_baud_index == 5 && !demo.screen.menu_editing);
     assert(strcmp(demo.screen.menu_labels[0], "UART BAUD") == 0);
     assert(strcmp(demo.screen.menu_values[0], "230400") == 0);
@@ -1537,9 +1552,9 @@ int main(void)
         assert(pixels[546 * SCOPE_WIDTH + 82] == 0x6977ad);
         demo_signal_ui_open_menu(&demo, DEMO_MENU_MAIN);
         assert(demo.screen.menu_count == 5);
-        assert(strcmp(demo.screen.menu_labels[0], "PC CONNECTION") == 0);
+        assert(strcmp(demo.screen.menu_labels[0], "SETUP") == 0);
         demo_signal_ui_menu_activate(&demo);
-        assert(demo.menu_kind == DEMO_MENU_PC);
+        assert(demo.menu_kind == DEMO_MENU_SETUP);
         demo_signal_ui_menu_back(&demo);
         assert(demo.menu_kind == DEMO_MENU_MAIN);
         demo_signal_ui_dismiss_menu(&demo);

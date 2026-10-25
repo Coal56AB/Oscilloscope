@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "waveform_view.h"
+#include "channel_response.h"
 
 #define SCOPE_WIDTH 1024
 #define SCOPE_HEIGHT 600
@@ -37,7 +38,7 @@
 #define SCOPE_CURSOR_READOUTS 4
 #define SCOPE_ZOOM_CURSOR_BAND 33
 #define SCOPE_CURSOR_STRIP_Y (SCOPE_MEASURE_BOTTOM_Y - SCOPE_ZOOM_CURSOR_BAND)
-#define SCOPE_FFT_BINS 128
+#define SCOPE_FFT_BINS SCOPE_PLOT_WIDTH
 #define SCOPE_FFT_TICKS 9
 #define SCOPE_CURSOR_ROWS 2
 
@@ -51,6 +52,8 @@ enum { SCOPE_FONT_PIXEL, SCOPE_FONT_INTER, SCOPE_FONT_COUNT };
 
 /* Each sample is a Y coordinate within the plot: 0 is the top edge. */
 typedef struct {
+    const ChannelResponse *response_curve;
+    int response_visible,response_channel,response_active,response_enabled;
     const int16_t *ch1_samples; /* SCOPE_PLOT_WIDTH entries, or NULL */
     const int16_t *ch2_samples; /* SCOPE_PLOT_WIDTH entries, or NULL */
     const int16_t *ch1_min_samples, *ch1_max_samples; /* Optional min/max envelope */
@@ -112,7 +115,7 @@ typedef struct {
     int fft_cursor_x;
     int fft_cursor_level; /* 0..255 maps to -80..0 dB */
     uint8_t fft_cursor_visible;
-    int split_height; /* Upper overview or FFT, measured from SCOPE_PLOT_Y */
+    int split_height; /* Upper overview or waveform, measured from SCOPE_PLOT_Y */
     uint8_t fft_enabled;
     uint8_t font_index;
     const char *menu_title;
@@ -168,6 +171,9 @@ void scope_update_render(uint32_t *pixels, int stride, const char *phase, unsign
 void scope_startup_render(uint32_t *pixels, int stride, const char *phase, unsigned percent, int failed);
 int scope_screen_fft_level_at(const ScopeScreen *screen, int y);
 int scope_screen_waveform_height(const ScopeScreen *screen);
+int scope_screen_waveform_top(const ScopeScreen *screen);
+int scope_screen_spectrum_top(const ScopeScreen *screen);
+int scope_screen_spectrum_height(const ScopeScreen *screen);
 int scope_screen_cursor_measurement_width(const ScopeScreen *screen);
 void scope_screen_cursor_measurement_bounds(const ScopeScreen *screen, int *x, int *y,
                                             int *width, int *height);

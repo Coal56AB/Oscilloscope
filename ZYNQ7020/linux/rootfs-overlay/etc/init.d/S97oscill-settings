@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+case "${1:-start}" in
+start)
+    [ "$(cat /sys/class/mtd/mtd3/name)" = settings ] || exit 1
+    mkdir -p /var/lib/oscill
+    grep -qs ' /var/lib/oscill jffs2 ' /proc/mounts ||
+        mount -t jffs2 /dev/mtdblock3 /var/lib/oscill
+    ;;
+stop) umount /var/lib/oscill || : ;;
+restart) "$0" stop; "$0" start ;;
+*) exit 2 ;;
+esac

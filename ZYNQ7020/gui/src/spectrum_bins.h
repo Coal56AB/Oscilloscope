@@ -38,4 +38,25 @@ static inline void spectrum_bin_range(unsigned index, unsigned count, unsigned s
     }
 }
 
+static inline double spectrum_magnitude_at(const double *re,const double *im,unsigned size,double bin)
+{
+    unsigned first=(unsigned)floor(bin);
+    double a=hypot(re[first],im[first]);
+    if(first>=size/2)return a;
+    return a+(bin-first)*(hypot(re[first+1],im[first+1])-a);
+}
+
+/* Project the piecewise-linear native magnitudes. Interpolated cell edges
+   remove nearest-bin stairs; every native peak in a cell is retained exactly. */
+static inline double spectrum_project(const double *re,const double *im,unsigned size,unsigned index,unsigned count)
+{
+    double scale=log1p(size/2.0)/(count-1);
+    double left=index?expm1(scale*(index-.5)):0;
+    double right=index+1<count?expm1(scale*(index+.5)):size/2.0;
+    double result=fmax(spectrum_magnitude_at(re,im,size,left),spectrum_magnitude_at(re,im,size,right));
+    unsigned first=(unsigned)ceil(left),last=(unsigned)floor(right);
+    for(unsigned k=first;k<=last;++k){double value=hypot(re[k],im[k]);if(value>result)result=value;}
+    return result;
+}
+
 #endif

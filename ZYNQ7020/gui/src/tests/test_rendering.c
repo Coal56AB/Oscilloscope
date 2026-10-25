@@ -5,6 +5,7 @@
 #include "rounded_box.h"
 #include "boot_splash.h"
 #include "waveform_view.h"
+#include "spectrum_bins.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,23 @@
 static uint32_t corners[68 * 68];
 static RoundedBox box;
 static DemoSignal demo;
+
+static void test_spectrum_projection(void)
+{
+    static double re[4096],im[4096];
+    double maximum=0;unsigned fractional=0;
+    re[3]=1;
+    for(unsigned column=0;column<1024;++column){
+        double value=spectrum_project(re,im,16,column,1024);
+        assert(value>=0 && value<=1);
+        if(value>maximum)maximum=value;
+        if(value>0.05 && value<0.95)++fractional;
+    }
+    assert(maximum==1 && fractional>20);
+    memset(re,0,sizeof(re));re[1234]=3;maximum=0;
+    for(unsigned column=0;column<32;++column){double value=spectrum_project(re,im,4096,column,32);if(value>maximum)maximum=value;}
+    assert(maximum==3);
+}
 
 static void test_cursor_table_and_fft_overlay(uint32_t *pixels, int stride)
 {
@@ -46,9 +64,11 @@ static void test_cursor_table_and_fft_overlay(uint32_t *pixels, int stride)
     memset(demo.fft_ch1, 0, sizeof(demo.fft_ch1));
     demo.screen.ch2_enabled = 0;
     scope_screen_render(pixels, stride, &demo.screen);
+    demo.screen.measurement_hidden=1;demo.screen.measurement_x=800;
+    scope_screen_render(pixels,stride,&demo.screen);
     /* The FFT baseline reaches the same band as frequency labels. */
-    y = SCOPE_PLOT_Y + demo.screen.split_height - 9 - 5;
-    assert(pixels[y * stride + 80] == 0xffc44d);
+    y = scope_screen_spectrum_top(&demo.screen) + scope_screen_spectrum_height(&demo.screen) - 5;
+    assert(pixels[y * stride + 700] == 0xffc44d);
 }
 
 static void test_trace_width(uint32_t *pixels, int stride)
@@ -263,23 +283,23 @@ static void test_fft_cursor_label(uint32_t *pixels, int stride)
         int column = side ? 1023 : 100;
         demo_signal_ui_move_fft_cursor(&demo, column);
         scope_screen_render(pixels, stride, &demo.screen);
-        for (y = SCOPE_PLOT_Y + 25; y < SCOPE_PLOT_Y + 39; ++y)
+        for (y = scope_screen_spectrum_top(&demo.screen) + 57; y < scope_screen_spectrum_top(&demo.screen) + 71; ++y)
             for (x = side ? 800 : 108; x < (side ? 1015 : 280); ++x)
                 if (pixels[y * stride + x] == 0xcfb7ff) ++colored;
         assert(colored > 20); /* Label is visible on the available side. */
     }
     demo_signal_ui_move_fft_cursor(&demo, 512);
     scope_screen_render(pixels, stride, &demo.screen);
-    assert(pixels[(SCOPE_PLOT_Y + 22) * stride + 512] == 0xcfb7ff);
-    assert(pixels[(SCOPE_PLOT_Y + 1) * stride + 512] == 0xcfb7ff);
-    assert(pixels[(SCOPE_PLOT_Y + demo.screen.split_height - 10) * stride + 512] == 0xcfb7ff);
+    assert(pixels[(scope_screen_spectrum_top(&demo.screen) + 59) * stride + 512] == 0xcfb7ff);
+    assert(pixels[(scope_screen_spectrum_top(&demo.screen) + 49) * stride + 512] == 0xcfb7ff);
+    assert(pixels[(scope_screen_spectrum_top(&demo.screen) + 101) * stride + 512] == 0xcfb7ff);
     demo_signal_ui_set_split_height(&demo, 70);
     scope_screen_render(pixels, stride, &demo.screen);
-    assert(pixels[(SCOPE_PLOT_Y + 22) * stride + 512] == 0xcfb7ff);
+    assert(pixels[(scope_screen_spectrum_top(&demo.screen) + 59) * stride + 512] == 0xcfb7ff);
     demo_signal_ui_cycle_cursor_mode(&demo);
     demo_signal_ui_move_fft_cursor(&demo, 128);
-    y = SCOPE_PLOT_Y + demo.screen.split_height - 14 -
-        128 * (demo.screen.split_height - 32) / 255;
+    y = scope_screen_spectrum_top(&demo.screen) + scope_screen_spectrum_height(&demo.screen) - 5 -
+        128 * (scope_screen_spectrum_height(&demo.screen) - 53) / 255;
     assert(scope_screen_fft_level_at(&demo.screen, y) >= 128);
     assert(scope_screen_fft_level_at(&demo.screen, -1000) == 255);
     assert(scope_screen_fft_level_at(&demo.screen, 1000) == 0);
@@ -288,7 +308,7 @@ static void test_fft_cursor_label(uint32_t *pixels, int stride)
     assert(pixels[y * stride + 801] == 0xcfb7ff);
     demo_signal_ui_toggle_zoom(&demo);
     scope_screen_render(pixels, stride, &demo.screen);
-    assert(pixels[(SCOPE_PLOT_Y + 22) * stride + 512] != 0xcfb7ff);
+    assert(pixels[(scope_screen_spectrum_top(&demo.screen) + 59) * stride + 512] != 0xcfb7ff);
 }
 
 static void test_cursor_card_selection(uint32_t *pixels, int stride)
@@ -442,6 +462,7 @@ static void test_corner_composition(void)
 
 int main(void)
 {
+    test_spectrum_projection();
     static const DemoMenu menus[] = {DEMO_MENU_MAIN, DEMO_MENU_DEBUG, DEMO_MENU_MEASURE,
                                     DEMO_MENU_CH1, DEMO_MENU_PROCESSING};
     uint32_t *pixels = malloc((SCOPE_WIDTH + 3) * SCOPE_HEIGHT * sizeof(*pixels));

@@ -30,13 +30,33 @@ static int view_y(int plot_y)
     return view_top + plot_y * view_height / SCOPE_PLOT_HEIGHT;
 }
 
-int scope_screen_waveform_height(const ScopeScreen *screen)
+static int split_height(const ScopeScreen *screen)
 {
     int split=screen->split_height;
-    if(!screen->zoom_enabled&&!screen->fft_enabled)return SCOPE_PLOT_HEIGHT;
     if(split<70)split=70;
     if(split>250)split=250;
-    return SCOPE_PLOT_HEIGHT-split;
+    return split;
+}
+
+int scope_screen_waveform_top(const ScopeScreen *screen)
+{
+    return PLOT_Y+(screen->zoom_enabled?split_height(screen):0);
+}
+
+int scope_screen_waveform_height(const ScopeScreen *screen)
+{
+    if(screen->zoom_enabled)return SCOPE_PLOT_HEIGHT-split_height(screen);
+    return screen->fft_enabled?split_height(screen)-9:SCOPE_PLOT_HEIGHT;
+}
+
+int scope_screen_spectrum_top(const ScopeScreen *screen)
+{
+    return PLOT_Y+split_height(screen);
+}
+
+int scope_screen_spectrum_height(const ScopeScreen *screen)
+{
+    return SCOPE_PLOT_HEIGHT-split_height(screen);
 }
 
 static const uint8_t glyphs[53][7] = {
@@ -764,23 +784,61 @@ static void overview_trace(const int16_t *samples, int start, int end,
 
 int scope_screen_fft_level_at(const ScopeScreen *screen, int y)
 {
-    int height = screen->split_height - 9;
-    int span = height - 23;
-    int level = span > 0 ? ((SCOPE_PLOT_Y + height - 5 - y) * 255 + span / 2) / span : 0;
+    int height = scope_screen_spectrum_height(screen);
+    int span = height - 53;
+    int level = span > 0 ? ((scope_screen_spectrum_top(screen) + height - 5 - y) * 255 + span / 2) / span : 0;
     return level < 0 ? 0 : level > 255 ? 255 : level;
 }
 
-static void spectrum_trace(const uint8_t *bins, int height, uint32_t color)
+static void spectrum_trace(const uint8_t *bins, int top, int height, uint32_t color)
 {
     int i;
     if (!bins) return;
     for (i = 1; i < SCOPE_FFT_BINS; ++i) {
         int x0 = (i - 1) * (SCOPE_PLOT_WIDTH - 1) / (SCOPE_FFT_BINS - 1);
         int x1 = i * (SCOPE_PLOT_WIDTH - 1) / (SCOPE_FFT_BINS - 1);
-        int y0 = PLOT_Y + height - 5 - bins[i - 1] * (height - 23) / 255;
-        int y1 = PLOT_Y + height - 5 - bins[i] * (height - 23) / 255;
+        int y0 = top + height - 5 - bins[i - 1] * (height - 53) / 255;
+        int y1 = top + height - 5 - bins[i] * (height - 53) / 255;
         line(x0, y0, x1, y1, color);
     }
+}
+
+static void response_plot(const ScopeScreen *screen)
+{
+    const ChannelResponse *c=screen->response_curve;
+    const int left=60,right=SCOPE_WIDTH-24,top=PLOT_Y+68,bottom=SCOPE_BOTTOM_Y-35;
+    const uint32_t color=screen->response_channel?RGB(65,199,226):RGB(255,196,77);
+    double low=10,high=1000000,span=6;
+    unsigned i;char label[96];int previous_x=0,previous_y=0;
+    if(c && c->count){
+        if(c->frequency[0]<low)low=pow(10,floor(log10(c->frequency[0])));
+        if(c->frequency[c->count-1]>high)high=pow(10,ceil(log10(c->frequency[c->count-1])));
+        for(i=0;i<c->count;++i)if(fabs(c->db[i])>span)span=ceil(fabs(c->db[i])/6)*6;
+    }
+    snprintf(label,sizeof(label),"CH%d RESPONSE / %s / %u POINTS",screen->response_channel+1,
+             screen->response_active?"RECORDING":"STOPPED",c?c->count:0);
+    text(12,PLOT_Y+10,label,2,color);
+    text(12,PLOT_Y+34,"SINE / CONSTANT INPUT LEVEL / FIRST POINT = 0 dB",2,RGB(166,178,202));
+    for(i=0;i<=4;++i){
+        int y=top+(bottom-top)*(int)i/4;
+        fill(left,y,right-left,1,RGB(39,47,70));
+        snprintf(label,sizeof(label),"%+.0f",span*(1-(double)i/2));text(8,y-6,label,2,RGB(166,178,202));
+    }
+    for(double f=low;f<=high*1.01;f*=10){
+        int x=left+(int)(log(f/low)/log(high/low)*(right-left));
+        fill(x,top,1,bottom-top,RGB(39,47,70));
+        snprintf(label,sizeof(label),f>=1000000?"%.0fM":f>=1000?"%.0fk":"%.0f",f>=1000000?f/1000000:f>=1000?f/1000:f);
+        text(x-text_width(label,2)/2,bottom+7,label,2,RGB(207,217,238));
+    }
+    if(c)for(i=0;i<c->count;++i){
+        int x=left+(int)(log(c->frequency[i]/low)/log(high/low)*(right-left));
+        int y=top+(int)((span-c->db[i])*(bottom-top)/(2*span));
+        if(i)line(previous_x,previous_y,x,y,color);
+        fill(x-2,y-2,5,5,color);previous_x=x;previous_y=y;
+    }
+    text(right-175,PLOT_Y+10,screen->response_active?"MEASURING RAW":screen->response_enabled?"CORRECTION ON":"CORRECTION OFF",2,RGB(145,228,183));
+    if(!c || !c->count)text(left+30,(top+bottom)/2+28,
+        screen->response_active?"WAITING FOR STABLE SIGNAL / ADJUST TIME":"RUN / FUNC: START    MENU: CONTROLS",2,RGB(166,178,202));
 }
 
 static void status_overlay(const ScopeScreen *screen)
@@ -877,15 +935,8 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         assert(rounded_depth == 0);
         return;
     }
-    {
-        int split = screen->split_height;
-        int cursor_band = 0;
-        if (split < 70) split = 70;
-        if (split > 250) split = 250;
-        view_top = screen->zoom_enabled || screen->fft_enabled ?
-                   PLOT_Y + split + cursor_band : PLOT_Y;
-        view_height = scope_screen_waveform_height(screen);
-    }
+    view_top = scope_screen_waveform_top(screen);
+    view_height = scope_screen_waveform_height(screen);
 
     fill(0, 0, SCOPE_WIDTH, SCOPE_HEIGHT, BOOT_SPLASH_BACKGROUND);
     fill(0, 0, SCOPE_WIDTH, 50, RGB(23, 33, 76));
@@ -895,10 +946,11 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
     action_box(552, 140, screen->fine_mode ? "FINE" : "COARSE",
                screen->fine_mode ? green : white);
     action_box(696, 156, "PROCESSING", white);
-    acquisition_box(screen->running, screen->waveform_loaded);
+    acquisition_box(screen->response_visible?screen->response_active:screen->running, screen->waveform_loaded);
 
     fill(0, 50, SCOPE_WIDTH, SCOPE_BOTTOM_Y - 50, RGB(8, 9, 16));
     fill(PLOT_X, PLOT_Y, SCOPE_PLOT_WIDTH, SCOPE_PLOT_HEIGHT, RGB(7, 8, 14));
+    if(screen->response_visible){response_plot(screen);goto bottom_cards;}
     if (screen->zoom_enabled) {
         const char *zoom_label = screen->zoom_label ? screen->zoom_label : "ZOOM";
         int overview_height = screen->split_height - 26;
@@ -933,19 +985,20 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
              40, 10, RGB(126, 143, 185));
         fill(PLOT_X, view_top, SCOPE_PLOT_WIDTH, view_height, RGB(7, 8, 14));
     } else if (screen->fft_enabled) {
-        int upper = screen->split_height - 9;
+        int top = scope_screen_spectrum_top(screen);
+        int upper = scope_screen_spectrum_height(screen);
         int chart_height = upper;
-        fill(0, PLOT_Y, SCOPE_WIDTH, upper, RGB(10, 17, 35));
+        fill(0, top, SCOPE_WIDTH, upper, RGB(10, 17, 35));
         for (i = 1; i < 8; ++i)
-            fill(i * SCOPE_WIDTH / 8, PLOT_Y, 1, chart_height, RGB(39, 47, 70));
+            fill(i * SCOPE_WIDTH / 8, top+48, 1, chart_height-53, RGB(39, 47, 70));
         for (i = 1; i < 4; ++i)
-            fill(0, PLOT_Y + i * chart_height / 4, SCOPE_WIDTH, 1, RGB(39, 47, 70));
-        spectrum_trace(screen->ch1_enabled ? screen->fft_ch1_bins : NULL, chart_height, yellow);
-        spectrum_trace(screen->ch2_enabled ? screen->fft_ch2_bins : NULL, chart_height, cyan);
-        fill(0, view_top - 9, SCOPE_WIDTH, 9, RGB(31, 38, 64));
-        fill(492, view_top - 11, 40, 12, RGB(126, 143, 185));
-        text(8, PLOT_Y + 5, "FFT", 2, white);
-        text(64, PLOT_Y + 5, screen->fft_sampling_info, 2, muted);
+            fill(0, top + 48 + i * (chart_height-53) / 4, SCOPE_WIDTH, 1, RGB(39, 47, 70));
+        spectrum_trace(screen->ch1_enabled ? screen->fft_ch1_bins : NULL, top, chart_height, yellow);
+        spectrum_trace(screen->ch2_enabled ? screen->fft_ch2_bins : NULL, top, chart_height, cyan);
+        fill(0, top - 9, SCOPE_WIDTH, 9, RGB(31, 38, 64));
+        fill(492, top - 11, 40, 12, RGB(126, 143, 185));
+        text(8, top + 5, "FFT", 2, white);
+        text(64, top + 5, screen->fft_sampling_info, 2, muted);
         for (i = 0; i < SCOPE_FFT_TICKS; ++i) {
             int x = i * (SCOPE_WIDTH - 1) / (SCOPE_FFT_TICKS - 1);
             const char *label = screen->fft_frequency_labels[i];
@@ -953,8 +1006,8 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
             int left = x - label_width / 2;
             if (left < 8) left = 8;
             if (left + label_width > SCOPE_WIDTH - 8) left = SCOPE_WIDTH - 8 - label_width;
-            fill(x, PLOT_Y + upper - 5, 1, 4, muted);
-            text(left, PLOT_Y + upper - 17, label, 2, white);
+            fill(x, top + 44, 1, 4, muted);
+            text(left, top + 26, label, 2, white);
         }
         if (screen->fft_cursor_visible) {
             uint32_t color = RGB(207, 183, 255);
@@ -968,11 +1021,11 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
                 int y, label_y;
                 if (level < 0) level = 0;
                 if (level > 255) level = 255;
-                y = PLOT_Y + upper - 5 - level * (upper - 23) / 255;
+                y = top + upper - 5 - level * (upper - 53) / 255;
                 label_y = y - 22;
-                if (label_y < PLOT_Y + 22) label_y = y + 3;
-                if (label_y > PLOT_Y + upper - 37) label_y = PLOT_Y + upper - 37;
-                if (label_y < PLOT_Y + 22) label_y = PLOT_Y + 22;
+                if (label_y < top + 48) label_y = y + 3;
+                if (label_y > top + upper - 37) label_y = top + upper - 37;
+                if (label_y < top + 48) label_y = top + 48;
                 for (i = 1; i < SCOPE_WIDTH; i += 10)
                     fill(i, y, SCOPE_WIDTH - i < 5 ? SCOPE_WIDTH - i : 5, 1, color);
                 pixel(SCOPE_WIDTH - 1, y, color);
@@ -982,11 +1035,11 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
                 left = x + 8;
                 if (left + width > SCOPE_WIDTH - 4) left = x - width - 8;
                 if (left < 4) left = 4;
-                for (i = 1; i < upper; i += 10)
-                    fill(x, PLOT_Y + i, 1, upper - i < 5 ? upper - i : 5, color);
-                pixel(x, PLOT_Y + upper - 1, color);
-                fill(left, PLOT_Y + 22, width, 20, RGB(27, 25, 45));
-                text(left + 6, PLOT_Y + 25, screen->fft_cursor_value, 2, color);
+                for (i = 49; i < upper; i += 10)
+                    fill(x, top + i, 1, upper - i < 5 ? upper - i : 5, color);
+                pixel(x, top + upper - 1, color);
+                fill(left, top + 54, width, 20, RGB(27, 25, 45));
+                text(left + 6, top + 57, screen->fft_cursor_value, 2, color);
             }
         }
     }
@@ -1190,6 +1243,7 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         }
         rounded_done();
     }
+bottom_cards:
     active_rounding = SCOPE_PANEL_RADIUS;
     if (screen->waveform_loaded) {
         static const int tile_x[] = {306, 484, 662, 840};

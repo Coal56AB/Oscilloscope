@@ -1,4 +1,5 @@
 #include "spectrum_bins.h"
+#include "dsp_fft.h"
 #include "capture_processor.h"
 #include "waveform_view.h"
 #include "signal_filter.h"
@@ -118,61 +119,43 @@ static double source_value(const void *context,size_t sample,unsigned channel)
 }
 /* Use the available record up to 64K contiguous samples without decimation.
    Heap workspace keeps the larger transform off the GUI/worker stack. */
-static int spectrum(const CaptureBuffer *b, const CaptureView *v, unsigned ch, unsigned n, uint8_t *bins)
+static int spectrum(const CaptureBuffer *b, const CaptureView *v, unsigned ch, unsigned n, uint8_t *bins,double *frequency,double *amplitude)
 {
     double *re = malloc(2 * n * sizeof(*re)), *im;
-    unsigned i, j, length;
+    unsigned i;
     double gain = fabs(b->volts_per_code[ch]) * 128, mean = 0;
     unsigned count = v->samples < n ? (unsigned)v->samples : n;
     if (!re) return 0;
     im = re + n;
-    for (i = 0; i < count; ++i) mean += sample_voltage(b, v->start + i, ch);
+    for (i = 0; i < count; ++i) mean += v->corrected[ch]?v->corrected[ch][v->start+i]:sample_voltage(b, v->start + i, ch);
     if (count) mean /= count;
     for (i = 0; i < n; ++i) {
         size_t offset = i;
         double value = 0;
         if (offset < v->samples)
-            value = sample_voltage(b, v->start + offset, ch) - mean;
+            value = (v->corrected[ch]?v->corrected[ch][v->start+offset]:sample_voltage(b, v->start + offset, ch)) - mean;
         re[i] = value * (0.5 - 0.5 * cos(6.283185307179586 * i / (n - 1)));
         im[i] = 0;
     }
-    for (i = 1, j = 0; i < n; ++i) {
-        unsigned bit = n >> 1;
-        for (; j & bit; bit >>= 1)
-            j ^= bit;
-        j ^= bit;
-        if (i < j) {
-            double t = re[i];
-            re[i] = re[j];
-            re[j] = t;
-        }
-    }
-    for (length = 2; length <= n; length <<= 1) {
-        unsigned half = length / 2, k;
-        for (k = 0; k < half; ++k) {
-            double angle = -6.283185307179586 * k / length;
-            double c = cos(angle), s = sin(angle);
-            for (i = 0; i < n; i += length) {
-                double tr = c * re[i + k + half] - s * im[i + k + half],
-                       ti = s * re[i + k + half] + c * im[i + k + half];
-                re[i + k + half] = re[i + k] - tr;
-                im[i + k + half] = im[i + k] - ti;
-                re[i + k] += tr;
-                im[i + k] += ti;
-            }
-        }
-    }
+    dsp_fft(re,im,n,0);
     for (i = 0; i < SCOPE_FFT_BINS; ++i) {
-        unsigned first, end, k;
-        double magnitude = 0;
-        spectrum_bin_range(i, SCOPE_FFT_BINS, n, &first, &end);
-        for (k = first; k < end; ++k) {
-            double value = hypot(re[k], im[k]) * 4 / n;
-            if (value > magnitude) magnitude = value;
-        }
+        double magnitude = spectrum_project(re,im,n,i,SCOPE_FFT_BINS)*4/n;
         double db = gain > 0 ? 20 * log10(magnitude / gain + 1e-12) : -120;
         double y = spectrum_level_at_db(db);
         bins[i] = (uint8_t)(y < 0 ? 0 : y > 255 ? 255 : y);
+    }
+    {
+        unsigned peak=1,k;double delta=0,log_peak;
+        for(k=2;k<=n/2;++k)if(hypot(re[k],im[k])>hypot(re[peak],im[peak]))peak=k;
+        log_peak=log(hypot(re[peak],im[peak])+1e-30);
+        if(peak>1 && peak<n/2){
+            double a=log(hypot(re[peak-1],im[peak-1])+1e-30);
+            double c=log(hypot(re[peak+1],im[peak+1])+1e-30);
+            double denominator=a-2*log_peak+c;
+            if(denominator<0){delta=0.5*(a-c)/denominator;log_peak-=0.25*(a-c)*delta;}
+        }
+        *frequency=(peak+delta)*b->sample_rate_hz/n;
+        *amplitude=exp(log_peak)*4/n;
     }
     free(re);
     return 1;
@@ -236,14 +219,15 @@ static void filtered_range(const void *context, size_t first, size_t end, unsign
     }
 }
 
-/* Filtering precedes every display representation. The immutable ADC record
-   remains the source for trigger, measurements and FFT, including in STOP. */
+/* Filtering precedes every display representation. Optional response correction
+   is a separate derived record; the immutable ADC input still drives triggering. */
 static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *f,
                            unsigned ch, double first, double samples)
 {
     WaveformSource source = {0};
     size_t count = b->bytes / 2, i;
-    double *workspace = NULL, *filtered = NULL;
+    double *workspace = NULL;
+    const double *filtered = v->corrected[ch];
     int ok = 1;
     unsigned rows = v->density_rows ? v->density_rows : SCOPE_PLOT_HEIGHT;
     source.samples = count;
@@ -252,13 +236,17 @@ static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayF
     source.value = b->peaks ? source_value : NULL;
     source.envelope = b->peaks ? source_envelope : NULL;
     source.envelope_samples = b->peaks ? 2 : 0;
+    if(filtered){
+        source.context=(void *)filtered;source.range=filtered_range;source.value=filtered_value;
+        source.envelope=NULL;source.envelope_samples=0;
+    }
     if (v->filter_level[ch]) {
         if (count > SIZE_MAX / (2 * sizeof(*workspace))) return 0;
         workspace = malloc(2 * count * sizeof(*workspace));
         if (!workspace) return 0;
         filtered = workspace + count;
-        for (i = 0; i < count; ++i) workspace[i] = sample_voltage(b, i, ch);
-        signal_filter_apply(workspace, count, v->filter_level[ch], filtered);
+        for (i = 0; i < count; ++i) workspace[i] = v->corrected[ch]?v->corrected[ch][i]:sample_voltage(b, i, ch);
+        signal_filter_apply(workspace, count, v->filter_level[ch], workspace+count);
         source.context = filtered;
         source.range = filtered_range;
         source.value = filtered_value;
@@ -325,11 +313,12 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
             return 0;
     memset(f, 0, offsetof(DisplayFrame,connections));
     f->sequence = b->sequence;
+    f->calibration_mask=v->calibration_mask;
     f->sample_rate_hz = b->sample_rate_hz;
     f->peak_detect = b->peaks!=NULL;
     f->display_samples = display_samples;
     f->fft_size = 1024;
-    while (f->fft_size < 65536 && f->fft_size * 2 <= v->samples) f->fft_size *= 2;
+    while (f->fft_size < 1048576 && f->fft_size * 2 <= v->samples) f->fft_size *= 2;
     f->trigger_sample = b->trigger_sample;
     f->trigger_x = b->trigger_sample != CAPTURE_NO_TRIGGER && b->trigger_sample >= b->first_sample ?
         ((double)(b->trigger_sample - b->first_sample) - display_first) * SCOPE_PLOT_WIDTH / display_samples :
@@ -337,6 +326,7 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
     f->view_start = v->start;
     f->view_samples = v->samples;
     for (ch = 0; ch < 2; ++ch) {
+        CaptureView corrected_view=*v;double *corrected=NULL;
         uint64_t sum = 0, squares = 0;
         size_t i, first = 0, last = 0, crossings = 0, high = 0;
         unsigned low = 255, peak = 0;
@@ -450,11 +440,25 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
                 previous_high = current_high;
             }
         }
+        if(low<=1 || peak>=254)f->clipped_mask|=1U<<ch;
         if (crossings > 1 && last > first)
             f->frequency_hz[ch] = (double)(crossings - 1) * b->sample_rate_hz / (last - first);
         f->duty[ch] = v->samples ? 100.0 * high / v->samples : NAN;
-        if (!v->skip_spectrum && !spectrum(b, v, ch, f->fft_size, f->fft[ch])) return 0;
-        if (!render_channel(b, v, f, ch, display_first, display_samples)) return 0;
+        if(v->response[ch] && v->response[ch]->count>=2){
+            size_t count=b->bytes/2,k;
+            corrected=malloc(count*sizeof(double));if(!corrected)return 0;
+            for(k=0;k<count;++k)corrected[k]=sample_voltage(b,k,ch);
+            if(!channel_response_correct(corrected,count,(double)b->sample_rate_hz,v->response[ch])){free(corrected);return 0;}
+            corrected_view.corrected[ch]=corrected;
+            if(v->samples){
+                double sum=0,squares=0,lo=corrected[v->start],hi=lo;
+                for(k=v->start;k<v->start+v->samples;++k){double x=corrected[k];sum+=x;squares+=x*x;if(x<lo)lo=x;if(x>hi)hi=x;}
+                f->minimum[ch]=lo;f->maximum[ch]=hi;f->mean[ch]=sum/v->samples;f->rms[ch]=sqrt(squares/v->samples);
+            }
+        }
+        if (!v->skip_spectrum && !spectrum(b, &corrected_view, ch, f->fft_size, f->fft[ch],&f->fundamental_hz[ch],&f->fundamental_amplitude[ch])){free(corrected);return 0;}
+        if (!render_channel(b, &corrected_view, f, ch, display_first, display_samples)){free(corrected);return 0;}
+        free(corrected);
     }
     f->density_valid = v->density_enabled;
     f->density_rows = v->density_rows?v->density_rows:SCOPE_PLOT_HEIGHT;

@@ -3,6 +3,7 @@
 
 #include "scope_screen.h"
 #include "signal_generator.h"
+#include "channel_response.h"
 #include <stddef.h>
 
 typedef enum {
@@ -15,7 +16,7 @@ typedef enum {
     DEMO_ACTION_NONE, DEMO_ACTION_SCREENSHOT, DEMO_ACTION_SCREEN_AND_WAVE,
     DEMO_ACTION_WAVEFORM, DEMO_ACTION_BROWSE_REFRESH, DEMO_ACTION_BROWSE_OPEN,
     DEMO_ACTION_BROWSE_CLOSE, DEMO_ACTION_BROWSE_PREV, DEMO_ACTION_BROWSE_NEXT,
-    DEMO_ACTION_BROWSE_DELETE
+    DEMO_ACTION_BROWSE_DELETE, DEMO_ACTION_PRESET_SAVE, DEMO_ACTION_PRESET_LOAD
 } DemoAction;
 
 typedef enum {
@@ -23,7 +24,7 @@ typedef enum {
     DEMO_MENU_TRIGGER, DEMO_MENU_CURSOR, DEMO_MENU_MEASURE, DEMO_MENU_DISPLAY,
     DEMO_MENU_TIME, DEMO_MENU_PROCESSING, DEMO_MENU_BROWSE_TYPE,
     DEMO_MENU_BROWSE, DEMO_MENU_PC, DEMO_MENU_DEBUG, DEMO_MENU_GENERATOR,
-    DEMO_MENU_FONT
+    DEMO_MENU_FONT, DEMO_MENU_SETUP, DEMO_MENU_PRESET, DEMO_MENU_PRESETS, DEMO_MENU_RESPONSE
 } DemoMenu;
 
 typedef enum {
@@ -139,6 +140,11 @@ typedef struct {
     int browse_selected;
     int browse_filter;
     int pc_baud_index;
+    int startup_preset, preset_selected;
+    unsigned preset_valid;
+    ChannelResponse response[4]; /* Real CH1/CH2, then independent simulation curves. */
+    int response_enabled[2],response_channel,response_active,response_sim_index;
+    uint64_t response_started_ms,response_seen_sequence;
     int pc_available;
     int pc_active;
     int zoom_time_index;
@@ -154,7 +160,6 @@ typedef struct {
     DemoMenu menu_kind;
     DemoMenu menu_parent;
     int edit_value;
-    int calibration_count[2];
     uint64_t last_channel_press_ms[2];
     uint64_t synthetic_ms;
     uint8_t channel_press_valid[2];
@@ -179,6 +184,10 @@ void demo_signal_present_external(DemoSignal *demo, uint64_t sequence);
 unsigned demo_signal_generator_hz(int index);
 
 void demo_signal_init(DemoSignal *demo);
+void demo_signal_refresh(DemoSignal *demo);
+void demo_signal_response_observe(DemoSignal *demo,uint64_t sequence,double frequency,double amplitude);
+ChannelResponse *demo_signal_response_curve(DemoSignal *demo,unsigned channel);
+int demo_signal_response_enable(DemoSignal *demo,unsigned channel,int enabled);
 void demo_signal_set_fft_range(DemoSignal *demo, double span_hz, unsigned size);
 void demo_signal_advance(DemoSignal *demo);
 void demo_signal_update_time(DemoSignal *demo, uint64_t now_ms);

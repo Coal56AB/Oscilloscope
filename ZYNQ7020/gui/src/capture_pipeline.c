@@ -103,9 +103,12 @@ static void process_frame(CapturePipeline *p, const CaptureBuffer *b,
     view.display_first = base_first + (base_samples - view.display_samples) * 0.5 +
                          request->zoom_offset_seconds * b->sample_rate_hz;
     view.skip_spectrum = !request->spectrum_enabled;
+    view.calibration_mask=request->calibration_mask;
     view.density_enabled = request->density_enabled;
     view.density_rows = request->density_rows;
     memcpy(view.filter_level, request->filter_level, sizeof(view.filter_level));
+    for(unsigned channel=0;channel<2;++channel)
+        if(request->response_enabled[channel])view.response[channel]=&request->response[channel];
     memcpy(view.zero_y, request->zero_y, sizeof(view.zero_y));
     memcpy(view.pixels_per_volt, request->pixels_per_volt, sizeof(view.pixels_per_volt));
     if (capture_process(b, &view, frame)) {
@@ -416,7 +419,8 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
         !isfinite(r->pan_fraction) || r->pan_fraction < 0 || r->pan_fraction > 1)
         return;
     for (ch = 0; ch < 2; ++ch)
-        if (!isfinite(r->zero_y[ch]) || !isfinite(r->pixels_per_volt[ch]) || r->filter_level[ch] > 3)
+        if (!isfinite(r->zero_y[ch]) || !isfinite(r->pixels_per_volt[ch]) || r->filter_level[ch] > 3 ||
+            (r->response_enabled[ch] && (!channel_response_valid(&r->response[ch]) || r->response[ch].count<2)))
             return;
     if (!isfinite(r->overview_duration_seconds) || r->overview_duration_seconds < 0 ||
         !isfinite(r->zoom_offset_seconds) || !isfinite(r->trigger_voltage) ||
@@ -427,10 +431,13 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
     scope_mutex_lock(&p->mutex);
     if (r->running && !p->request.running) ++p->arm_revision;
     if (p->request.duration_seconds != r->duration_seconds ||
+        p->request.calibration_mask != r->calibration_mask ||
         p->request.spectrum_enabled != r->spectrum_enabled ||
         p->request.density_enabled != r->density_enabled ||
         p->request.density_rows != r->density_rows ||
         memcmp(p->request.filter_level, r->filter_level, sizeof(r->filter_level)) ||
+        memcmp(p->request.response_enabled,r->response_enabled,sizeof(r->response_enabled)) ||
+        memcmp(p->request.response,r->response,sizeof(r->response)) ||
         p->request.roll != r->roll || p->request.record_samples != r->record_samples ||
         p->request.overview_duration_seconds != r->overview_duration_seconds ||
         p->request.zoom_offset_seconds != r->zoom_offset_seconds ||

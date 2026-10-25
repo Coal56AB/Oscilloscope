@@ -35,12 +35,30 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
         r->holdoff_samples = holdoff[d->trigger_holdoff_index];
     }
     r->debug.frequency_hz = demo_signal_generator_hz(d->generator_frequency_index);
+    if(d->adc_simulation)for(ch=0;ch<2;++ch)
+        if(d->response[ch+2].count)r->debug.amplitude[ch]=channel_response_demo_gain(ch,r->debug.frequency_hz);
+    if(d->response_active){
+        unsigned channel=(unsigned)d->response_channel;
+        r->calibration_mask=1U<<channel;
+        r->running=1;r->trigger_mode=0;r->trigger_voltage=0;r->holdoff_samples=0;
+        r->spectrum_enabled=1;r->roll=0;
+        if(d->adc_simulation){
+            double f=demo_signal_generator_hz(d->response_sim_index);
+            r->debug.frequency_hz=(unsigned)f;r->debug.wave[channel]=SIGNAL_WAVE_SINE;
+            r->debug.amplitude[channel]=channel_response_demo_gain(channel,f);
+            r->duration_seconds=r->overview_duration_seconds=8/f;
+            r->zoom_offset_seconds=0;
+        }
+    }
     r->pan_fraction = 0.5 + (double)d->time_position / SCOPE_PLOT_WIDTH;
     if (r->pan_fraction < 0)
         r->pan_fraction = 0;
     if (r->pan_fraction > 1)
         r->pan_fraction = 1;
     for (ch = 0; ch < 2; ++ch) {
+        r->response_enabled[ch]=d->response_enabled[ch] && !d->response_active;
+        if(r->response_enabled[ch])r->response[ch]=d->response[ch+(d->adc_simulation?2:0)];
+        if(r->response[ch].count<2)r->response_enabled[ch]=0;
         r->filter_level[ch] = (unsigned)d->filter_level[ch];
         r->zero_y[ch] = wave.zero_y[ch];
         r->pixels_per_volt[ch] = (SCOPE_PLOT_HEIGHT / 8.0) * 1000 / wave.mv_per_div[ch];
@@ -51,6 +69,15 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
 void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
 {
     int i;
+    if(d->response_active){
+        unsigned channel=(unsigned)d->response_channel;
+        double amplitude=f->fundamental_amplitude[channel];
+        double variance=f->rms[channel]*f->rms[channel]-f->mean[channel]*f->mean[channel];
+        if((f->calibration_mask&(1U<<channel)) && !(f->clipped_mask&(1U<<channel)) && amplitude>0 && variance>0 && amplitude*amplitude>1.2*variance &&
+           f->fundamental_hz[channel]>=3.0*f->sample_rate_hz/f->fft_size &&
+           f->fundamental_hz[channel]<0.4*f->sample_rate_hz)
+            demo_signal_response_observe(d,f->sequence,f->fundamental_hz[channel],amplitude);
+    }
     d->screen.peak_detect=(uint8_t)f->peak_detect;
     d->screen.density_rows=f->density_rows;
     d->screen.density_samples=f->display_samples;

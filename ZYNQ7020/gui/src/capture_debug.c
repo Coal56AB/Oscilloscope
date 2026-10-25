@@ -96,7 +96,8 @@ int capture_debug_replace(const CaptureBuffer *input, CaptureBuffer *output,
         for (i = 0; i < 1024; ++i) {
             double value = generator_value(debug->wave[ch], i / 1024.0 + ch * 0.2,
                                              1.0, (uint32_t)input->sequence, i, ch);
-            double code = 128 + (value - debug->offset_fraction[ch]) * (ch ? 80 : 60);
+            double amplitude=debug->amplitude[ch]>0?debug->amplitude[ch]:1;
+            double code = 128 + (value - debug->offset_fraction[ch]) * (ch ? 80 : 60)*amplitude;
             table[ch][i] = (uint8_t)(code < 0 ? 0 : code > 255 ? 255 : code);
         }
     }

@@ -1,6 +1,7 @@
 #include "panel_win32.h"
 #include "wave_file.h"
 #include "boot_splash.h"
+#include "settings_session.h"
 
 #include <shellapi.h>
 #include <windowsx.h>
@@ -11,6 +12,7 @@
 #include <wchar.h>
 
 static DemoSignal demo;
+static SettingsSession settings;
 static ULONGLONG splash_until;
 
 static void render_lcd(uint32_t *pixels)
@@ -281,6 +283,14 @@ static int load_browse_wave(const wchar_t *path)
     return fclose(file) == 0 && ok;
 }
 
+static DemoSignal *live_settings(void)
+{
+    if(!live_snapshot_valid)return &demo;
+    live_before_browse.startup_preset=demo.startup_preset;
+    live_before_browse.preset_valid=demo.preset_valid;
+    return &live_before_browse;
+}
+
 static int open_browse_capture(void)
 {
     const char *name = demo_signal_ui_browse_filename(&demo);
@@ -293,7 +303,7 @@ static int open_browse_capture(void)
         if (!load_browse_bmp(path)) return 0;
         if (live_snapshot_valid) {
             int selected = demo.browse_selected;
-            demo = live_before_browse;
+            demo = *live_settings();
             demo.browse_selected = selected;
             live_snapshot_valid = 0;
         }
@@ -303,7 +313,7 @@ static int open_browse_capture(void)
         if (!load_browse_wave(path)) return 0;
         if (live_snapshot_valid) {
             int selected = demo.browse_selected;
-            demo = live_before_browse;
+            demo = *live_settings();
             demo.browse_selected = selected;
             live_snapshot_valid = 0;
         }
@@ -347,7 +357,17 @@ static int capture(DemoAction action)
 static void act(HWND window, DemoAction action)
 {
     (void)window;
-    if (action == DEMO_ACTION_BROWSE_REFRESH) refresh_browse();
+    if(action==DEMO_ACTION_PRESET_SAVE){
+        int ok=settings_session_save(&settings,live_settings(),(unsigned)demo.preset_selected);
+        demo.preset_valid=settings.document.valid;demo_signal_refresh(&demo);
+        demo_signal_notify(&demo,ok?"SAVING PRESET":"PRESET SAVE FAILED");
+    }else if(action==DEMO_ACTION_PRESET_LOAD){
+        unsigned slot=(unsigned)demo.preset_selected;
+        if(live_snapshot_valid)act(window,DEMO_ACTION_BROWSE_CLOSE);
+        if(settings_session_load(&settings,&demo,slot)){
+            demo_signal_ui_dismiss_menu(&demo);demo_signal_notify(&demo,"PRESET LOADED");
+        }else demo_signal_notify(&demo,"PRESET EMPTY");
+    }else if (action == DEMO_ACTION_BROWSE_REFRESH) refresh_browse();
     else if (action == DEMO_ACTION_BROWSE_OPEN) {
         if (!open_browse_capture()) demo_signal_notify(&demo, "OPEN FAILED");
     } else if (action == DEMO_ACTION_BROWSE_PREV ||
@@ -371,7 +391,7 @@ static void act(HWND window, DemoAction action)
     } else if (action == DEMO_ACTION_BROWSE_CLOSE) {
         if (live_snapshot_valid) {
             int selected = demo.browse_selected;
-            demo = live_before_browse;
+            demo = *live_settings();
             demo.browse_selected = selected;
             live_snapshot_valid = 0;
             demo_signal_ui_close_capture(&demo);
@@ -451,29 +471,16 @@ static void fire_long_press(HWND window, HeldControl *held, ULONGLONG now)
     press_control_at(window, held->control, 1, now);
 }
 
-static int touch_view_upper(void)
-{
-    return demo.screen.split_height;
-}
-
 static int touch_screen_y(int logical_y)
 {
-    if (demo.screen.zoom_enabled || demo.screen.fft_enabled) {
-        int upper = touch_view_upper();
-        return SCOPE_PLOT_Y + upper + logical_y *
-               (SCOPE_PLOT_HEIGHT - upper) / SCOPE_PLOT_HEIGHT;
-    }
-    return SCOPE_PLOT_Y + logical_y;
+    return scope_screen_waveform_top(&demo.screen)+
+        logical_y*scope_screen_waveform_height(&demo.screen)/SCOPE_PLOT_HEIGHT;
 }
 
 static int touch_plot_y(int screen_y)
 {
-    if (demo.screen.zoom_enabled || demo.screen.fft_enabled) {
-        int upper = touch_view_upper();
-        return (screen_y - SCOPE_PLOT_Y - upper) *
-               SCOPE_PLOT_HEIGHT / (SCOPE_PLOT_HEIGHT - upper);
-    }
-    return screen_y - SCOPE_PLOT_Y;
+    return (screen_y-scope_screen_waveform_top(&demo.screen))*SCOPE_PLOT_HEIGHT/
+        scope_screen_waveform_height(&demo.screen);
 }
 
 static int touch_channel_at(int x, int y, int tolerance)
@@ -574,6 +581,7 @@ static TouchZone touch_zone_at(int x, int y, int *row)
     if (demo.screen.menu_open)
         return y >= SCOPE_PLOT_Y && y < SCOPE_BOTTOM_Y ?
                TOUCH_MENU_OUTSIDE : TOUCH_NONE;
+    if(demo.screen.response_visible)return TOUCH_NONE;
     if (x >= SCOPE_PLOT_X && x < SCOPE_PLOT_X + SCOPE_PLOT_WIDTH &&
         y >= SCOPE_PLOT_Y && y < SCOPE_PLOT_Y + SCOPE_PLOT_HEIGHT) {
         int mx, my, mw, mh;
@@ -599,9 +607,9 @@ static TouchZone touch_zone_at(int x, int y, int *row)
         if (demo.screen.zoom_enabled &&
             y < SCOPE_PLOT_Y + demo.screen.split_height - 26)
             return TOUCH_ZOOM_OVERVIEW;
-        if ((demo.screen.zoom_enabled || demo.screen.fft_enabled) &&
-            y < SCOPE_PLOT_Y + demo.screen.split_height)
+        if (demo.screen.fft_enabled && y >= scope_screen_spectrum_top(&demo.screen))
             return demo.screen.fft_cursor_visible ? TOUCH_FFT_CURSOR : TOUCH_NONE;
+        if (demo.screen.zoom_enabled && y < SCOPE_PLOT_Y + demo.screen.split_height)return TOUCH_NONE;
         if (x >= SCOPE_WIDTH - 36 &&
             (abs(y - touch_screen_y(demo.screen.trigger_y)) <= 23 ||
             (demo.screen.trigger_preview &&
@@ -642,7 +650,7 @@ static void touch_short(HWND window)
     DemoAction action = DEMO_ACTION_NONE;
     switch (touch.zone) {
         case TOUCH_TOP_MENU:
-            demo_signal_ui_open_menu(&demo, DEMO_MENU_MAIN); break;
+            demo_signal_ui_open_menu(&demo,demo.screen.response_visible?DEMO_MENU_RESPONSE:DEMO_MENU_MAIN); break;
         case TOUCH_BROWSER_BACK:
             demo_signal_ui_close_capture(&demo); break;
         case TOUCH_BROWSER_PREV:
@@ -1046,6 +1054,7 @@ static LRESULT CALLBACK controls_window_proc(HWND window, UINT message, WPARAM w
             if (mouse_hold.active || key_holds[0].active || key_holds[1].active)
                 refresh = 1;
             demo_signal_advance(&demo);
+            if(settings_session_poll(&settings,live_settings()) || demo.response_active)refresh=1;
             if (refresh) invalidate_windows();
             return 0;
         }
@@ -1363,6 +1372,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     int windowed = 0, argument;
     const wchar_t *snapshot_path = NULL;
     int panel_snapshot = 0;
+    char settings_path[1024];int settings_enabled=settings_store_default_path(settings_path,sizeof(settings_path));
     (void)previous;
     (void)command_line;
 
@@ -1379,6 +1389,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     for (argument = 1; arguments && argument < argument_count; ++argument) {
         const wchar_t *option = arguments[argument];
         if (lstrcmpW(option, L"--windowed") == 0) windowed = 1;
+        else if(lstrcmpW(option,L"--no-settings")==0)settings_enabled=0;
+        else if(lstrcmpW(option,L"--settings-file")==0 && argument+1<argument_count){
+            if(!WideCharToMultiByte(CP_UTF8,0,arguments[++argument],-1,settings_path,sizeof(settings_path),NULL,NULL)){snapshot_result=2;break;}
+            settings_enabled=1;
+        }
         else if (lstrcmpW(option, L"--splash") == 0)
             splash_until = GetTickCount64() + 3000;
         else if (lstrcmpW(option, L"--cursors") == 0)
@@ -1476,12 +1491,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         panel_cleanup();
         return 1;
     }
+    if(settings_enabled)settings_session_open(&settings,&demo,settings_path);
     ShowWindow(lcd_window, SW_SHOWNOACTIVATE);
     ShowWindow(controls_window, show);
     while (GetMessageW(&message, NULL, 0, 0) > 0) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    settings_session_close(&settings,live_settings());
     release_buffers();
     panel_cleanup();
     return (int)message.wParam;

@@ -2,6 +2,7 @@
 #define CAPTURE_PROCESSOR_H
 #include "capture.h"
 #include "scope_screen.h"
+#include "channel_response.h"
 typedef struct {
     size_t start, samples;
     double zero_y[2], pixels_per_volt[2];
@@ -12,6 +13,9 @@ typedef struct {
     int density_enabled;
     unsigned density_rows;
     unsigned filter_level[2];
+    const ChannelResponse *response[2];
+    const double *corrected[2];
+    unsigned calibration_mask;
 } CaptureView;
 typedef struct {
     int16_t y[2][SCOPE_PLOT_WIDTH], y_min[2][SCOPE_PLOT_WIDTH], y_max[2][SCOPE_PLOT_WIDTH];
@@ -20,6 +24,7 @@ typedef struct {
     int16_t overview[2][SCOPE_PLOT_WIDTH];
     uint8_t fft[2][SCOPE_FFT_BINS];
     double minimum[2], maximum[2], mean[2], rms[2], frequency_hz[2], duty[2];
+    double fundamental_hz[2],fundamental_amplitude[2];
     uint64_t sequence, sample_rate_hz, processing_ns;
     unsigned fft_size;
     uint64_t trigger_sample;
@@ -29,6 +34,8 @@ typedef struct {
     int density_valid;
     unsigned density_rows;
     int peak_detect;
+    unsigned clipped_mask;
+    unsigned calibration_mask;
     uint8_t connections[2][SCOPE_PLOT_WIDTH][SCOPE_PLOT_HEIGHT];
     uint8_t density[2][SCOPE_PLOT_WIDTH][SCOPE_PLOT_HEIGHT];
 } DisplayFrame;
