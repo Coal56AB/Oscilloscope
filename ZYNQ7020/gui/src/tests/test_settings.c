@@ -89,11 +89,13 @@ static void availability_test(void)
 {
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);demo_signal_ui_menu_select(&demo,4);
-    demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);assert(demo.menu_kind==DEMO_MENU_RESPONSE);
+    demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);assert(demo.menu_kind==DEMO_MENU_CALIBRATION);
+    demo_signal_ui_menu_select(&demo,2);demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
+    assert(demo.menu_kind==DEMO_MENU_RESPONSE);
     assert(demo.screen.menu_disabled[1] && demo.screen.menu_disabled[2]);
     demo_signal_ui_menu_choose(&demo,1,1);demo_signal_ui_menu_tap(&demo,1,1);
     assert(!demo.response_enabled[0] && !demo.screen.menu_editing);
-    demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);assert(demo.screen.menu_selected==3);
+    demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);assert(demo.screen.menu_selected==0);
     channel_response_add(&demo.response[2],1000,1);demo_signal_refresh(&demo);
     assert(demo.screen.menu_disabled[1] && !demo.screen.menu_disabled[2]);
     channel_response_add(&demo.response[2],10000,.5);demo_signal_refresh(&demo);
@@ -181,7 +183,7 @@ static void menu_encoder_test(void)
     assert(demo.scale_index[0]==scale);demo_signal_press(&demo,DEMO_ENC_CH1,0);
     assert(!demo.screen.menu_editing && demo.scale_index[0]!=scale);
     demo_signal_ui_menu_select(&demo,4);demo_signal_press(&demo,DEMO_ENC_CH1,0);
-    assert(demo.menu_kind==DEMO_MENU_RESPONSE && demo_signal_menu_encoder(&demo,DEMO_ENC_CH1));
+    assert(demo.menu_kind==DEMO_MENU_CALIBRATION && demo_signal_menu_encoder(&demo,DEMO_ENC_CH1));
     assert(!demo_signal_menu_encoder(&demo,DEMO_ENC_CH2));
     demo_signal_press(&demo,DEMO_ENC_CH1,1);assert(demo.menu_kind==DEMO_MENU_CH1);
 }

@@ -882,8 +882,8 @@ int main(void)
     demo_signal_ui_open_menu(&demo,DEMO_MENU_CH2);demo_signal_ui_menu_select(&demo,2);
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -2);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
-    assert(demo.menu_kind==DEMO_MENU_RESPONSE && demo.response_channel==1 && demo.channel_position[1]==-8);
-    demo_signal_ui_menu_select(&demo,4);demo_signal_ui_menu_activate(&demo);
+    assert(demo.menu_kind==DEMO_MENU_CALIBRATION && demo.screen.menu_count==3 && demo.response_channel==1 && demo.channel_position[1]==-8);
+    demo_signal_ui_menu_back(&demo);
     demo_signal_ui_reset_channel_position(&demo,1);
     demo_signal_ui_menu_select(&demo,1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);

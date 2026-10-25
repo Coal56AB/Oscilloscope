@@ -8,7 +8,7 @@
 size_t settings_document_encode(const SettingsDocument *d,char *data,size_t capacity)
 {
     size_t used;unsigned slot,i;int n;
-    n=snprintf(data,capacity,"OSCILL_SETUP 3 %u\n%d %u\n",(unsigned)DEMO_SETTINGS_COUNT,d->startup,d->valid);
+    n=snprintf(data,capacity,"OSCILL_SETUP 4 %u\n%d %u\n",(unsigned)DEMO_SETTINGS_COUNT,d->startup,d->valid);
     if(n<0 || (size_t)n>=capacity)return 0;used=(size_t)n;
     for(slot=0;slot<6;++slot){
         const DemoSettings *s=slot?&d->preset[slot-1]:&d->last;
@@ -30,7 +30,7 @@ size_t settings_document_encode(const SettingsDocument *d,char *data,size_t capa
     for(slot=0;slot<4;++slot){
         const ChannelBaseline *b=&d->baseline[slot];
         if(!channel_baseline_valid(b))return 0;
-        n=snprintf(data+used,capacity-used,"%d %.17g %.17g %.17g\n",b->valid,b->zero,b->noise_rms,b->volts_per_code);
+        n=snprintf(data+used,capacity-used,"%d %.17g %.17g %.17g %.17g\n",b->valid,b->zero,b->noise_rms,b->volts_per_code,b->noise_volts_per_code);
         if(n<0 || (size_t)n>=capacity-used)return 0;used+=(size_t)n;
     }
     return used;
@@ -41,7 +41,7 @@ int settings_document_decode(SettingsDocument *d,const char *data)
     SettingsDocument candidate={0};unsigned version,count,slot,i;int consumed=0;
     char *end;double number;
     if(sscanf(data,"OSCILL_SETUP %u %u%n",&version,&count,&consumed)!=2 ||
-       !((version==1 && count==65) || ((version==2 || version==3) && count==DEMO_SETTINGS_COUNT)))return 0;
+       !((version==1 && count==65) || ((version>=2 && version<=4) && count==DEMO_SETTINGS_COUNT)))return 0;
     data+=consumed;
     number=strtod(data,&end);if(end==data || !isfinite(number) || number!=floor(number) || number<0 || number>5)return 0;
     candidate.startup=(int)number;data=end;
@@ -65,11 +65,14 @@ int settings_document_decode(SettingsDocument *d,const char *data)
     }
     if(version>=3)for(slot=0;slot<4;++slot){
         ChannelBaseline *b=&candidate.baseline[slot];
-        number=strtod(data,&end);if(end==data || (number!=0 && number!=1))return 0;
+        number=strtod(data,&end);if(end==data || !isfinite(number) || number!=floor(number) || number<0 || number>(version==3?1:3))return 0;
         b->valid=(int)number;data=end;
         b->zero=strtod(data,&end);if(end==data)return 0;data=end;
         b->noise_rms=strtod(data,&end);if(end==data)return 0;data=end;
-        b->volts_per_code=strtod(data,&end);if(end==data || !channel_baseline_valid(b))return 0;data=end;
+        b->volts_per_code=strtod(data,&end);if(end==data)return 0;data=end;
+        if(version>=4){b->noise_volts_per_code=strtod(data,&end);if(end==data)return 0;data=end;}
+        else{b->noise_volts_per_code=b->volts_per_code;if(b->valid)b->valid=CHANNEL_ZERO_VALID|CHANNEL_NOISE_VALID;}
+        if(!channel_baseline_valid(b))return 0;
     }
     while(isspace((unsigned char)*data))++data;
     if(*data)return 0;

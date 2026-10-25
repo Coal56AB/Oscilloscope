@@ -329,7 +329,8 @@ static int trigger_fraction(const DemoSignal *demo, double *fraction)
     int channel = demo->trigger_source_index;
     double amplitude = channel ? 1.60 : 1.20;
     if (!(channel ? demo->screen.ch2_enabled : demo->screen.ch1_enabled)) return 0;
-    *fraction = demo->trigger_voltage / amplitude +
+    *fraction = (demo->trigger_voltage+channel_baseline_zero(
+                    &demo->baseline[channel+(demo->adc_simulation?2:0)],.02)) / amplitude +
                 (demo->coupling[channel] == 1 ? 0.5 : 0.0);
     return *fraction > 0.01 && *fraction < 0.99;
 }
@@ -458,7 +459,8 @@ static void render_generator_view(DemoSignal *demo, double start_us, double us_p
     for (x = 0; x < 2; ++x) {
         double scale = PIXELS_PER_DIV / volts_per_div(demo, x);
         double zero = channel_zero(demo, x) +
-                      (demo->coupling[x] ? (x ? 1.60 : 1.20) * scale * 0.5 : 0.0);
+                      (demo->coupling[x] ? (x ? 1.60 : 1.20) * scale * 0.5 : 0.0) +
+                      channel_baseline_zero(&demo->baseline[x+(demo->adc_simulation?2:0)],.02)*scale;
         demo->screen.density_levels[x] = NULL;
         demo->screen.connections[x] = NULL;
         demo->screen.peak_detect = 0;
@@ -541,7 +543,8 @@ static void record_history(DemoSignal *demo)
         demo->zoom_time_index,demo->zoom_offset,demo->screen.zoom_enabled,demo->fft_enabled,demo->fft_split_height,
         demo->zoom_split_height,demo->filter_level[0],demo->filter_level[1],demo->intensity_coloring,
         demo->response_enabled[0],demo->response_enabled[1],demo->adc_simulation,demo->acquisition_rate_hz,
-        demo->trigger_source_index,demo->trigger_edge_index,demo->trigger_voltage,demo->trigger_mode_index};
+        demo->trigger_source_index,demo->trigger_edge_index,demo->trigger_voltage,demo->trigger_mode_index,
+        demo->baseline[demo->adc_simulation?2:0].zero,demo->baseline[demo->adc_simulation?3:1].zero};
     if(memcmp(demo->history_view,view,sizeof(view))){demo->history_count=0;memcpy(demo->history_view,view,sizeof(view));}
     for (i = 7; i > 0; --i) {
         memcpy(demo->history_ch1[i], demo->history_ch1[i - 1], sizeof(demo->ch1));
@@ -906,7 +909,8 @@ static int menu_item_count(DemoMenu kind)
     if (kind == DEMO_MENU_LAYOUT) return 7;
     if (kind == DEMO_MENU_PRESETS) return 5;
     if (kind == DEMO_MENU_PRESET) return 2;
-    if (kind == DEMO_MENU_RESPONSE) return 5;
+    if (kind == DEMO_MENU_RESPONSE || kind == DEMO_MENU_CALIBRATION) return 3;
+    if (kind == DEMO_MENU_ZERO || kind == DEMO_MENU_NOISE) return 2;
     return 0;
 }
 
@@ -1014,9 +1018,13 @@ static int menu_disabled(const DemoSignal *d,DemoMenu kind,int row)
         unsigned count=demo_signal_response_curve((DemoSignal *)d,(unsigned)d->response_channel)->count;
         const ChannelBaseline *b=demo_signal_baseline((DemoSignal *)d,(unsigned)d->response_channel);
         double gain=d->adc_simulation?.02:demo_signal_adc_gain(d,(unsigned)d->response_channel);
-        int mismatch=b->valid && fabs(b->volts_per_code-gain)>gain*1e-6;
-        return (row==0 && (d->baseline_active || mismatch)) || (row==1 && count<2) || (row==2 && !count) ||
-            (row==3 && (count || !demo_signal_panel_scale(d,(unsigned)d->response_channel)));
+        int mismatch=(b->valid&CHANNEL_NOISE_VALID) && fabs(b->noise_volts_per_code-gain)>gain*1e-6;
+        return (row==0 && (d->baseline_active || mismatch)) || (row==1 && count<2) || (row==2 && !count);
+    }
+    if(kind==DEMO_MENU_ZERO || kind==DEMO_MENU_NOISE){
+        const ChannelBaseline *b=demo_signal_baseline((DemoSignal *)d,(unsigned)d->response_channel);
+        int flag=kind==DEMO_MENU_ZERO?CHANNEL_ZERO_VALID:CHANNEL_NOISE_VALID;
+        return row==0?!demo_signal_panel_scale(d,(unsigned)d->response_channel):d->baseline_active || !(b->valid&flag);
     }
     if(kind==DEMO_MENU_PROCESSING)return d->waveform_loaded && (row==3 || row==5);
     if(kind==DEMO_MENU_MEASURE)return row==SCOPE_MEASURE_CATALOG_ITEMS?!d->measurement_count:
@@ -1237,23 +1245,33 @@ static void refresh_menu(DemoSignal *demo)
         screen->menu_title=preset_names[demo->preset_selected];
         screen->menu_labels[0]="SAVE CURRENT SETTINGS";screen->menu_values[0]="SAVE";
         screen->menu_labels[1]="LOAD SETTINGS";screen->menu_values[1]=(demo->preset_valid&(1U<<demo->preset_selected))?"LOAD":"EMPTY";
+    } else if(demo->menu_kind==DEMO_MENU_CALIBRATION){
+        screen->menu_title=demo->response_channel?"CH2 CALIBRATION":"CH1 CALIBRATION";
+        screen->menu_labels[0]="ZERO";screen->menu_labels[1]="NOISE";screen->menu_labels[2]="FREQUENCY RESPONSE";
+        for(i=0;i<3;++i)screen->menu_values[i]="OPEN";
+    } else if(demo->menu_kind==DEMO_MENU_ZERO || demo->menu_kind==DEMO_MENU_NOISE){
+        int noise=demo->menu_kind==DEMO_MENU_NOISE;
+        ChannelBaseline *baseline=demo_signal_baseline(demo,(unsigned)demo->response_channel);
+        int flag=noise?CHANNEL_NOISE_VALID:CHANNEL_ZERO_VALID;
+        double gain=demo->adc_simulation?.02:demo_signal_adc_gain(demo,(unsigned)demo->response_channel);
+        double measured_gain=noise?baseline->noise_volts_per_code:baseline->volts_per_code;
+        screen->menu_title=noise?(demo->response_channel?"CH2 NOISE":"CH1 NOISE"):(demo->response_channel?"CH2 ZERO":"CH1 ZERO");
+        screen->menu_labels[0]=noise?"MEASURE NOISE":"MEASURE ZERO";
+        if(demo->baseline_active)snprintf(demo->baseline_text[noise],64,"MEASURING %d / 4",demo->baseline_frames);
+        else if(!(baseline->valid&flag))snprintf(demo->baseline_text[noise],64,"SHORT INPUT / MEASURE");
+        else if(fabs(measured_gain-gain)>gain*1e-6)snprintf(demo->baseline_text[noise],64,"OTHER RANGE / MEASURE");
+        else snprintf(demo->baseline_text[noise],64,noise?"%.4g mV RMS / MEASURE":"%+.4g V / MEASURE",noise?baseline->noise_rms*1000:baseline->zero);
+        screen->menu_values[0]=demo->baseline_text[noise];
+        screen->menu_labels[1]=noise?"RESET NOISE":"RESET ZERO";screen->menu_values[1]="RESET";screen->menu_danger[1]=1;
     } else if (demo->menu_kind == DEMO_MENU_RESPONSE) {
         screen->menu_title=demo->response_channel?"CH2 RESPONSE":"CH1 RESPONSE";
         screen->menu_labels[0]="CALIBRATION";screen->menu_values[0]=demo->response_active?"STOP":"START";
         screen->menu_labels[1]="AMPLITUDE CORRECTION";screen->menu_values[1]=on_off_names[demo->response_enabled[demo->response_channel]];
         set_menu_options(screen,1,on_off_names,2,demo->response_enabled[demo->response_channel]);
-        screen->menu_labels[2]="CLEAR POINTS";screen->menu_values[2]="CLEAR";
-        screen->menu_danger[2]=1;
-        screen->menu_labels[3]="ZERO / NOISE";
+        screen->menu_labels[2]="CLEAR POINTS";screen->menu_values[2]="CLEAR";screen->menu_danger[2]=1;
         ChannelBaseline *baseline=demo_signal_baseline(demo,(unsigned)demo->response_channel);
         double gain=demo->adc_simulation?.02:demo_signal_adc_gain(demo,(unsigned)demo->response_channel);
-        if(baseline->valid && fabs(baseline->volts_per_code-gain)>gain*1e-6)screen->menu_values[0]="REMEASURE ZERO";
-        if(demo->baseline_active)snprintf(demo->baseline_text,sizeof(demo->baseline_text),"MEASURING %d / 4",demo->baseline_frames);
-        else if(demo_signal_response_curve(demo,(unsigned)demo->response_channel)->count)snprintf(demo->baseline_text,sizeof(demo->baseline_text),"CLEAR POINTS FIRST");
-        else if(baseline->valid)snprintf(demo->baseline_text,sizeof(demo->baseline_text),"%+.4g V / %.3g mV RMS",baseline->zero,baseline->noise_rms*1000);
-        else snprintf(demo->baseline_text,sizeof(demo->baseline_text),"SHORT INPUT / MEASURE");
-        screen->menu_values[3]=demo->baseline_text;
-        screen->menu_labels[4]="EXIT CALIBRATION";screen->menu_values[4]="BACK";
+        if((baseline->valid&CHANNEL_NOISE_VALID) && fabs(baseline->noise_volts_per_code-gain)>gain*1e-6)screen->menu_values[0]="REMEASURE NOISE";
     } else if(demo->menu_kind==DEMO_MENU_FILES){
         static const char *labels[]={"SCREENSHOT","SAVE WAVE","SCREEN + WAVE","PREVIOUS FILE","NEXT FILE","CLOSE FILE"};
         screen->menu_title="FILES";
@@ -1484,12 +1502,13 @@ void demo_signal_baseline_observe(DemoSignal *demo,uint64_t sequence,size_t samp
     demo->baseline_sum+=mean*samples;demo->baseline_power+=rms*rms*samples;
     if(++demo->baseline_frames>=4){
         ChannelBaseline *b=demo_signal_baseline(demo,(unsigned)demo->response_channel);
-        b->zero=demo->baseline_sum/demo->baseline_samples;
-        b->noise_rms=sqrt(fmax(0,demo->baseline_power/demo->baseline_samples-b->zero*b->zero));
-        b->volts_per_code=gain;b->valid=1;demo->baseline_active=0;
-        demo_signal_notify(demo,"ZERO / NOISE SAVED");
+        double mean=demo->baseline_sum/demo->baseline_samples;
+        if(demo->baseline_active==CHANNEL_ZERO_VALID){b->zero=mean;b->volts_per_code=gain;b->valid|=CHANNEL_ZERO_VALID;}
+        else{b->noise_rms=sqrt(fmax(0,demo->baseline_power/demo->baseline_samples-mean*mean));b->noise_volts_per_code=gain;b->valid|=CHANNEL_NOISE_VALID;}
+        demo_signal_notify(demo,demo->baseline_active==CHANNEL_ZERO_VALID?"ZERO SAVED / APPLIED":"NOISE SAVED");
+        demo->baseline_active=0;
     }
-    update_text(demo,0);
+    update_text(demo,!demo->baseline_active);
 }
 
 void demo_signal_response_observe(DemoSignal *demo,uint64_t sequence,double frequency,double amplitude)
@@ -1514,6 +1533,10 @@ int demo_signal_response_enable(DemoSignal *demo,unsigned channel,int enabled)
 static void open_menu(DemoSignal *demo, DemoMenu kind, DemoMenu parent)
 {
     int height;
+    if(parent==DEMO_MENU_NONE){
+        if(kind==DEMO_MENU_RESPONSE || kind==DEMO_MENU_ZERO || kind==DEMO_MENU_NOISE)parent=DEMO_MENU_CALIBRATION;
+        else if(kind==DEMO_MENU_CALIBRATION)parent=demo->response_channel?DEMO_MENU_CH2:DEMO_MENU_CH1;
+    }
     demo->menu_kind = kind;
     demo->menu_parent = parent;
     demo->screen.menu_selected = 0;
@@ -1675,6 +1698,9 @@ static void back_menu(DemoSignal *demo)
         open_menu(demo,DEMO_MENU_SETUP,DEMO_MENU_MAIN);
     } else if(demo->menu_parent==DEMO_MENU_PRESETS){
         open_menu(demo,DEMO_MENU_PRESETS,DEMO_MENU_SETUP);
+    } else if(demo->menu_parent==DEMO_MENU_CALIBRATION){
+        demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;
+        open_menu(demo,DEMO_MENU_CALIBRATION,demo->response_channel?DEMO_MENU_CH2:DEMO_MENU_CH1);
     } else if(demo->menu_parent==DEMO_MENU_CH1 || demo->menu_parent==DEMO_MENU_CH2){
         DemoMenu parent=demo->menu_parent;
         demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;
@@ -2243,20 +2269,30 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
     } else if ((demo->menu_kind==DEMO_MENU_CH1 || demo->menu_kind==DEMO_MENU_CH2) && item==4) {
         DemoMenu parent=demo->menu_kind;
         if(demo->waveform_loaded){demo_signal_notify(demo,"CLOSE SAVED WAVEFORM FIRST");return DEMO_ACTION_NONE;}
-        demo->response_active=demo->baseline_active=0;
+        demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;
         demo->response_channel=parent==DEMO_MENU_CH2;
-        demo->screen.response_visible=1;
-        open_menu(demo,DEMO_MENU_RESPONSE,parent);
+        open_menu(demo,DEMO_MENU_CALIBRATION,parent);
+    } else if(demo->menu_kind==DEMO_MENU_CALIBRATION){
+        demo->screen.response_visible=item==2;
+        open_menu(demo,item==0?DEMO_MENU_ZERO:item==1?DEMO_MENU_NOISE:DEMO_MENU_RESPONSE,DEMO_MENU_CALIBRATION);
+    } else if(demo->menu_kind==DEMO_MENU_ZERO || demo->menu_kind==DEMO_MENU_NOISE){
+        ChannelBaseline *b=demo_signal_baseline(demo,(unsigned)demo->response_channel);
+        int flag=demo->menu_kind==DEMO_MENU_ZERO?CHANNEL_ZERO_VALID:CHANNEL_NOISE_VALID;
+        if(item==0){
+            demo->response_active=0;demo->baseline_active=demo->baseline_active?0:flag;
+            demo->baseline_frames=0;demo->baseline_seen_sequence=demo->external_frame_valid?demo->external_sequence:0;demo->baseline_samples=0;
+            demo->baseline_sum=demo->baseline_power=0;
+            demo_signal_notify(demo,demo->baseline_active?"MEASURING SHORTED INPUT":"MEASUREMENT CANCELLED");update_text(demo,0);
+        }else{
+            b->valid&=~flag;
+            if(flag==CHANNEL_ZERO_VALID){b->zero=0;b->volts_per_code=0;}
+            else{b->noise_rms=0;b->noise_volts_per_code=0;}
+            demo->history_count=demo->screen.history_count=0;
+            demo_signal_notify(demo,flag==CHANNEL_ZERO_VALID?"ZERO RESET":"NOISE RESET");update_text(demo,1);
+        }
     } else if(demo->menu_kind==DEMO_MENU_RESPONSE && item!=1){
         if(item==0){demo_signal_ui_toggle_run(demo);close_menu(demo);}
         else if(item==2){memset(demo_signal_response_curve(demo,(unsigned)demo->response_channel),0,sizeof(ChannelResponse));demo->response_enabled[demo->response_channel]=0;update_text(demo,0);}
-        else if(item==3){
-            demo->response_active=0;demo->baseline_active=!demo->baseline_active;
-            demo->baseline_frames=0;demo->baseline_seen_sequence=demo->external_frame_valid?demo->external_sequence:0;demo->baseline_samples=0;
-            demo->baseline_sum=demo->baseline_power=0;
-            demo_signal_notify(demo,demo->baseline_active?"MEASURING SHORTED INPUT":"ZERO / NOISE CANCELLED");update_text(demo,0);
-        }
-        else{demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;back_menu(demo);}
     } else {
         int short_list = demo->screen.menu_option_count[item]>0;
         if (short_list) {
@@ -2357,8 +2393,8 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
 
 void demo_signal_ui_toggle_run(DemoSignal *demo)
 {
+    if(demo->baseline_active){demo->baseline_active=0;update_text(demo,0);return;}
     if(demo->screen.response_visible){
-        if(demo->baseline_active){demo->baseline_active=0;update_text(demo,0);return;}
         demo->response_active=!demo->response_active;
         demo->response_started_ms=demo->now_ms;demo->response_sim_index=6;
         demo->response_seen_sequence=0;update_text(demo,0);return;
@@ -2698,8 +2734,9 @@ int demo_signal_menu_encoder(const DemoSignal *demo,DemoControl control)
     if(!demo->screen.menu_open)return 0;
     if(control==DEMO_ENC_FUNCTION)return 1;
     DemoMenu kind=demo->menu_kind,parent=demo->menu_parent;
-    if(control==DEMO_ENC_CH1)return kind==DEMO_MENU_CH1 || parent==DEMO_MENU_CH1;
-    if(control==DEMO_ENC_CH2)return kind==DEMO_MENU_CH2 || parent==DEMO_MENU_CH2;
+    int calibration=kind==DEMO_MENU_CALIBRATION || parent==DEMO_MENU_CALIBRATION;
+    if(control==DEMO_ENC_CH1)return kind==DEMO_MENU_CH1 || parent==DEMO_MENU_CH1 || (calibration && demo->response_channel==0);
+    if(control==DEMO_ENC_CH2)return kind==DEMO_MENU_CH2 || parent==DEMO_MENU_CH2 || (calibration && demo->response_channel==1);
     if(control==DEMO_ENC_TIME)return kind==DEMO_MENU_CURSOR || kind==DEMO_MENU_TIME;
     if(control==DEMO_ENC_TRIGGER)return kind==DEMO_MENU_TRIGGER || parent==DEMO_MENU_TRIGGER;
     return 0;

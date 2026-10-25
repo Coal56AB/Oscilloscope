@@ -6,9 +6,17 @@
 
 int channel_baseline_valid(const ChannelBaseline *b)
 {
-    return b && (b->valid==0 || b->valid==1) && isfinite(b->zero) && isfinite(b->noise_rms) &&
+    return b && b->valid>=0 && b->valid<=3 && isfinite(b->zero) && isfinite(b->noise_rms) &&
         b->noise_rms>=0 && isfinite(b->volts_per_code) &&
-        (b->valid?b->volts_per_code>0:b->volts_per_code>=0);
+        isfinite(b->noise_volts_per_code) && b->volts_per_code>=0 && b->noise_volts_per_code>=0 &&
+        (!(b->valid&CHANNEL_ZERO_VALID) || b->volts_per_code>0) &&
+        (!(b->valid&CHANNEL_NOISE_VALID) || b->noise_volts_per_code>0);
+}
+
+double channel_baseline_zero(const ChannelBaseline *b,double gain)
+{
+    return channel_baseline_valid(b) && (b->valid&CHANNEL_ZERO_VALID) && isfinite(gain) && gain>0 &&
+        fabs(gain-b->volts_per_code)<=gain*1e-6?b->zero:0;
 }
 
 double channel_baseline_amplitude(const ChannelBaseline *b,double gain,unsigned n,
@@ -16,11 +24,9 @@ double channel_baseline_amplitude(const ChannelBaseline *b,double gain,unsigned 
 {
     if(!channel_baseline_valid(b) || !isfinite(gain) || gain<=0 || !n ||
        !isfinite(amplitude) || amplitude<=0 || !isfinite(mean) || !isfinite(rms))return 0;
-    if(!b->valid)return amplitude;
-    if(fabs(gain-b->volts_per_code)>gain*1e-6)return 0;
-    double centered_mean=mean-b->zero;
-    double centered_power=rms*rms-2*b->zero*mean+b->zero*b->zero;
-    double variance=centered_power-centered_mean*centered_mean;
+    if(!(b->valid&CHANNEL_NOISE_VALID))return amplitude;
+    if(fabs(gain-b->noise_volts_per_code)>gain*1e-6)return 0;
+    double variance=rms*rms-mean*mean;
     double noise=b->noise_rms*b->noise_rms;
     if(variance<=1.25*noise)return 0;
     double power=amplitude*amplitude-6*noise/n;

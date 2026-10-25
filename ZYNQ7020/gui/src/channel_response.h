@@ -2,11 +2,14 @@
 #define CHANNEL_RESPONSE_H
 #include <stddef.h>
 #define RESPONSE_POINTS 96
+enum { CHANNEL_ZERO_VALID=1, CHANNEL_NOISE_VALID=2 };
 typedef struct {
-    int valid;
-    double zero,noise_rms,volts_per_code;
+    int valid; /* Independent ZERO/NOISE flags. */
+    double zero,noise_rms,volts_per_code,noise_volts_per_code;
 } ChannelBaseline;
 int channel_baseline_valid(const ChannelBaseline *baseline);
+/* Voltage correction only for the measured ADC/probe gain. */
+double channel_baseline_zero(const ChannelBaseline *baseline,double gain);
 /* Correct coherent sine amplitude for independent background noise in a Hann
    FFT bin. Reject records whose added AC power is below the noise uncertainty. */
 double channel_baseline_amplitude(const ChannelBaseline *baseline,double gain,unsigned fft_size,

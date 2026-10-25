@@ -984,10 +984,10 @@ static void remote_state(FILE *response)
         demo.screen.measurement_hidden,mx,my,mw,mh);
     fprintf(response,"\"panel_scale_valid\":%u,\"ch1_panel_scale_mv\":%d,\"ch2_panel_scale_mv\":%d,",
         panel.scale_valid,panel.scale_mv[0],panel.scale_mv[1]);
-    fprintf(response,"\"zero_measuring\":%d,\"zero_frames\":%d,",demo.baseline_active,demo.baseline_frames);
+    fprintf(response,"\"zero_measuring\":%d,\"noise_measuring\":%d,\"zero_frames\":%d,",demo.baseline_active==CHANNEL_ZERO_VALID,demo.baseline_active==CHANNEL_NOISE_VALID,demo.baseline_frames);
     for(channel=0;channel<2;++channel){ChannelBaseline *b=demo_signal_baseline(&demo,(unsigned)channel);
-        fprintf(response,"\"ch%d_zero_known\":%d,\"ch%d_zero\":%.9g,\"ch%d_noise_rms\":%.9g,",
-            channel+1,b->valid,channel+1,b->zero,channel+1,b->noise_rms);}
+        fprintf(response,"\"ch%d_zero_known\":%d,\"ch%d_noise_known\":%d,\"ch%d_zero\":%.9g,\"ch%d_noise_rms\":%.9g,",
+            channel+1,!!(b->valid&CHANNEL_ZERO_VALID),channel+1,!!(b->valid&CHANNEL_NOISE_VALID),channel+1,b->zero,channel+1,b->noise_rms);}
     fprintf(response,"\"startup_preset\":%d,\"preset_valid\":%u,",demo.startup_preset,demo.preset_valid);
     fprintf(response,"\"calibration_active\":%d,\"calibration_channel\":%d,\"ch1_response_points\":%u,\"ch2_response_points\":%u,\"ch1_response\":%d,\"ch2_response\":%d,",
         demo.response_active,demo.response_channel+1,demo_signal_response_curve(&demo,0)->count,
@@ -1064,13 +1064,18 @@ static int remote_command(const char *command, FILE *response, void *context)
         fputs("]}\n",response);return 1;
     }
     if(sscanf(command,"calibrate %u %31s%n",&channel,operation,&n)==2 && command[n]=='\0' && channel>=1 && channel<=2){
-        if(!strcmp(operation,"start") || !strcmp(operation,"show") || !strcmp(operation,"zero")){
+        if(!strcmp(operation,"start") || !strcmp(operation,"show") || !strcmp(operation,"zero") || !strcmp(operation,"noise") || !strcmp(operation,"reset_zero") || !strcmp(operation,"reset_noise") || !strcmp(operation,"menu")){
             demo_signal_ui_open_menu(&demo,channel==1?DEMO_MENU_CH1:DEMO_MENU_CH2);
             demo_signal_ui_menu_select(&demo,4);act(demo_signal_ui_menu_activate(&demo));
-            if(demo.menu_kind!=DEMO_MENU_RESPONSE)return 0;
-            if(!strcmp(operation,"zero")){demo_signal_ui_menu_select(&demo,3);act(demo_signal_ui_menu_activate(&demo));}
-            else if(!strcmp(operation,"start"))act(demo_signal_ui_menu_activate(&demo));
-            else demo_signal_ui_dismiss_menu(&demo);
+            if(demo.menu_kind!=DEMO_MENU_CALIBRATION)return 0;
+            if(strcmp(operation,"menu")){
+                int zero=!strcmp(operation,"zero") || !strcmp(operation,"reset_zero");
+                int noise=!strcmp(operation,"noise") || !strcmp(operation,"reset_noise");
+                demo_signal_ui_menu_select(&demo,zero?0:noise?1:2);act(demo_signal_ui_menu_activate(&demo));
+                if(zero || noise){demo_signal_ui_menu_select(&demo,!strncmp(operation,"reset_",6)?1:0);act(demo_signal_ui_menu_activate(&demo));}
+                else if(!strcmp(operation,"start"))act(demo_signal_ui_menu_activate(&demo));
+                else demo_signal_ui_dismiss_menu(&demo);
+            }
         }else if(!strcmp(operation,"stop")){
             if(demo.response_active && demo.response_channel==(int)channel-1)demo_signal_ui_toggle_run(&demo);
         }else if(!strcmp(operation,"clear")){

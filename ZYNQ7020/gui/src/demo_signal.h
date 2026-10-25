@@ -25,7 +25,7 @@ typedef enum {
     DEMO_MENU_TIME, DEMO_MENU_PROCESSING, DEMO_MENU_BROWSE_TYPE,
     DEMO_MENU_BROWSE, DEMO_MENU_PC, DEMO_MENU_DEBUG, DEMO_MENU_GENERATOR,
     DEMO_MENU_FONT, DEMO_MENU_SETUP, DEMO_MENU_PRESET, DEMO_MENU_PRESETS, DEMO_MENU_RESPONSE,
-    DEMO_MENU_FILES, DEMO_MENU_LAYOUT
+    DEMO_MENU_FILES, DEMO_MENU_LAYOUT, DEMO_MENU_CALIBRATION, DEMO_MENU_ZERO, DEMO_MENU_NOISE
 } DemoMenu;
 
 typedef enum {
@@ -114,7 +114,7 @@ typedef struct {
     int filter_level[2];
     int intensity_coloring;
     char layout_value_text[5][16];
-    double history_view[27];
+    double history_view[29];
     int persistence_index;
     int settings_available;
     int fft_enabled;
@@ -151,7 +151,7 @@ typedef struct {
     int baseline_active,baseline_frames;
     uint64_t baseline_seen_sequence,baseline_samples;
     double baseline_sum,baseline_power,baseline_gain;
-    char baseline_text[64];
+    char baseline_text[2][64];
     int response_enabled[2],response_channel,response_active,response_sim_index;
     uint64_t response_started_ms,response_seen_sequence;
     int pc_available;

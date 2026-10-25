@@ -62,6 +62,8 @@ static void calibration_test(void)
     SettingsDocument document={0},decoded={0};char data[SETTINGS_STORE_BYTES];
     demo_signal_init(&demo);demo.adc_simulation=0;demo_signal_ui_open_menu(&demo,DEMO_MENU_CH2);
     demo_signal_ui_menu_select(&demo,4);demo_signal_ui_menu_activate(&demo);
+    assert(demo.menu_kind==DEMO_MENU_CALIBRATION && demo.screen.menu_count==3);
+    demo_signal_ui_menu_select(&demo,2);demo_signal_ui_menu_activate(&demo);
     assert(demo.menu_kind==DEMO_MENU_RESPONSE && demo.screen.response_visible && demo.response_channel==1);
     demo_signal_ui_menu_activate(&demo);
     assert(demo.response_active && !demo.screen.menu_open);
@@ -105,39 +107,64 @@ static void calibration_test(void)
 
 static void baseline_test(void)
 {
-    ChannelBaseline b={1,.2,.1,.01};
+    ChannelBaseline b={3,.2,.1,.01,.01};
     double measured=sqrt(1+6*.01/1024);
     assert(channel_baseline_valid(&b));
+    assert(channel_baseline_zero(&b,.01)==.2 && channel_baseline_zero(&b,.02)==0);
     assert(fabs(channel_baseline_amplitude(&b,.01,1024,measured,.4,sqrt(.51+.16))-1)<1e-12);
     assert(channel_baseline_amplitude(&b,.02,1024,measured,.4,sqrt(.51+.16))==0);
     assert(channel_baseline_amplitude(&b,.01,1024,.1,.2,sqrt(.04+.01))==0);
     b.noise_rms=-.1;assert(!channel_baseline_valid(&b));
     demo_signal_init(&demo);demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);
     demo_signal_ui_menu_select(&demo,4);demo_signal_press(&demo,DEMO_ENC_CH1,0);
-    demo_signal_rotate(&demo,DEMO_ENC_CH1,-1); /* Skip unavailable CORRECTION/CLEAR. */
-    assert(demo.screen.menu_selected==3);
-    demo_signal_press(&demo,DEMO_ENC_CH1,0);assert(demo.baseline_active);
-    for(unsigned i=1;i<=4;++i){
-        demo_signal_baseline_observe(&demo,i,100,.2,sqrt(.04+.01),.02);
-        demo_signal_baseline_observe(&demo,i,100,100,100,.02); /* Cached frame cannot count twice. */
+    assert(demo.menu_kind==DEMO_MENU_CALIBRATION && demo.screen.menu_count==3);
+    for(unsigned mode=0;mode<2;++mode){
+        demo_signal_ui_menu_select(&demo,(int)mode);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+        assert(demo.menu_kind==(mode?DEMO_MENU_NOISE:DEMO_MENU_ZERO));
+        demo_signal_press(&demo,DEMO_ENC_CH1,0);assert(demo.baseline_active==(mode?CHANNEL_NOISE_VALID:CHANNEL_ZERO_VALID));
+        for(unsigned i=1;i<=4;++i){
+            demo_signal_baseline_observe(&demo,10*mode+i,100,.2,sqrt(.04+.01),.02);
+            demo_signal_baseline_observe(&demo,10*mode+i,100,100,100,.02);
+        }
+        assert(!demo.baseline_active && demo.baseline_frames==4);
+        b=*demo_signal_baseline(&demo,0);
+        assert((b.valid&CHANNEL_ZERO_VALID) && fabs(b.zero-.2)<1e-12);
+        if(mode)assert((b.valid&CHANNEL_NOISE_VALID) && fabs(b.noise_rms-.1)<1e-12);
+        else assert(!(b.valid&CHANNEL_NOISE_VALID));
+        demo_signal_ui_menu_back(&demo);assert(demo.menu_kind==DEMO_MENU_CALIBRATION);
     }
-    assert(!demo.baseline_active && demo.baseline_frames==4);
-    b=*demo_signal_baseline(&demo,0);
-    assert(b.valid && fabs(b.zero-.2)<1e-12 && fabs(b.noise_rms-.1)<1e-12);
     assert(!demo.baseline[0].valid && !demo.baseline[3].valid);
     SettingsDocument document={0},decoded={0};char data[SETTINGS_STORE_BYTES];
     demo_settings_capture(&demo,&document.last);document.baseline[2]=b;
     assert(settings_document_encode(&document,data,sizeof(data)) && settings_document_decode(&decoded,data));
     assert(!memcmp(document.baseline,decoded.baseline,sizeof(document.baseline)));
-    demo_signal_ui_menu_select(&demo,0);demo_signal_press(&demo,DEMO_ENC_CH1,0);
-    demo_signal_response_observe(&demo,10,1000,1);
-    demo_signal_response_observe(&demo,11,10000,.5);
-    demo_signal_ui_toggle_run(&demo);assert(!demo.response_active && demo.response[2].count==2);
-    demo_signal_ui_toggle_run(&demo);assert(demo.response_active && demo.response[2].count==2);
+    {
+        char *end=data+strlen(data);
+        for(unsigned line=0;line<4;++line){if(end>data && end[-1]=='\n')--end;while(end>data && end[-1]!='\n')--end;}
+        size_t used=(size_t)(end-data);data[strlen("OSCILL_SETUP ")]='3';
+        for(unsigned bank=0;bank<4;++bank){
+            ChannelBaseline *old=&document.baseline[bank];
+            used+=(size_t)snprintf(data+used,sizeof(data)-used,"%d %.17g %.17g %.17g\n",!!old->valid,old->zero,old->noise_rms,old->volts_per_code);
+        }
+        assert(settings_document_decode(&decoded,data));
+        assert(decoded.baseline[2].valid==3 && decoded.baseline[2].noise_volts_per_code==b.volts_per_code);
+    }
+    demo_signal_ui_menu_select(&demo,2);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    demo_signal_press(&demo,DEMO_ENC_CH1,0);assert(demo.response_active);
+    demo_signal_response_observe(&demo,30,1000,1);demo_signal_response_observe(&demo,31,10000,.5);
+    demo_signal_ui_toggle_run(&demo);demo_signal_ui_toggle_run(&demo);assert(demo.response_active && demo.response[2].count==2);
     demo_signal_ui_open_menu(&demo,DEMO_MENU_RESPONSE);demo_signal_ui_menu_select(&demo,2);
-    assert(demo.screen.menu_danger[2] && !demo.screen.menu_disabled[2] && demo.screen.menu_disabled[3]);
-    demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
-    assert(!demo.response[2].count && demo.baseline[2].valid);
+    assert(demo.screen.menu_danger[2] && !demo.screen.menu_disabled[2]);
+    demo_signal_press(&demo,DEMO_ENC_CH1,0);assert(!demo.response[2].count && demo.baseline[2].valid==3);
+    channel_response_add(&demo.response[2],1000,1);channel_response_add(&demo.response[2],10000,.5);
+    demo_signal_ui_menu_back(&demo);demo_signal_ui_menu_select(&demo,0);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    demo_signal_ui_menu_select(&demo,1);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    assert(demo.baseline[2].valid==CHANNEL_NOISE_VALID && demo.baseline[2].zero==0 && demo.baseline[2].noise_rms==b.noise_rms);
+    assert(demo.response[2].count==2 && demo.screen.menu_disabled[1]);
+    demo_signal_ui_menu_back(&demo);demo_signal_ui_menu_select(&demo,1);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    demo_signal_ui_menu_select(&demo,1);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    assert(!demo.baseline[2].valid && demo.response[2].count==2 && demo.screen.menu_disabled[1]);
+
 }
 
 static void navigation_test(void)

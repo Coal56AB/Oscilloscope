@@ -80,9 +80,23 @@ static void acquisition_worker(void *context)
         scope_sleep_ms(20);
     }
 }
-static int process_frame(CapturePipeline *p, const CaptureBuffer *b,
+/* Keep the acquired codes and their nominal zero immutable. Apply the current
+   zero to a metadata view, including when rerendering a retained STOP record. */
+static CaptureBuffer calibrated_buffer(const CaptureBuffer *b,const CaptureRequest *request)
+{
+    CaptureBuffer result=*b;
+    for(unsigned ch=0;ch<2;++ch)if(!(request->baseline_mask&(1U<<ch))){
+        double zero=channel_baseline_zero(&request->baseline[ch],b->volts_per_code[ch]);
+        if(zero)result.zero_code[ch]+=zero/b->volts_per_code[ch];
+    }
+    return result;
+}
+
+static int process_frame(CapturePipeline *p, const CaptureBuffer *raw,
                            const CaptureRequest *request, uint64_t preprocessing_ns)
 {
+    CaptureBuffer calibrated=calibrated_buffer(raw,request);
+    const CaptureBuffer *b=&calibrated;
     uint64_t started = scope_clock_ns();
     CaptureView view;
     DisplayFrame *frame;
@@ -290,7 +304,7 @@ static void hardware_worker(void *context)
                         (!force || candidate.bytes / 2 > pre));
                     if (!request.roll) {
                         if (complete) {
-                            CaptureBuffer search = candidate;
+                            CaptureBuffer search = calibrated_buffer(&candidate,&request);
                             search.peaks=NULL;
                             uint64_t first = candidate.first_sample + (uint64_t)pre;
                             if (first < next_trigger) first = next_trigger;
@@ -440,6 +454,7 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
         return;
     for (ch = 0; ch < 2; ++ch)
         if (!isfinite(r->zero_y[ch]) || !isfinite(r->pixels_per_volt[ch]) || r->filter_level[ch] > 3 ||
+            !channel_baseline_valid(&r->baseline[ch]) ||
             (r->response_enabled[ch] && (!channel_response_valid(&r->response[ch]) || r->response[ch].count<2)))
             return;
     if (!isfinite(r->overview_duration_seconds) || r->overview_duration_seconds < 0 ||
@@ -453,6 +468,7 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
     if (p->request.duration_seconds != r->duration_seconds ||
         p->request.calibration_mask != r->calibration_mask ||
         p->request.baseline_mask != r->baseline_mask ||
+        memcmp(p->request.baseline,r->baseline,sizeof(r->baseline)) ||
         p->request.spectrum_enabled != r->spectrum_enabled ||
         p->request.density_enabled != r->density_enabled ||
         p->request.density_rows != r->density_rows ||

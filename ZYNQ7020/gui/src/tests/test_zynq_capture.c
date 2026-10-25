@@ -10,6 +10,7 @@
 #include <poll.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 
@@ -255,6 +256,42 @@ static void adc_level_test(void)
     atomic_store(&adc_pair,42u|(42u<<8));
 }
 
+static void zero_correction_test(void)
+{
+    double gain[2]={.004,.004},zero[2]={128,128};
+    CaptureRequest request={0};
+    static DisplayFrame frame;
+    CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);
+    assert(p);
+    request.running=1;request.duration_seconds=.2e-6;request.record_samples=128;
+    request.pan_fraction=.5;request.zero_y[0]=request.zero_y[1]=200;
+    request.pixels_per_volt[0]=request.pixels_per_volt[1]=100;
+    capture_pipeline_request(p,&request);atomic_store(&available,1);assert(wait_frame(p,&frame));
+    uint64_t sequence=frame.sequence;double mean=frame.mean[0];int y=frame.y[0][512];
+    request.running=0;
+    request.baseline[0]=(ChannelBaseline){1,-.3,.01,.004};
+    request.baseline[1]=(ChannelBaseline){1,-.3,.01,.008}; /* Other relay stage: do not apply. */
+    capture_pipeline_request(p,&request);assert(wait_frame(p,&frame));
+    assert(frame.sequence==sequence && fabs(frame.mean[0]-(mean+.3))<1e-10);
+    assert(fabs(frame.mean[1]-mean)<1e-10 && frame.y[0][512]==y-30);
+    assert(fabs(frame.rms[0]-fabs(mean+.3))<1e-10);
+    request.baseline[0].zero=0;
+    capture_pipeline_request(p,&request);assert(wait_frame(p,&frame));
+    assert(frame.sequence==sequence && frame.mean[0]==mean && frame.y[0][512]==y);
+    assert(memory[64]==42); /* The source codes and nominal source zero are unchanged. */
+    capture_pipeline_destroy(p);assert(!atomic_load(&leased));
+    p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);assert(p);
+    memset(&request,0,sizeof(request));request.running=1;request.duration_seconds=.2e-6;
+    request.record_samples=400;request.pan_fraction=.5;request.trigger_mode=1;request.trigger_voltage=.2;
+    request.zero_y[0]=request.zero_y[1]=200;request.pixels_per_volt[0]=request.pixels_per_volt[1]=100;
+    request.debug=(CaptureDebug){1,{SIGNAL_WAVE_SINE,SIGNAL_WAVE_SINE},1000000};
+    request.baseline[0]=(ChannelBaseline){CHANNEL_ZERO_VALID,.4,0,.02,0};
+    capture_pipeline_request(p,&request);atomic_store(&available,2);assert(wait_frame(p,&frame));
+    assert(frame.trigger_sample!=CAPTURE_NO_TRIGGER && fabs(frame.trigger_x-512)<1e-6);
+    assert(abs(frame.y[0][512]-180)<=2); /* Threshold is .2 V after the same .4 V zero correction. */
+    capture_pipeline_destroy(p);assert(!atomic_load(&leased));
+}
+
 static void baseline_fresh_capture_test(void)
 {
     double gain[2]={0.004,0.004},zero[2]={128,128};
@@ -431,6 +468,7 @@ int main(void)
         complete_force_frame_test();
     }
     adc_level_test();
+    zero_correction_test();
     baseline_fresh_capture_test();
     startup_capture_test();
     return 0;

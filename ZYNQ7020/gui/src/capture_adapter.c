@@ -64,6 +64,7 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     if (r->pan_fraction > 1)
         r->pan_fraction = 1;
     for (ch = 0; ch < 2; ++ch) {
+        r->baseline[ch]=d->baseline[ch+(d->adc_simulation?2:0)];
         r->response_enabled[ch]=d->response_enabled[ch] && !d->response_active && !d->baseline_active;
         if(r->response_enabled[ch])r->response[ch]=d->response[ch+(d->adc_simulation?2:0)];
         if(r->response[ch].count<2)r->response_enabled[ch]=0;
@@ -84,14 +85,14 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
     if(d->response_active){
         unsigned channel=(unsigned)d->response_channel;
         ChannelBaseline *baseline=demo_signal_baseline(d,channel);
-        if(baseline->valid && f->volts_per_code[channel]>0 &&
-           fabs(f->volts_per_code[channel]-baseline->volts_per_code)>f->volts_per_code[channel]*1e-6){
-            d->response_active=0;demo_signal_notify(d,"RANGE CHANGED / REPEAT ZERO");demo_signal_refresh(d);
+        if((baseline->valid&CHANNEL_NOISE_VALID) && f->volts_per_code[channel]>0 &&
+           fabs(f->volts_per_code[channel]-baseline->noise_volts_per_code)>f->volts_per_code[channel]*1e-6){
+            d->response_active=0;demo_signal_notify(d,"RANGE CHANGED / REPEAT NOISE");demo_signal_refresh(d);
         }
         double amplitude=channel_baseline_amplitude(baseline,f->volts_per_code[channel],f->fft_size,
             f->fundamental_amplitude[channel],f->mean[channel],f->rms[channel]);
         double variance=f->rms[channel]*f->rms[channel]-f->mean[channel]*f->mean[channel];
-        if(baseline->valid)variance=fmax(0,variance-baseline->noise_rms*baseline->noise_rms);
+        if(baseline->valid&CHANNEL_NOISE_VALID)variance=fmax(0,variance-baseline->noise_rms*baseline->noise_rms);
         if((f->calibration_mask&(1U<<channel)) && !(f->clipped_mask&(1U<<channel)) && amplitude>0 && variance>0 && amplitude*amplitude>1.2*variance &&
            f->fundamental_hz[channel]>=3.0*f->sample_rate_hz/f->fft_size &&
            f->fundamental_hz[channel]<0.4*f->sample_rate_hz)
