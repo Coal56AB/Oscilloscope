@@ -33,7 +33,7 @@ int demo_settings_apply(DemoSignal *demo, const DemoSettings *s)
 #undef APPLY
     demo->trigger_preview_voltage=demo->trigger_voltage;
     demo->screen.trigger_preview=0;
-    demo->response_active=0;demo->screen.response_visible=0;
+    demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;
     for(int channel=0;channel<2;++channel)
         if(demo_signal_response_curve(demo,(unsigned)channel)->count<2)demo->response_enabled[channel]=0;
     demo->history_count=demo->screen.history_count=0;

@@ -35,6 +35,61 @@ static ControlEvent pop(Stm32Controls *events)
   return event;
 }
 
+/** OFF не переключает ступени от вращения; включение восстанавливает явную цель GUI. */
+static void disabled_range_test(void)
+{
+  Stm32Controls events;
+  PanelState panel;
+  ControlEvent command = {CONTROL_SET_SCALE, 0, 0, 0, CONTROL_SCALE_OFF};
+  unsigned before;
+  assert(stm32_controls_init(&events));
+  panel_state_init(&panel, &events);
+  assert(panel.enabled[0] == STM32_STANDALONE_DEBUG && panel.enabled[1] == STM32_STANDALONE_DEBUG);
+  panel_state_command(&panel, &command, 0U);
+  command.control = 1;
+  panel_state_command(&panel, &command, 0U);
+  command.control = 0;
+  panel_state_poll(&panel, 0U, write_relays);
+  assert(gpio_mask == 0U);
+  panel_state_poll(&panel, 10U, write_relays);
+  assert(pop(&events).value == CONTROL_SCALE_OFF);
+  assert(pop(&events).value == CONTROL_SCALE_OFF);
+  before = writes;
+  for (unsigned i = 0; i < 12; ++i)
+  {
+    panel_state_input(&panel, CONTROL_ROTATE, 0, i & 1 ? -1 : 1, 11U + i);
+    assert(pop(&events).type == CONTROL_ROTATE);
+    panel_state_command(&panel, &command, 11U + i);
+    panel_state_poll(&panel, 11U + i, write_relays);
+  }
+  assert(writes == before && panel.scale[0] == 2);
+  command.value = 200;
+  panel_state_command(&panel, &command, 30U);
+  panel_state_poll(&panel, 30U, write_relays);
+  assert(gpio_mask == 7U);
+  panel_state_poll(&panel, 40U, write_relays);
+  assert(pop(&events).value == 200);
+  command.value = CONTROL_SCALE_OFF;
+  panel_state_command(&panel, &command, 41U);
+  panel_state_poll(&panel, 41U, write_relays);
+  assert(gpio_mask == 0U && events.count == 0);
+  panel_state_poll(&panel, 51U, write_relays);
+  assert(pop(&events).value == CONTROL_SCALE_OFF && panel.scale[0] == 1);
+  before = writes;
+  command.control = 1;
+  command.value = 5000;
+  panel_state_command(&panel, &command, 52U);
+  panel_state_poll(&panel, 52U, write_relays);
+  panel_state_poll(&panel, 62U, write_relays);
+  assert(writes == before + 1 && gpio_mask == 32U && pop(&events).value == 5000);
+  command.control = 0;
+  command.value = 1000;
+  panel_state_command(&panel, &command, 63U);
+  panel_state_poll(&panel, 63U, write_relays);
+  panel_state_poll(&panel, 73U, write_relays);
+  assert(gpio_mask == 38U && pop(&events).value == 1000);
+}
+
 /** Проверить реальные границы шкалы, запросы GUI, паузу и сохранение прочих событий. */
 int main(void)
 {
@@ -45,6 +100,13 @@ int main(void)
   unsigned i;
   assert(stm32_controls_init(&events));
   panel_state_init(&panel, &events);
+  command.value = 500;
+  panel_state_command(&panel, &command, UINT32_MAX - 6U);
+  command.control = 1;
+  command.value = 1000;
+  panel_state_command(&panel, &command, UINT32_MAX - 6U);
+  command.control = 0;
+  command.value = 5000;
   panel_state_poll(&panel, UINT32_MAX - 5U, write_relays);
   assert(writes == 1 && gpio_mask == 54U && events.count == 0);
   panel_state_poll(&panel, 3U, write_relays);
@@ -162,5 +224,6 @@ int main(void)
     assert(!panel_state_temperature_mc(2145, 1800, NULL));
     assert(temperature == 123);
   }
+  disabled_range_test();
   return 0;
 }

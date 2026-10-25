@@ -883,7 +883,7 @@ int main(void)
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -2);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.menu_kind==DEMO_MENU_RESPONSE && demo.response_channel==1 && demo.channel_position[1]==-8);
-    demo_signal_ui_menu_select(&demo,3);demo_signal_ui_menu_activate(&demo);
+    demo_signal_ui_menu_select(&demo,4);demo_signal_ui_menu_activate(&demo);
     demo_signal_ui_reset_channel_position(&demo,1);
     demo_signal_ui_menu_select(&demo,1);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
@@ -936,7 +936,7 @@ int main(void)
     assert(demo.menu_kind == DEMO_MENU_MAIN);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_MEASURE);
     assert(demo.menu_kind == DEMO_MENU_MEASURE);
-    assert(demo.screen.measurement_menu && demo.screen.menu_count == 17);
+    assert(demo.screen.measurement_menu && demo.screen.menu_count == 18);
     assert(strcmp(demo.screen.menu_labels[0], "VPP") == 0);
     assert(strcmp(demo.screen.menu_labels[8], "VPP") == 0);
     assert(strcmp(demo.screen.menu_labels[16], "REMOVE ALL") == 0);
@@ -951,6 +951,12 @@ int main(void)
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.measurement_count == 1);
     demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
+    assert(demo.screen.menu_selected==SCOPE_MEASURE_HIDE_INDEX);
+    demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
+    assert(demo.screen.measurement_hidden && !strcmp(demo.screen.menu_labels[SCOPE_MEASURE_HIDE_INDEX],"SHOW"));
+    demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
+    assert(!demo.screen.measurement_hidden);
+    demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,1);
     assert(demo.screen.menu_selected == 16);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.measurement_count == 1);
@@ -1288,12 +1294,21 @@ int main(void)
     scope_screen_measurement_bounds(&demo.screen, NULL, NULL, &previous, &edge);
     assert(previous < 600 && edge == 190);
     {
-        int compact_width = previous;
+        static const char *values[]={"OFF","--","0.00 V","-999.99 mV","100.00 MHz","123456789 V"};
+        int saved_font=demo.screen.font_index,saved_layout=demo.screen.measurement_horizontal;
         const char *saved_value = demo.screen.measurement_values[7];
-        demo.screen.measurement_values[7] = "123456789 V";
-        scope_screen_measurement_bounds(&demo.screen, NULL, NULL, &previous, NULL);
-        assert(previous > compact_width);
+        for(int font=0;font<2;++font)for(int layout=0;layout<2;++layout){
+            int width,height;
+            demo.screen.font_index=font;demo.screen.measurement_horizontal=layout;
+            scope_screen_measurement_bounds(&demo.screen,NULL,NULL,&width,&height);
+            for(unsigned value=0;value<sizeof(values)/sizeof(*values);++value){
+                demo.screen.measurement_values[7]=values[value];
+                scope_screen_measurement_bounds(&demo.screen,NULL,NULL,&previous,&edge);
+                assert(previous==width && edge==height);
+            }
+        }
         demo.screen.measurement_values[7] = saved_value;
+        demo.screen.font_index=saved_font;demo.screen.measurement_horizontal=saved_layout;
     }
     {
         ScopeScreen compact = {0};
@@ -1307,7 +1322,7 @@ int main(void)
         for (i = 0; i < SCOPE_MEASURE_SLOTS; ++i)
             compact.measurement_labels[i] = "PERIOD";
         scope_screen_measurement_bounds(&compact, NULL, NULL, &previous, NULL);
-        assert(prefixed_width == previous && previous == 392);
+        assert(prefixed_width == previous && previous < 600);
     }
 
     demo_signal_init(&demo);

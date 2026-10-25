@@ -55,6 +55,14 @@ static void protocol_test(void)
     e.value=-40001;assert(!control_encode(packet,&e));
     e.value=125001;assert(!control_encode(packet,&e));
     e.value=25000;e.control=0;assert(!control_encode(packet,&e));
+    for(unsigned type=CONTROL_SET_SCALE;type<=CONTROL_SCALE;++type){
+        e.type=(ControlEventType)type;e.control=0;e.value=CONTROL_SCALE_OFF;++e.sequence;got=0;
+        assert(control_encode(packet,&e));
+        for(i=0;i<sizeof(packet);++i)got+=control_parser_feed(&p,packet[i],&out);
+        assert(got==1 && out.value==CONTROL_SCALE_OFF && out.type==e.type);
+        e.value=-1;assert(!control_encode(packet,&e));
+        e.value=CONTROL_SCALE_OFF;e.control=2;assert(!control_encode(packet,&e));
+    }
 }
 static void queue_test(void)
 {
@@ -546,6 +554,71 @@ static void capture_debug_test(void)
         assert(false_rising>0);
     }
 }
+static void noisy_edge_test(void)
+{
+    uint8_t data[8192];CaptureBuffer b={0};uint64_t trigger;
+    b.data=data;b.capacity=b.bytes=sizeof(data);b.sample_rate_hz=200000000;
+    b.zero_code[0]=b.zero_code[1]=128;b.volts_per_code[0]=b.volts_per_code[1]=1;
+    b.first_sample=1000;b.trigger_sample=CAPTURE_NO_TRIGGER;
+    /* Slow square edges with independent bounded ADC jitter, well above the
+       previous two-code rearm margin. Check both channels and all start phases. */
+    for(unsigned seed=0;seed<32;++seed){
+        uint32_t noise=seed+1;
+        for(size_t i=0;i<b.bytes/2;++i){
+            unsigned phase=(unsigned)(i%512);
+            int carrier=phase<128?88:phase<256?88+(int)(phase-128)*80/128:
+                        phase<384?168:168-(int)(phase-384)*80/128;
+            for(unsigned ch=0;ch<2;++ch){noise=noise*1664525U+1013904223U;
+                data[2*i+ch]=(uint8_t)(carrier+(int)(noise%17)-8);}
+        }
+        for(unsigned ch=0;ch<2;++ch)for(unsigned start=0;start<512;start+=7){
+            for(unsigned edge=0;edge<3;++edge){
+                assert(capture_find_trigger(&b,ch,edge,0,2,b.first_sample+start,&trigger));
+                size_t index=(size_t)(trigger-b.first_sample);unsigned phase=(unsigned)(index%512);
+                int rising=phase>=128 && phase<256;
+                assert(rising || (phase>=384 && phase<512));
+                assert(edge==2 || rising==(edge==0));
+                assert(index>=start && index>0);
+                if(rising)assert(data[2*(index-1)+ch]<=128 && data[2*index+ch]>128);
+                else assert(data[2*(index-1)+ch]>=128 && data[2*index+ch]<128);
+            }
+        }
+    }
+    /* Trigger and trace use the same selected filter. A strong near-Nyquist
+       disturbance must not reverse the visible, resolved carrier slope. */
+    uint32_t noise=17;
+    for(size_t i=0;i<b.bytes/2;++i){
+        noise=noise*1664525U+1013904223U;
+        data[2*i]=(uint8_t)lround(128+24*sin(6.283185307179586*i/100.)+
+            18*cos(6.283185307179586*.49*i)+(int)(noise%17)-8);
+    }
+    uint8_t saved[sizeof(data)];memcpy(saved,data,sizeof(data));
+    for(unsigned start=32;start<512;start+=7)for(unsigned edge=0;edge<2;++edge){
+        assert(capture_find_trigger_filtered(&b,0,edge,4.1,2,2,b.first_sample+start,&trigger));
+        double slope=cos(6.283185307179586*(trigger-b.first_sample)/100.);
+        assert(edge==0?slope>0:slope<0);
+    }
+    assert(!memcmp(saved,data,sizeof(data)));
+    /* A threshold excursion that returns to its original side is not an edge;
+       qualification retains the crossing time rather than shifting to the guard. */
+    const uint8_t bounce[]={110,125,130,129,126,110,125,129,135,140,145,140,
+                             135,127,129,140,135,127,120,110};
+    b.bytes=sizeof(bounce)*2;
+    for(size_t i=0;i<sizeof(bounce);++i)data[2*i]=bounce[i];
+    assert(capture_find_trigger(&b,0,0,0,4,1000,&trigger) && trigger==1007);
+    assert(capture_find_trigger(&b,0,1,0,4,1000,&trigger) && trigger==1017);
+    assert(!capture_find_trigger(&b,0,0,0,4,1008,&trigger));
+    /* Fully resolved short-period carriers must keep both directions eligible. */
+    b.bytes=b.capacity;
+    for(unsigned period=2;period<=32;period*=2){
+        for(size_t i=0;i<b.bytes/2;++i)data[2*i]=(uint8_t)(i%period<period/2?80:176);
+        assert(capture_find_trigger(&b,0,0,0,2,1000,&trigger));
+        assert(data[2*(trigger-1000)]==176 && data[2*(trigger-1001)]==80);
+        assert(capture_find_trigger(&b,0,1,0,2,1000,&trigger));
+        assert(data[2*(trigger-1000)]==80 && data[2*(trigger-1001)]==176);
+    }
+}
+
 static void processor_density_test(void)
 {
     uint8_t data[16384];
@@ -851,5 +924,6 @@ int main(void)
     pipeline_lease_test();
     pipeline_test();
     capture_debug_test();
+    noisy_edge_test();
     return 0;
 }

@@ -41,7 +41,7 @@ static int valid(const ControlEvent *e)
     if (e->type == CONTROL_SET_RUN)
         return e->control == 255 && (e->value == 0 || e->value == 1);
     if (e->type == CONTROL_SET_SCALE || e->type == CONTROL_SCALE)
-        return e->control < 2 && control_scale_index(e->value) >= 0;
+        return e->control < 2 && (e->value == CONTROL_SCALE_OFF || control_scale_index(e->value) >= 0);
     if (e->type == CONTROL_POWER)
         return e->control == 255 && e->value >= 0 && e->value <= 7200;
     if (e->type == CONTROL_TEMPERATURE)

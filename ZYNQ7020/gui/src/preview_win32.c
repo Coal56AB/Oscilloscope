@@ -680,7 +680,8 @@ static void touch_short(HWND window)
             demo_signal_ui_menu_activate(&demo);
             break;
         case TOUCH_MEASURE_HIDE:
-            demo_signal_ui_toggle_measurements_visible(&demo);
+            demo_signal_ui_menu_select(&demo,SCOPE_MEASURE_HIDE_INDEX);
+            demo_signal_ui_menu_activate(&demo);
             break;
         case TOUCH_MEASURE_CANCEL:
         case TOUCH_MEASURE_CONFIRM:

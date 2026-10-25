@@ -35,6 +35,7 @@ typedef struct {
 uint16_t control_crc16(const uint8_t *data, size_t bytes);
 /* Panel and GUI use the same supported input scales, in mV/div (before probe). */
 #define CONTROL_SCALE_COUNT 6
+#define CONTROL_SCALE_OFF 0
 int control_scale_mv(unsigned index);
 int control_scale_index(int millivolts);
 int control_encode(uint8_t packet[CONTROL_PACKET_SIZE], const ControlEvent *event);

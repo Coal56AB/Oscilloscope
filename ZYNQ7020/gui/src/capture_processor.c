@@ -26,13 +26,42 @@ static double sample_voltage(const CaptureBuffer *b, size_t sample, unsigned cha
     return ((double)b->data[2 * sample + channel] - b->zero_code[channel]) *
            b->volts_per_code[channel];
 }
-int capture_find_trigger(const CaptureBuffer *b, unsigned ch, unsigned edge,
+/* Adjacent-code jitter sets the noise guard; limit it to a quarter of the
+   observed excursion so resolved fast edges remain eligible. No samples are
+   filtered or replaced, and the result is still an original level crossing. */
+static double trigger_code(const CaptureBuffer *b,unsigned ch,size_t i,const double *filtered)
+{
+    return filtered?filtered[i]:b->data[2*i+ch];
+}
+static unsigned trigger_noise_guard(const CaptureBuffer *b,unsigned ch,double level,unsigned minimum,const double *filtered)
+{
+    unsigned differences[256]={0},median=0;
+    double low=255,high=0;
+    size_t count=b->bytes/2,i,total=0;
+    if(!minimum || count<32)return minimum;
+    for(i=0;i<count;++i){
+        double value=trigger_code(b,ch,i,filtered);
+        if(value<low)low=value;if(value>high)high=value;
+        if(i){unsigned delta=(unsigned)floor(fabs(value-trigger_code(b,ch,i-1,filtered))+.5);++differences[delta>255?255:delta];}
+    }
+    for(;median<255;++median){total+=differences[median];if(total>=count/2)break;}
+    unsigned guard=median*3,limit=(unsigned)((high-low)/4);
+    if(level>low && level<high){
+        unsigned headroom=(unsigned)fmin(level-low,high-level);
+        if(limit>headroom)limit=headroom;
+    }
+    if(guard>limit)guard=limit;
+    return guard>minimum?guard:minimum;
+}
+
+static int find_trigger(const CaptureBuffer *b, unsigned ch, unsigned edge,
                          double volts, unsigned hysteresis_codes,
-                         uint64_t first_allowed, uint64_t *sample)
+                         uint64_t first_allowed, uint64_t *sample,const double *filtered)
 {
     size_t i, start = 1, history;
     double level;
-    int previous, rising_armed, falling_armed;
+    double previous;int state;
+    size_t crossing=SIZE_MAX;
     if (!capture_buffer_valid(b) || ch >= 2 || edge > 2 || !isfinite(volts) || !sample ||
         b->volts_per_code[ch] <= 0) return 0;
     if (first_allowed > b->first_sample) {
@@ -41,29 +70,53 @@ int capture_find_trigger(const CaptureBuffer *b, unsigned ch, unsigned edge,
         if (offset > start) start = (size_t)offset;
     }
     level = volts / b->volts_per_code[ch] + b->zero_code[ch];
-    /* Recover the arm state before the allowed trigger window. A noisy return
-       across the threshold must not turn a falling slope into a rising trigger. */
+    hysteresis_codes=trigger_noise_guard(b,ch,level,hysteresis_codes,filtered);
+    /* Recover both the source side and any already-started transition. A
+       crossing is accepted only after reaching the opposite side of the band. */
     history = start - 1;
-    while (history && b->data[2 * history + ch] > level - hysteresis_codes &&
-           b->data[2 * history + ch] < level + hysteresis_codes) --history;
-    previous = b->data[2 * history + ch];
-    rising_armed = previous <= level - hysteresis_codes;
-    falling_armed = previous >= level + hysteresis_codes;
+    while (history && trigger_code(b,ch,history,filtered) > level - hysteresis_codes &&
+           trigger_code(b,ch,history,filtered) < level + hysteresis_codes) --history;
+    previous = trigger_code(b,ch,history,filtered);
+    state=previous<=level-hysteresis_codes?-1:previous>=level+hysteresis_codes?1:0;
     for (i = history + 1; i < b->bytes / 2; ++i) {
-        int current = b->data[2 * i + ch];
-        int rising = rising_armed && previous <= level && current > level;
-        int falling = falling_armed && previous >= level && current < level;
-        if (rising) rising_armed = 0;
-        if (falling) falling_armed = 0;
-        if (current <= level - hysteresis_codes) rising_armed = 1;
-        if (current >= level + hysteresis_codes) falling_armed = 1;
-        if (i >= start && ((edge != 1 && rising) || (edge != 0 && falling))) {
-            *sample = b->first_sample + i;
-            return 1;
+        double current = trigger_code(b,ch,i,filtered);
+        if(!hysteresis_codes){
+            if(i>=start && ((edge!=1 && previous<=level && current>level) ||
+                           (edge!=0 && previous>=level && current<level))){
+                *sample=b->first_sample+i;return 1;
+            }
+        }else{
+            if(crossing==SIZE_MAX && ((state<0 && previous<=level && current>level) ||
+                                     (state>0 && previous>=level && current<level)))crossing=i;
+            int side=current<=level-hysteresis_codes?-1:current>=level+hysteresis_codes?1:0;
+            if(side){
+                if(state && side!=state && crossing!=SIZE_MAX && crossing>=start &&
+                   ((side>0 && edge!=1) || (side<0 && edge!=0))){
+                    *sample=b->first_sample+crossing;return 1;
+                }
+                state=side;crossing=SIZE_MAX;
+            }
         }
         previous = current;
     }
     return 0;
+}
+int capture_find_trigger(const CaptureBuffer *b,unsigned ch,unsigned edge,double volts,unsigned hysteresis,
+                         uint64_t first_allowed,uint64_t *sample)
+{
+    return find_trigger(b,ch,edge,volts,hysteresis,first_allowed,sample,NULL);
+}
+int capture_find_trigger_filtered(const CaptureBuffer *b,unsigned ch,unsigned edge,double volts,unsigned hysteresis,
+                                  unsigned filter,uint64_t first_allowed,uint64_t *sample)
+{
+    double *workspace;size_t count,i;int found;
+    if(!filter)return capture_find_trigger(b,ch,edge,volts,hysteresis,first_allowed,sample);
+    if(!capture_buffer_valid(b) || ch>=2 || filter>3 || b->bytes/2>SIZE_MAX/(2*sizeof(double)))return 0;
+    count=b->bytes/2;workspace=malloc(count*2*sizeof(double));if(!workspace)return 0;
+    for(i=0;i<count;++i)workspace[i]=b->data[2*i+ch];
+    signal_filter_apply(workspace,count,filter,workspace+count);
+    found=find_trigger(b,ch,edge,volts,hysteresis,first_allowed,sample,workspace+count);
+    free(workspace);return found;
 }
 static void source_range(const void *context, size_t first, size_t end, unsigned channel,
                          double *minimum, double *maximum)
@@ -315,7 +368,9 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
     f->sequence = b->sequence;
     f->capture_id = b->accepted_ns;
     f->calibration_mask=v->calibration_mask;
+    f->baseline_mask=v->baseline_mask;
     f->sample_rate_hz = b->sample_rate_hz;
+    memcpy(f->volts_per_code,b->volts_per_code,sizeof(f->volts_per_code));
     f->peak_detect = b->peaks!=NULL;
     f->display_samples = display_samples;
     f->fft_size = 1024;

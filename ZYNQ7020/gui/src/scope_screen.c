@@ -421,10 +421,17 @@ static const char *measurement_display_label(const char *label)
     return measurement_channel(label) >= 0 && label[3] == ' ' ? label + 4 : label;
 }
 
+/* Reserve a numeric field once from the font, independently of live digits,
+   signs, OFF/-- and units. Label composition still defines each column. */
+static int measurement_value_width(const ScopeScreen *screen)
+{
+    return text_width_mode("-88888.88 MHz",2,screen->font_index);
+}
+
 static int measurement_column_width(const ScopeScreen *screen, int count,
                                     int column, int *label_width)
 {
-    int i, widest_label = 0, widest_value = 0;
+    int i, widest_label = 0, widest_value = measurement_value_width(screen);
     int horizontal = screen->measurement_horizontal;
     int columns = horizontal ? (count < 5 ? count : 5) : (count + 4) / 5;
     for (i = 0; i < count; ++i) {
@@ -433,10 +440,7 @@ static int measurement_column_width(const ScopeScreen *screen, int count,
             int label = text_width_mode(measurement_display_label(
                                         screen->measurement_labels[i]), 2,
                                         screen->font_index);
-            int value = text_width_mode(screen->measurement_values[i], 2,
-                                        screen->font_index);
             if (label > widest_label) widest_label = label;
-            if (value > widest_value) widest_value = value;
         }
     }
     if (label_width) *label_width = widest_label;
@@ -1433,8 +1437,8 @@ bottom_cards:
         text(45, 91, screen->menu_title, 2, white);
         text(45, 121, "CH1", 2, yellow);
         text(537, 121, "CH2", 2, cyan);
-        rounded_fill(588, 83, 140, 27, RGB(41, 49, 76));
-        rounded_frame(588, 83, 140, 27, RGB(105, 119, 173));
+        rounded_fill(588, 83, 140, 27, screen->menu_selected==SCOPE_MEASURE_HIDE_INDEX?RGB(44,68,72):RGB(41,49,76));
+        rounded_frame(588, 83, 140, 27, screen->menu_selected==SCOPE_MEASURE_HIDE_INDEX?green:RGB(105,119,173));
         text(598, 89, screen->measurement_hidden ? "SHOW" : "HIDE", 2, white);
         rounded_done();
         rounded_fill(744, 83, 140, 27,
@@ -1533,6 +1537,8 @@ bottom_cards:
             int row = row_y + i * SCOPE_MENU_ROW_HEIGHT;
             int disabled=screen->menu_disabled[i];
             int selected = i == screen->menu_selected && !disabled;
+            int danger=screen->menu_danger[i] && !disabled;
+            uint32_t accent=danger?RGB(245,93,109):green;
             int body_x = menu_x + 10;
             int control_w = SCOPE_MENU_CONTROL_WIDTH;
             int debug_item = debug_menu ||
@@ -1543,9 +1549,9 @@ bottom_cards:
             rounded_frame(body_x, row, SCOPE_MENU_WIDTH - 20, 50,
                           selected ? RGB(105, 139, 190) : RGB(57, 63, 89));
             fill(body_x, row, 5, 50,
-                 selected ? screen->menu_editing ? yellow : green : RGB(57, 63, 89));
+                 danger?accent:selected ? screen->menu_editing ? yellow : green : RGB(57, 63, 89));
             text(body_x + 16, row + 18, screen->menu_labels[i], 2,
-                 disabled?RGB(94,100,111):debug_item ? yellow : white);
+                 disabled?RGB(94,100,111):danger?RGB(255,143,155):debug_item ? yellow : white);
             if (screen->menu_option_count[i] && screen->menu_options[i]) {
                 int choice, count = screen->menu_option_count[i];
                 if (count > SCOPE_MENU_CHOICES) count = SCOPE_MENU_CHOICES;
@@ -1581,11 +1587,11 @@ bottom_cards:
             } else if (screen->menu_values[i] && screen->menu_values[i][0]) {
                 const char *value = screen->menu_values[i];
                 rounded_fill(control_x + 2, row + 7, control_w - 4, 36,
-                             RGB(38, 46, 67));
+                             danger?RGB(76,29,42):RGB(38,46,67));
                 rounded_frame(control_x + 2, row + 7, control_w - 4, 36,
-                              RGB(72, 88, 121));
+                              danger?accent:RGB(72,88,121));
                 text(control_x + (control_w - text_width(value, 2)) / 2,
-                     row + 18, value, 2, disabled?RGB(94,100,111):green);
+                     row + 18, value, 2, disabled?RGB(94,100,111):danger?RGB(255,143,155):green);
                 rounded_done();
             }
             rounded_done();

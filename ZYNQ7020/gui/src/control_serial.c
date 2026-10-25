@@ -287,7 +287,8 @@ static void serial_worker(void *context)
 int serial_control_set_scale(SerialControlTransport *t, unsigned channel, int millivolts)
 {
     int available;
-    if (!t->started || channel >= 2 || control_scale_index(millivolts) < 0) return 0;
+    if (!t->started || channel >= 2 ||
+        (millivolts != CONTROL_SCALE_OFF && control_scale_index(millivolts) < 0)) return 0;
     scope_mutex_lock(&t->mutex);
     available = t->metrics.connected && (t->metrics.scale_valid & (1U << channel));
     if (available) {

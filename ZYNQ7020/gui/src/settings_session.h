@@ -6,6 +6,7 @@ typedef struct {
     DemoSettings last,preset[5];
     unsigned valid;int startup;
     ChannelResponse response[4];
+    ChannelBaseline baseline[4];
 } SettingsDocument;
 typedef struct {
     SettingsDocument document;

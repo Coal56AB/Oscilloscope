@@ -27,6 +27,7 @@
 #define SCOPE_WINDOW_RADIUS 10
 #define SCOPE_MEASURE_SLOTS 10
 #define SCOPE_MEASURE_CATALOG_ITEMS 16
+#define SCOPE_MEASURE_HIDE_INDEX (SCOPE_MEASURE_CATALOG_ITEMS + 1)
 #define SCOPE_MEASURE_CONFIRM_X 302
 #define SCOPE_MEASURE_CONFIRM_Y 225
 #define SCOPE_MEASURE_CONFIRM_WIDTH 420
@@ -130,6 +131,7 @@ typedef struct {
     uint8_t menu_option_selected[SCOPE_MENU_ITEMS];
     uint8_t menu_stepper[SCOPE_MENU_ITEMS];
     uint8_t menu_disabled[SCOPE_MENU_ITEMS];
+    uint8_t menu_danger[SCOPE_MENU_ITEMS];
     uint8_t menu_option_disabled[SCOPE_MENU_ITEMS]; /* Bit per visible choice */
     int trigger_y;             /* Plot coordinate, 0..SCOPE_PLOT_HEIGHT-1 */
     int trigger_preview_y;

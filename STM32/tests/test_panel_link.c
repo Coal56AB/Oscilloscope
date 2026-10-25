@@ -4,10 +4,12 @@
 #undef NDEBUG
 #endif
 #include "panel_state.h"
+#include "oscill_config.h"
 #include "control_transport.h"
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <termios.h>
 #include <unistd.h>
@@ -92,6 +94,9 @@ static void expect_scale(unsigned channel, int value)
     }
     pump(10);
   }
+  fprintf(stderr, "CH%u target=%d actual=%d valid=%u connected=%d relays=%u enabled=%u duplicates=%llu last=%u\n",
+          channel, value, metrics.scale_mv[channel], metrics.scale_valid,
+          metrics.connected, relays, panel.enabled[channel], (unsigned long long)commands.duplicates,commands.last_sequence);
   assert(!"panel scale did not reach GUI");
 }
 
@@ -117,8 +122,16 @@ int main(void)
   panel_state_init(&panel, &events);
   control_parser_init(&commands);
   assert(serial_control_start(&serial, &queue, device, 115200));
-  expect_scale(0, 500);
-  expect_scale(1, 1000);
+  expect_scale(0, STM32_STANDALONE_DEBUG ? 500 : CONTROL_SCALE_OFF);
+  expect_scale(1, STM32_STANDALONE_DEBUG ? 1000 : CONTROL_SCALE_OFF);
+  assert(relays == (STM32_STANDALONE_DEBUG ? 54 : 0));
+  if (!STM32_STANDALONE_DEBUG)
+  {
+    assert(serial_control_set_scale(&serial, 0, 500));
+    assert(serial_control_set_scale(&serial, 1, 1000));
+    expect_scale(0, 500);
+    expect_scale(1, 1000);
+  }
   panel_state_input(&panel, CONTROL_ROTATE, 0, -1, (uint32_t)(scope_clock_ns() / 1000000));
   expect_scale(0, 1000);
   while (control_queue_pop(&queue, &event))
@@ -159,16 +172,27 @@ int main(void)
   assert(!metrics.temperature_valid);
   assert(!serial_control_set_scale(&serial, 2, 500));
   assert(!serial_control_set_scale(&serial, 0, 123));
+  assert(serial_control_set_scale(&serial, 0, CONTROL_SCALE_OFF));
+  expect_scale(0, CONTROL_SCALE_OFF);
+  assert(relays == 48 && panel.scale[0] == 5);
+  panel_state_input(&panel, CONTROL_ROTATE, 0, 1, (uint32_t)(scope_clock_ns() / 1000000));
+  pump(100);
+  assert(relays == 48 && panel.scale[0] == 5);
+  while (control_queue_pop(&queue, &event) && event.type != CONTROL_ROTATE) {}
+  assert(event.type == CONTROL_ROTATE && event.control == 0 && event.value == 1);
+  assert(serial_control_set_scale(&serial, 0, 200));
+  expect_scale(0, 200);
+  assert(relays == 55);
   serial_control_stop(&serial);
   assert(partial_writes > 0);
   control_queue_reset(&queue);
   /* Reopening the GUI must adopt STM32's current scale, not its default. */
   assert(serial_control_start(&serial, &queue, device, 115200));
-  expect_scale(0, 5000);
+  expect_scale(0, 200);
   expect_scale(1, 1000);
   serial_control_metrics(&serial, &metrics);
   assert(!metrics.temperature_valid && !metrics.temperature_received_ms);
-  assert(panel.scale[0] == 5 && relays == 52);
+  assert(panel.scale[0] == 1 && relays == 55);
   serial_control_stop(&serial);
   control_queue_destroy(&queue);
   close(master);

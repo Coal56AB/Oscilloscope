@@ -8,6 +8,7 @@ typedef struct
   Stm32Controls *events;
   int scale[2];
   int applied[2];
+  uint8_t enabled[2];
   uint8_t position_mode[2];
   uint8_t run;
   uint8_t relay_mask;

@@ -114,7 +114,7 @@ typedef struct {
     int filter_level[2];
     int intensity_coloring;
     char layout_value_text[5][16];
-    double history_view[23];
+    double history_view[27];
     int persistence_index;
     int settings_available;
     int fft_enabled;
@@ -147,6 +147,11 @@ typedef struct {
     int startup_preset, preset_selected;
     unsigned preset_valid;
     ChannelResponse response[4]; /* Real CH1/CH2, then independent simulation curves. */
+    ChannelBaseline baseline[4];
+    int baseline_active,baseline_frames;
+    uint64_t baseline_seen_sequence,baseline_samples;
+    double baseline_sum,baseline_power,baseline_gain;
+    char baseline_text[64];
     int response_enabled[2],response_channel,response_active,response_sim_index;
     uint64_t response_started_ms,response_seen_sequence;
     int pc_available;
@@ -190,6 +195,9 @@ unsigned demo_signal_generator_hz(int index);
 void demo_signal_init(DemoSignal *demo);
 void demo_signal_refresh(DemoSignal *demo);
 void demo_signal_response_observe(DemoSignal *demo,uint64_t sequence,double frequency,double amplitude);
+void demo_signal_baseline_observe(DemoSignal *demo,uint64_t sequence,size_t samples,double mean,double rms,double gain);
+ChannelBaseline *demo_signal_baseline(DemoSignal *demo,unsigned channel);
+double demo_signal_adc_gain(const DemoSignal *demo,unsigned channel);
 ChannelResponse *demo_signal_response_curve(DemoSignal *demo,unsigned channel);
 int demo_signal_response_enable(DemoSignal *demo,unsigned channel,int enabled);
 void demo_signal_set_fft_range(DemoSignal *demo, double span_hz, unsigned size);
@@ -222,6 +230,8 @@ int demo_signal_scale_mv(int index);
 void demo_signal_bind_scale_control(DemoSignal *demo,
     int (*request)(void *, unsigned, int), void *context);
 void demo_signal_accept_scale(DemoSignal *demo, unsigned channel, int millivolts);
+/* Physical request: selected scale for an enabled channel, zero for all relays off. */
+int demo_signal_panel_scale(const DemoSignal *demo, unsigned channel);
 void demo_signal_ui_menu_adjust(DemoSignal *demo, int steps);
 DemoAction demo_signal_ui_menu_activate(DemoSignal *demo);
 DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction);

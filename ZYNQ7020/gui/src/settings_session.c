@@ -8,7 +8,7 @@
 size_t settings_document_encode(const SettingsDocument *d,char *data,size_t capacity)
 {
     size_t used;unsigned slot,i;int n;
-    n=snprintf(data,capacity,"OSCILL_SETUP 2 %u\n%d %u\n",(unsigned)DEMO_SETTINGS_COUNT,d->startup,d->valid);
+    n=snprintf(data,capacity,"OSCILL_SETUP 3 %u\n%d %u\n",(unsigned)DEMO_SETTINGS_COUNT,d->startup,d->valid);
     if(n<0 || (size_t)n>=capacity)return 0;used=(size_t)n;
     for(slot=0;slot<6;++slot){
         const DemoSettings *s=slot?&d->preset[slot-1]:&d->last;
@@ -27,6 +27,12 @@ size_t settings_document_encode(const SettingsDocument *d,char *data,size_t capa
             if(n<0 || (size_t)n>=capacity-used)return 0;used+=(size_t)n;
         }
     }
+    for(slot=0;slot<4;++slot){
+        const ChannelBaseline *b=&d->baseline[slot];
+        if(!channel_baseline_valid(b))return 0;
+        n=snprintf(data+used,capacity-used,"%d %.17g %.17g %.17g\n",b->valid,b->zero,b->noise_rms,b->volts_per_code);
+        if(n<0 || (size_t)n>=capacity-used)return 0;used+=(size_t)n;
+    }
     return used;
 }
 
@@ -35,7 +41,7 @@ int settings_document_decode(SettingsDocument *d,const char *data)
     SettingsDocument candidate={0};unsigned version,count,slot,i;int consumed=0;
     char *end;double number;
     if(sscanf(data,"OSCILL_SETUP %u %u%n",&version,&count,&consumed)!=2 ||
-       !((version==1 && count==65) || (version==2 && count==DEMO_SETTINGS_COUNT)))return 0;
+       !((version==1 && count==65) || ((version==2 || version==3) && count==DEMO_SETTINGS_COUNT)))return 0;
     data+=consumed;
     number=strtod(data,&end);if(end==data || !isfinite(number) || number!=floor(number) || number<0 || number>5)return 0;
     candidate.startup=(int)number;data=end;
@@ -46,7 +52,7 @@ int settings_document_decode(SettingsDocument *d,const char *data)
         for(i=0;i<count;++i){s->values[i]=strtod(data,&end);if(end==data)return 0;data=end;}
         if((!slot || (candidate.valid&(1U<<(slot-1)))) && !demo_settings_valid(s))return 0;
     }
-    if(version==2)for(slot=0;slot<4;++slot){
+    if(version>=2)for(slot=0;slot<4;++slot){
         ChannelResponse *c=&candidate.response[slot];
         number=strtod(data,&end);if(end==data || !isfinite(number) || number!=floor(number) || number<0 || number>RESPONSE_POINTS)return 0;
         c->count=(unsigned)number;data=end;
@@ -56,6 +62,14 @@ int settings_document_decode(SettingsDocument *d,const char *data)
             c->db[i]=strtod(data,&end);if(end==data)return 0;data=end;
         }
         if(!channel_response_valid(c))return 0;
+    }
+    if(version>=3)for(slot=0;slot<4;++slot){
+        ChannelBaseline *b=&candidate.baseline[slot];
+        number=strtod(data,&end);if(end==data || (number!=0 && number!=1))return 0;
+        b->valid=(int)number;data=end;
+        b->zero=strtod(data,&end);if(end==data)return 0;data=end;
+        b->noise_rms=strtod(data,&end);if(end==data)return 0;data=end;
+        b->volts_per_code=strtod(data,&end);if(end==data || !channel_baseline_valid(b))return 0;data=end;
     }
     while(isspace((unsigned char)*data))++data;
     if(*data)return 0;
@@ -71,10 +85,12 @@ static uint64_t submit(SettingsSession *s,DemoSignal *demo,int immediate)
     if(!demo_settings_valid(&current))return 0;
     if(!immediate && s->queued && s->document.startup==demo->startup_preset &&
        !memcmp(&current,&s->document.last,sizeof(current)) &&
-       !memcmp(demo->response,s->document.response,sizeof(demo->response)))return s->queued;
+       !memcmp(demo->response,s->document.response,sizeof(demo->response)) &&
+       !memcmp(demo->baseline,s->document.baseline,sizeof(demo->baseline)))return s->queued;
     s->document.last=current;
     s->document.startup=demo->startup_preset;
     memcpy(s->document.response,demo->response,sizeof(demo->response));
+    memcpy(s->document.baseline,demo->baseline,sizeof(demo->baseline));
     size=settings_document_encode(&s->document,data,sizeof(data));
     s->queued=size?settings_store_submit(s->store,data,size,immediate):0;
     return s->queued;
@@ -88,6 +104,7 @@ int settings_session_open(SettingsSession *s,DemoSignal *demo,const char *path)
     if(loaded>0 && settings_document_decode(&s->document,data)){
         unsigned preset=(unsigned)s->document.startup;
         memcpy(demo->response,s->document.response,sizeof(demo->response));
+        memcpy(demo->baseline,s->document.baseline,sizeof(demo->baseline));
         demo_settings_apply(demo,preset && (s->document.valid&(1U<<(preset-1)))?
                             &s->document.preset[preset-1]:&s->document.last);
         loaded=1;

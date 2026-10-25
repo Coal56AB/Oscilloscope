@@ -24,7 +24,7 @@ uint8_t panel_state_relays(int scale_index)
 }
 
 /**
- * @brief   Начать с масштабов, соответствующих исходному состоянию GUI.
+ * @brief   В штатной сборке отпустить реле до команды GUI; DEBUG сохраняет местный запуск.
  * @details Первое обслуживание обязательно применяет GPIO и выдерживает паузу;
  *          до этого никакой масштаб не объявляется установленным.
  */
@@ -34,6 +34,7 @@ void panel_state_init(PanelState *state, Stm32Controls *events)
   state->events = events;
   state->scale[0] = 2;
   state->scale[1] = 3;
+  state->enabled[0] = state->enabled[1] = STM32_STANDALONE_DEBUG;
   state->applied[0] = state->applied[1] = -1;
   state->relay_mask = 255U;
 }
@@ -41,14 +42,15 @@ void panel_state_init(PanelState *state, Stm32Controls *events)
 /**
  * @brief   Применить шаги каналов на STM32, остальные события передать GUI.
  * @details Положительный шаг уменьшает В/дел. В режиме позиции дельта остаётся
- *          событием GUI. При автономной отладке энкодеры всегда выбирают
- *          масштаб, RUN переключает LED.
+ *          событием GUI. Выключенный канал передаёт шаг без переключения реле.
+ *          При автономной отладке включённые каналы выбирают масштаб,
+ *          RUN переключает LED.
  */
 void panel_state_input(PanelState *state, ControlEventType type, unsigned id, int value,
                        uint32_t now_ms)
 {
   if (type == CONTROL_ROTATE && id < 2 && (value == -1 || value == 1) &&
-      (standalone(state, now_ms) || !state->position_mode[id]))
+      state->enabled[id] && (standalone(state, now_ms) || !state->position_mode[id]))
   {
     int next = state->scale[id] - value;
     if (next >= 0 && next < CONTROL_SCALE_COUNT)
@@ -66,7 +68,8 @@ void panel_state_input(PanelState *state, ControlEventType type, unsigned id, in
 
 /**
  * @brief   Принять запрос GUI, сохранив единственного владельца масштабов.
- * @details Абсолютный масштаб проверяется общей таблицей. Повтор запроса
+ * @details Нулевое значение отпускает реле, не забывая выбранную ступень.
+ *          Положительный масштаб проверяется общей таблицей. Повтор запроса
  *          безвреден; пакеты событий и телеметрия не являются командами.
  */
 void panel_state_command(PanelState *state, const ControlEvent *command, uint32_t now_ms)
@@ -74,9 +77,14 @@ void panel_state_command(PanelState *state, const ControlEvent *command, uint32_
   if (command->type == CONTROL_SET_SCALE && command->control < 2)
   {
     int index = control_scale_index(command->value);
-    if (index >= 0)
+    if (command->value == CONTROL_SCALE_OFF)
+    {
+      state->enabled[command->control] = 0U;
+    }
+    else if (index >= 0)
     {
       state->scale[command->control] = index;
+      state->enabled[command->control] = 1U;
     }
     else
     {
@@ -114,8 +122,8 @@ void panel_state_poll(PanelState *state, uint32_t now_ms, void (*write_relays)(u
   {
     state->host_connected = 0U;
   }
-  uint8_t mask = panel_state_relays(state->scale[0]) |
-                 (uint8_t)(panel_state_relays(state->scale[1]) << 3);
+  uint8_t mask = (state->enabled[0] ? panel_state_relays(state->scale[0]) : 0U) |
+                (uint8_t)((state->enabled[1] ? panel_state_relays(state->scale[1]) : 0U) << 3);
   if (mask != state->relay_mask)
   {
     write_relays(mask);
@@ -130,11 +138,11 @@ void panel_state_poll(PanelState *state, uint32_t now_ms, void (*write_relays)(u
   state->switching = 0U;
   for (i = 0; i < 2; ++i)
   {
-    if (state->applied[i] != state->scale[i] || (uint32_t)(now_ms - state->reported_ms) >= 1000U)
+    int value = state->enabled[i] ? control_scale_mv((unsigned)state->scale[i]) : CONTROL_SCALE_OFF;
+    if (state->applied[i] != value || (uint32_t)(now_ms - state->reported_ms) >= 1000U)
     {
-      state->applied[i] = state->scale[i];
-      stm32_controls_report(state->events, CONTROL_SCALE, i,
-                             control_scale_mv((unsigned)state->applied[i]), now_ms);
+      state->applied[i] = value;
+      stm32_controls_report(state->events, CONTROL_SCALE, i, value, now_ms);
     }
   }
   if ((uint32_t)(now_ms - state->reported_ms) >= 1000U)

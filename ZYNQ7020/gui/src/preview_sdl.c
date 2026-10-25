@@ -40,6 +40,7 @@ static SettingsSession settings;
 static ScopeRenderer *renderer;
 static uint64_t render_generation;
 static int restored_scale[2]={-1,-1};
+static int panel_channel_enabled[2]={-1,-1};
 static uint64_t restore_retry_ms;
 static int restore_capture_pending;
 static volatile sig_atomic_t stop_requested;
@@ -391,7 +392,7 @@ static void act(DemoAction action)
         if(live_snapshot_valid)act(DEMO_ACTION_BROWSE_CLOSE);
         if(settings_session_load(&settings,&demo,slot)){
             unsigned ch;demo_signal_ui_dismiss_menu(&demo);
-            if(serial_controls.started)for(ch=0;ch<2;++ch)restored_scale[ch]=demo_signal_scale_mv(demo.scale_index[ch]);
+            if(serial_controls.started)for(ch=0;ch<2;++ch)restored_scale[ch]=demo_signal_panel_scale(&demo,ch);
             restore_retry_ms=0;
             demo_signal_notify(&demo,"PRESET LOADED");
         }else demo_signal_notify(&demo,"PRESET EMPTY");
@@ -601,7 +602,7 @@ static void touch_short(void)
         case TOUCH_BROWSER_NEXT: action=DEMO_ACTION_BROWSE_NEXT; break;
         case TOUCH_MENU_BACK: demo_signal_ui_menu_back(&demo); break;
         case TOUCH_MEASURE_CLEAR: demo_signal_ui_menu_select(&demo,SCOPE_MEASURE_CATALOG_ITEMS); demo_signal_ui_menu_activate(&demo); break;
-        case TOUCH_MEASURE_HIDE: demo_signal_ui_toggle_measurements_visible(&demo); break;
+        case TOUCH_MEASURE_HIDE: demo_signal_ui_menu_select(&demo,SCOPE_MEASURE_HIDE_INDEX);demo_signal_ui_menu_activate(&demo);break;
         case TOUCH_MEASURE_CANCEL: case TOUCH_MEASURE_CONFIRM:
             demo.screen.measurement_clear_choice=touch.zone==TOUCH_MEASURE_CONFIRM;
             demo_signal_ui_menu_activate(&demo); break;
@@ -861,6 +862,27 @@ static int update_panel_battery(const SerialControlMetrics *panel,uint64_t now)
         now-panel->power_received_ms<=3000);
 }
 
+/* Match channel ON/OFF to physical relays without taking over the panel's
+   ordinary range encoder. Reapply after a panel reset or a USB reconnect. */
+static void sync_panel_ranges(const SerialControlMetrics *panel,uint64_t now)
+{
+    const DemoSignal *live=live_settings();
+    unsigned ch;
+    for(ch=0;ch<2;++ch){
+        int target=demo_signal_panel_scale(live,ch),enabled=target!=CONTROL_SCALE_OFF;
+        if(!panel->connected){panel_channel_enabled[ch]=-1;continue;}
+        if(panel_channel_enabled[ch]!=enabled || ((panel->scale_valid&(1U<<ch)) &&
+            (panel->scale_mv[ch]!=CONTROL_SCALE_OFF)!=enabled)){
+            restored_scale[ch]=target;panel_channel_enabled[ch]=enabled;
+        }
+    }
+    if(now>=restore_retry_ms){
+        for(ch=0;ch<2;++ch)if(restored_scale[ch]>=0)
+            serial_control_set_scale(&serial_controls,ch,restored_scale[ch]);
+        restore_retry_ms=now+100;
+    }
+}
+
 static void drain_controls(uint64_t now)
 {
     static unsigned generation;static uint32_t down_ms[CONTROL_ID_COUNT];
@@ -868,6 +890,9 @@ static void drain_controls(uint64_t now)
     if(next!=generation){memset(key_holds,0,sizeof(key_holds));pending_chord=DEMO_CONTROL_COUNT;generation=next;}
     while(control_queue_pop(&controls,&event)){
         if(event.type==CONTROL_SCALE){
+            if(event.control<2 && panel_channel_enabled[event.control]>=0 &&
+               (demo_signal_panel_scale(live_settings(),event.control)!=CONTROL_SCALE_OFF)!=
+                panel_channel_enabled[event.control])continue;
             if(event.control<2 && restored_scale[event.control]>=0){
                 if(event.value!=restored_scale[event.control])continue;
                 restored_scale[event.control]=-1;
@@ -942,6 +967,9 @@ static void remote_state(FILE *response)
 {
     int channel,i;
     uint64_t frames=0,render_ns=0,output_ns=0;CaptureMetrics capture={0};
+    SerialControlMetrics panel={0};int mx,my,mw,mh;
+    serial_control_metrics(&serial_controls,&panel);
+    scope_screen_measurement_bounds(&demo.screen,&mx,&my,&mw,&mh);
     if(renderer)scope_renderer_metrics(renderer,&frames,&render_ns,&output_ns);
     if(capture_pipeline)capture_pipeline_metrics(capture_pipeline,&capture);
     fprintf(response,"{\"version\":1,\"source\":\"%s\",\"running\":%d,\"waiting\":%d,\"plot_height\":%d,\"pixels_per_div\":%.9g,\"time_divisions\":10,",
@@ -952,6 +980,14 @@ static void remote_state(FILE *response)
             channel+1,demo.probe_ten[channel],channel+1,demo.scale_index[channel],channel+1,demo.channel_position[channel],channel+1,demo.filter_level[channel]);
     }
     fprintf(response,"\"record_depth_index\":%d,\"sample_rate_hz\":%.9g,",demo.record_depth_index,demo.acquisition_rate_hz);
+    fprintf(response,"\"measurement_hidden\":%d,\"measurement_x\":%d,\"measurement_y\":%d,\"measurement_width\":%d,\"measurement_height\":%d,",
+        demo.screen.measurement_hidden,mx,my,mw,mh);
+    fprintf(response,"\"panel_scale_valid\":%u,\"ch1_panel_scale_mv\":%d,\"ch2_panel_scale_mv\":%d,",
+        panel.scale_valid,panel.scale_mv[0],panel.scale_mv[1]);
+    fprintf(response,"\"zero_measuring\":%d,\"zero_frames\":%d,",demo.baseline_active,demo.baseline_frames);
+    for(channel=0;channel<2;++channel){ChannelBaseline *b=demo_signal_baseline(&demo,(unsigned)channel);
+        fprintf(response,"\"ch%d_zero_known\":%d,\"ch%d_zero\":%.9g,\"ch%d_noise_rms\":%.9g,",
+            channel+1,b->valid,channel+1,b->zero,channel+1,b->noise_rms);}
     fprintf(response,"\"startup_preset\":%d,\"preset_valid\":%u,",demo.startup_preset,demo.preset_valid);
     fprintf(response,"\"calibration_active\":%d,\"calibration_channel\":%d,\"ch1_response_points\":%u,\"ch2_response_points\":%u,\"ch1_response\":%d,\"ch2_response\":%d,",
         demo.response_active,demo.response_channel+1,demo_signal_response_curve(&demo,0)->count,
@@ -1028,11 +1064,12 @@ static int remote_command(const char *command, FILE *response, void *context)
         fputs("]}\n",response);return 1;
     }
     if(sscanf(command,"calibrate %u %31s%n",&channel,operation,&n)==2 && command[n]=='\0' && channel>=1 && channel<=2){
-        if(!strcmp(operation,"start") || !strcmp(operation,"show")){
+        if(!strcmp(operation,"start") || !strcmp(operation,"show") || !strcmp(operation,"zero")){
             demo_signal_ui_open_menu(&demo,channel==1?DEMO_MENU_CH1:DEMO_MENU_CH2);
             demo_signal_ui_menu_select(&demo,4);act(demo_signal_ui_menu_activate(&demo));
             if(demo.menu_kind!=DEMO_MENU_RESPONSE)return 0;
-            if(!strcmp(operation,"start"))act(demo_signal_ui_menu_activate(&demo));
+            if(!strcmp(operation,"zero")){demo_signal_ui_menu_select(&demo,3);act(demo_signal_ui_menu_activate(&demo));}
+            else if(!strcmp(operation,"start"))act(demo_signal_ui_menu_activate(&demo));
             else demo_signal_ui_dismiss_menu(&demo);
         }else if(!strcmp(operation,"stop")){
             if(demo.response_active && demo.response_channel==(int)channel-1)demo_signal_ui_toggle_run(&demo);
@@ -1040,7 +1077,7 @@ static int remote_command(const char *command, FILE *response, void *context)
             memset(demo_signal_response_curve(&demo,channel-1),0,sizeof(ChannelResponse));
             demo.response_enabled[channel-1]=0;demo_signal_refresh(&demo);
         }else if(!strcmp(operation,"exit")){
-            demo.response_active=0;demo.screen.response_visible=0;demo_signal_ui_dismiss_menu(&demo);demo_signal_refresh(&demo);
+            demo.response_active=demo.baseline_active=0;demo.screen.response_visible=0;demo_signal_ui_dismiss_menu(&demo);demo_signal_refresh(&demo);
         }else return 0;
     }
     else if(sscanf(command,"set %63s %lf%n",key,&value,&n)==2&&command[n]=='\0'&&remote_set(key,value)){}
@@ -1339,7 +1376,7 @@ int main(int argc, char **argv)
 #endif
     if(!no_settings && settings_path){
         int loaded=settings_session_open(&settings,&demo,settings_path);
-        if(loaded && serial_device)for(i=0;i<2;++i)restored_scale[i]=demo_signal_scale_mv(demo.scale_index[i]);
+        if(loaded && serial_device)for(i=0;i<2;++i)restored_scale[i]=demo_signal_panel_scale(&demo,(unsigned)i);
         if(loaded && capture_pipeline && !demo.screen.running)restore_capture_pending=1;
     }
     demo.settings_available=settings.store!=NULL;demo_signal_refresh(&demo);
@@ -1400,20 +1437,18 @@ int main(int argc, char **argv)
             uint64_t panel_now=scope_clock_ns()/1000000;
             serial_control_set_run(&serial_controls,demo.screen.running);
             for(i=0;i<2;++i)serial_control_set_encoder_mode(&serial_controls,(unsigned)i,
-                demo.position_mode[i]||demo.waveform_loaded||demo_signal_menu_encoder(&demo,(DemoControl)i));
+                demo.position_mode[i]||demo_signal_panel_scale(live_settings(),(unsigned)i)==CONTROL_SCALE_OFF||
+                demo.waveform_loaded||demo_signal_menu_encoder(&demo,(DemoControl)i));
             serial_control_metrics(&serial_controls,&panel);
-            if(panel_now>=restore_retry_ms){
-                for(i=0;i<2;++i)if(restored_scale[i]>=0)serial_control_set_scale(&serial_controls,(unsigned)i,restored_scale[i]);
-                restore_retry_ms=panel_now+100;
-            }
+            sync_panel_ranges(&panel,panel_now);
             if(update_panel_battery(&panel,panel_now))invalidate();
             if(!demo.waveform_loaded)for(i=0;i<2;++i)if((panel.scale_valid&(1U<<i))&&
                 restored_scale[i]<0 &&
-                demo_signal_scale_mv(demo.scale_index[i])!=panel.scale_mv[i]){
+                demo_signal_panel_scale(&demo,(unsigned)i)!=panel.scale_mv[i]){
                 demo_signal_accept_scale(&demo,(unsigned)i,panel.scale_mv[i]);invalidate();}
         }
         if(capture_pipeline){CaptureRequest request;CaptureMetrics metrics;
-            int restoring=restored_scale[0]>=0 || restored_scale[1]>=0;
+            int restoring=restored_scale[0]>0 || restored_scale[1]>0;
             if(!restoring && restore_capture_pending){demo_signal_force_trigger(&demo);restore_capture_pending=0;}
             capture_request_from_demo(&demo,&request);
             if(restoring || demo.waveform_loaded||demo.screen.browser_visible)request.running=0;

@@ -140,6 +140,7 @@ static void test_response_capture(void)
     assert(request.debug.wave[0]==SIGNAL_WAVE_SINE && request.debug.frequency_hz==100);
     assert(!request.response_enabled[0]);
     f.sequence=1;f.sample_rate_hz=65536;f.fft_size=1024;f.calibration_mask=1;
+    f.volts_per_code[0]=f.volts_per_code[1]=.02;
     f.fundamental_hz[0]=1000;f.fundamental_amplitude[0]=1;f.rms[0]=sqrt(.5);
     capture_display_apply(&demo,&f);
     f.sequence=2;f.fundamental_hz[0]=10000;f.fundamental_amplitude[0]=.5;f.rms[0]=sqrt(.125);
@@ -182,6 +183,16 @@ static void test_external_trigger_marker(void)
     assert(demo_signal_set_option(&demo,DEMO_MENU_PROCESSING,1,3));
     capture_request_from_demo(&demo,&r);
     assert(r.filter_level[0]==2 && r.filter_level[1]==3);
+    demo.persistence_index=2;
+    for(f.sequence=1;f.sequence<=8;++f.sequence)capture_display_apply(&demo,&f);
+    assert(demo.history_count==8);
+    demo.trigger_edge_index=1;++f.sequence;capture_display_apply(&demo,&f);
+    assert(demo.history_count==1);
+    ++f.sequence;capture_display_apply(&demo,&f);assert(demo.history_count==2);
+    demo.trigger_source_index=1;++f.sequence;capture_display_apply(&demo,&f);
+    assert(demo.history_count==1);
+    demo.trigger_voltage+=.1;++f.sequence;capture_display_apply(&demo,&f);
+    assert(demo.history_count==1);
 }
 
 static void test_adc_vertical_ranges(void)
@@ -225,6 +236,8 @@ static void test_adc_vertical_ranges(void)
     assert(fabs(request.adc_volts_per_code[0]-buffer.volts_per_code[0]*10)<1e-12);
     assert(fabs(request.adc_volts_per_code[0]*request.pixels_per_volt[0]-
                 buffer.volts_per_code[0]*view.pixels_per_volt[0])<1e-12);
+    demo.screen.ch1_enabled=0;capture_request_from_demo(&demo,&request);
+    assert(fabs(request.adc_volts_per_code[0]-0.004*(1000000+510)/510*10)<1e-12);
 }
 
 static void test_menu_button_hold_release(void)
@@ -336,7 +349,54 @@ static void test_panel_owned_scale(void)
     assert(demo.probe_ten[0] == 1 && scale_request_count == 2);
     demo_signal_accept_scale(&demo, 0, 123);
     assert(demo.scale_index[0] == 5);
+    demo_signal_set_option(&demo,DEMO_MENU_CH1,0,0);
+    assert(demo_signal_panel_scale(&demo,0)==CONTROL_SCALE_OFF);
+    demo_signal_zoom_channel(&demo,0,-2);
+    assert(demo.scale_index[0]==3 && scale_request_count==2);
+    demo_signal_set_option(&demo,DEMO_MENU_CH1,3,0);
+    assert(demo.scale_index[0]==0 && scale_request_count==2);
+    demo_signal_accept_scale(&demo,0,5000);
+    demo_signal_accept_scale(&demo,0,CONTROL_SCALE_OFF);
+    assert(demo.scale_index[0]==0 && !demo.screen.ch1_enabled);
+    demo_signal_set_option(&demo,DEMO_MENU_CH1,0,1);
+    assert(demo_signal_panel_scale(&demo,0)==100);
     demo_signal_bind_scale_control(&demo, NULL, NULL);
+}
+
+static void test_panel_channel_enable(void)
+{
+    SerialControlMetrics metrics={0};ControlEvent event={.type=CONTROL_SCALE,.control=0,.value=CONTROL_SCALE_OFF};
+    demo_signal_init(&demo);demo.screen.ch1_enabled=0;
+    memset(&serial_controls,0,sizeof(serial_controls));scope_mutex_init(&serial_controls.mutex);
+    serial_controls.started=1;serial_controls.metrics.connected=1;serial_controls.metrics.scale_valid=3;
+    metrics.connected=1;metrics.scale_valid=3;metrics.scale_mv[0]=500;metrics.scale_mv[1]=1000;
+    panel_channel_enabled[0]=panel_channel_enabled[1]=-1;restored_scale[0]=restored_scale[1]=-1;restore_retry_ms=0;
+    sync_panel_ranges(&metrics,100);
+    assert(restored_scale[0]==CONTROL_SCALE_OFF && restored_scale[1]==1000);
+    assert(serial_controls.requested_scale[0]==CONTROL_SCALE_OFF && serial_controls.requested_scale[1]==1000);
+    control_queue_init(&controls);assert(control_queue_push(&controls,&event));drain_controls(101);
+    assert(restored_scale[0]==-1 && demo.scale_index[0]==2);
+    metrics.scale_mv[0]=CONTROL_SCALE_OFF;
+    demo_signal_zoom_channel(&demo,0,2);sync_panel_ranges(&metrics,200);
+    assert(restored_scale[0]==-1 && demo.scale_index[0]==4);
+    demo.screen.ch1_enabled=1;
+    event.value=500;assert(control_queue_push(&controls,&event));drain_controls(299);
+    assert(demo.scale_index[0]==4); /* An old range cannot replace the remembered OFF setting. */
+    sync_panel_ranges(&metrics,300);
+    assert(restored_scale[0]==2000 && serial_controls.requested_scale[0]==2000);
+    event.value=CONTROL_SCALE_OFF;
+    assert(control_queue_push(&controls,&event));drain_controls(301);
+    assert(restored_scale[0]==2000); /* Stale OFF cannot undo re-enable. */
+    event.value=2000;assert(control_queue_push(&controls,&event));drain_controls(302);
+    metrics.scale_mv[0]=2000;sync_panel_ranges(&metrics,400);
+    assert(restored_scale[0]==-1);
+    metrics.scale_mv[0]=0;sync_panel_ranges(&metrics,500); /* STM32 reset. */
+    assert(restored_scale[0]==2000);
+    restored_scale[0]=-1;metrics.connected=0;sync_panel_ranges(&metrics,600);
+    metrics.connected=1;metrics.scale_mv[0]=1000;sync_panel_ranges(&metrics,700);
+    assert(restored_scale[0]==2000);
+    serial_controls.started=0;scope_mutex_destroy(&serial_controls.mutex);control_queue_destroy(&controls);
+    restored_scale[0]=restored_scale[1]=-1;panel_channel_enabled[0]=panel_channel_enabled[1]=-1;
 }
 
 static void test_fft_fine_touch(void)
@@ -458,6 +518,7 @@ int main(void)
     test_fft_fine_touch();
     test_remote_commands();
     test_panel_owned_scale();
+    test_panel_channel_enable();
     demo_signal_init(&demo);
     demo_signal_zoom_time(&demo,-6); /* Default 10 kHz signal at 10 ms/div. */
     assert(strcmp(demo.screen.time_scale,"10 ms")==0);

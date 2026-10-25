@@ -50,29 +50,48 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
             r->zoom_offset_seconds=0;
         }
     }
+    if(d->baseline_active){
+        unsigned channel=(unsigned)d->response_channel;
+        r->baseline_mask=1U<<channel;r->calibration_mask=0;
+        r->running=1;r->trigger_mode=0;r->holdoff_samples=0;r->roll=0;r->spectrum_enabled=0;
+        r->duration_seconds=r->overview_duration_seconds=r->record_samples/(2.0*200000000);
+        r->zoom_offset_seconds=0;
+        if(d->adc_simulation){r->debug.wave[channel]=SIGNAL_WAVE_SINE;r->debug.amplitude[channel]=1e-12;}
+    }
     r->pan_fraction = 0.5 + (double)d->time_position / SCOPE_PLOT_WIDTH;
     if (r->pan_fraction < 0)
         r->pan_fraction = 0;
     if (r->pan_fraction > 1)
         r->pan_fraction = 1;
     for (ch = 0; ch < 2; ++ch) {
-        r->response_enabled[ch]=d->response_enabled[ch] && !d->response_active;
+        r->response_enabled[ch]=d->response_enabled[ch] && !d->response_active && !d->baseline_active;
         if(r->response_enabled[ch])r->response[ch]=d->response[ch+(d->adc_simulation?2:0)];
         if(r->response[ch].count<2)r->response_enabled[ch]=0;
         r->filter_level[ch] = (unsigned)d->filter_level[ch];
         r->zero_y[ch] = wave.zero_y[ch];
         r->pixels_per_volt[ch] = (SCOPE_PLOT_HEIGHT / 8.0) * 1000 / wave.mv_per_div[ch];
-        r->adc_volts_per_code[ch] = input_range_volts_per_code((unsigned)d->scale_index[ch]) *
-                                  (d->probe_ten[ch] ? 10 : 1);
+        r->adc_volts_per_code[ch] = demo_signal_adc_gain(d,ch);
     }
 }
 void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
 {
     int i;
+    if(d->baseline_active){
+        unsigned channel=(unsigned)d->response_channel;
+        if((f->baseline_mask&(1U<<channel)) && !(f->clipped_mask&(1U<<channel)))
+            demo_signal_baseline_observe(d,f->sequence,f->view_samples,f->mean[channel],f->rms[channel],f->volts_per_code[channel]);
+    }
     if(d->response_active){
         unsigned channel=(unsigned)d->response_channel;
-        double amplitude=f->fundamental_amplitude[channel];
+        ChannelBaseline *baseline=demo_signal_baseline(d,channel);
+        if(baseline->valid && f->volts_per_code[channel]>0 &&
+           fabs(f->volts_per_code[channel]-baseline->volts_per_code)>f->volts_per_code[channel]*1e-6){
+            d->response_active=0;demo_signal_notify(d,"RANGE CHANGED / REPEAT ZERO");demo_signal_refresh(d);
+        }
+        double amplitude=channel_baseline_amplitude(baseline,f->volts_per_code[channel],f->fft_size,
+            f->fundamental_amplitude[channel],f->mean[channel],f->rms[channel]);
         double variance=f->rms[channel]*f->rms[channel]-f->mean[channel]*f->mean[channel];
+        if(baseline->valid)variance=fmax(0,variance-baseline->noise_rms*baseline->noise_rms);
         if((f->calibration_mask&(1U<<channel)) && !(f->clipped_mask&(1U<<channel)) && amplitude>0 && variance>0 && amplitude*amplitude>1.2*variance &&
            f->fundamental_hz[channel]>=3.0*f->sample_rate_hz/f->fft_size &&
            f->fundamental_hz[channel]<0.4*f->sample_rate_hz)

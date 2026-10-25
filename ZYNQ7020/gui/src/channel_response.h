@@ -3,6 +3,15 @@
 #include <stddef.h>
 #define RESPONSE_POINTS 96
 typedef struct {
+    int valid;
+    double zero,noise_rms,volts_per_code;
+} ChannelBaseline;
+int channel_baseline_valid(const ChannelBaseline *baseline);
+/* Correct coherent sine amplitude for independent background noise in a Hann
+   FFT bin. Reject records whose added AC power is below the noise uncertainty. */
+double channel_baseline_amplitude(const ChannelBaseline *baseline,double gain,unsigned fft_size,
+                                  double amplitude,double mean,double rms);
+typedef struct {
     unsigned count;
     double reference;
     double frequency[RESPONSE_POINTS],db[RESPONSE_POINTS];

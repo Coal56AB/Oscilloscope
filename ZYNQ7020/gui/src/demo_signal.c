@@ -7,6 +7,7 @@
 #include "battery_level.h"
 #include "waveform_view.h"
 #include "control_protocol.h"
+#include "input_range.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -539,7 +540,8 @@ static void record_history(DemoSignal *demo)
         demo->probe_ten[0],demo->probe_ten[1],demo->coupling[0],demo->coupling[1],demo->time_index,demo->time_position,
         demo->zoom_time_index,demo->zoom_offset,demo->screen.zoom_enabled,demo->fft_enabled,demo->fft_split_height,
         demo->zoom_split_height,demo->filter_level[0],demo->filter_level[1],demo->intensity_coloring,
-        demo->response_enabled[0],demo->response_enabled[1],demo->adc_simulation,demo->acquisition_rate_hz};
+        demo->response_enabled[0],demo->response_enabled[1],demo->adc_simulation,demo->acquisition_rate_hz,
+        demo->trigger_source_index,demo->trigger_edge_index,demo->trigger_voltage,demo->trigger_mode_index};
     if(memcmp(demo->history_view,view,sizeof(view))){demo->history_count=0;memcpy(demo->history_view,view,sizeof(view));}
     for (i = 7; i > 0; --i) {
         memcpy(demo->history_ch1[i], demo->history_ch1[i - 1], sizeof(demo->ch1));
@@ -884,7 +886,7 @@ static int measurement_slot(const DemoSignal *demo, int id)
 
 static int menu_item_count(DemoMenu kind)
 {
-    if (kind == DEMO_MENU_MEASURE) return SCOPE_MEASURE_CATALOG_ITEMS + 1;
+    if (kind == DEMO_MENU_MEASURE) return SCOPE_MEASURE_CATALOG_ITEMS + 2;
     if (kind == DEMO_MENU_MAIN)
         return (int)(sizeof(main_items) / sizeof(main_items[0]));
     if (kind == DEMO_MENU_BROWSE_TYPE) return 2;
@@ -904,7 +906,7 @@ static int menu_item_count(DemoMenu kind)
     if (kind == DEMO_MENU_LAYOUT) return 7;
     if (kind == DEMO_MENU_PRESETS) return 5;
     if (kind == DEMO_MENU_PRESET) return 2;
-    if (kind == DEMO_MENU_RESPONSE) return 4;
+    if (kind == DEMO_MENU_RESPONSE) return 5;
     return 0;
 }
 
@@ -1010,11 +1012,16 @@ static int menu_disabled(const DemoSignal *d,DemoMenu kind,int row)
     if(kind==DEMO_MENU_CH1 || kind==DEMO_MENU_CH2)return row==4 && d->waveform_loaded;
     if(kind==DEMO_MENU_RESPONSE){
         unsigned count=demo_signal_response_curve((DemoSignal *)d,(unsigned)d->response_channel)->count;
-        return (row==1 && count<2) || (row==2 && !count);
+        const ChannelBaseline *b=demo_signal_baseline((DemoSignal *)d,(unsigned)d->response_channel);
+        double gain=d->adc_simulation?.02:demo_signal_adc_gain(d,(unsigned)d->response_channel);
+        int mismatch=b->valid && fabs(b->volts_per_code-gain)>gain*1e-6;
+        return (row==0 && (d->baseline_active || mismatch)) || (row==1 && count<2) || (row==2 && !count) ||
+            (row==3 && (count || !demo_signal_panel_scale(d,(unsigned)d->response_channel)));
     }
     if(kind==DEMO_MENU_PROCESSING)return d->waveform_loaded && (row==3 || row==5);
     if(kind==DEMO_MENU_MEASURE)return row==SCOPE_MEASURE_CATALOG_ITEMS?!d->measurement_count:
-        d->measurement_count==SCOPE_MEASURE_SLOTS && measurement_slot(d,catalog_id(row))<0;
+        row<SCOPE_MEASURE_CATALOG_ITEMS && d->measurement_count==SCOPE_MEASURE_SLOTS &&
+        measurement_slot(d,catalog_id(row))<0;
     if(kind==DEMO_MENU_FILES)return row>=3 && (!d->waveform_loaded || (row<5 && d->browse_count<2));
     if(kind==DEMO_MENU_LAYOUT)return ((row==2 || row==3) && d->screen.measurement_hidden) ||
         (row==6 && !d->fft_enabled && !d->screen.zoom_enabled);
@@ -1069,6 +1076,7 @@ static void refresh_menu(DemoSignal *demo)
         screen->menu_option_selected[i] = 0;
         screen->menu_stepper[i] = 0;
         screen->menu_disabled[i] = 0;
+        screen->menu_danger[i] = 0;
         screen->menu_option_disabled[i] = 0;
     }
     if (demo->menu_kind == DEMO_MENU_MAIN) {
@@ -1152,6 +1160,7 @@ static void refresh_menu(DemoSignal *demo)
             screen->menu_values[i] = measurement_slot(demo, id) >= 0 ? "REMOVE" : "ADD";
         }
         screen->menu_labels[SCOPE_MEASURE_CATALOG_ITEMS] = "REMOVE ALL";
+        screen->menu_labels[SCOPE_MEASURE_HIDE_INDEX] = screen->measurement_hidden?"SHOW":"HIDE";
     } else if (demo->menu_kind == DEMO_MENU_DISPLAY) {
         screen->menu_title = "DISPLAY";
         screen->menu_labels[0] = display_labels[0];
@@ -1234,7 +1243,17 @@ static void refresh_menu(DemoSignal *demo)
         screen->menu_labels[1]="AMPLITUDE CORRECTION";screen->menu_values[1]=on_off_names[demo->response_enabled[demo->response_channel]];
         set_menu_options(screen,1,on_off_names,2,demo->response_enabled[demo->response_channel]);
         screen->menu_labels[2]="CLEAR POINTS";screen->menu_values[2]="CLEAR";
-        screen->menu_labels[3]="EXIT CALIBRATION";screen->menu_values[3]="BACK";
+        screen->menu_danger[2]=1;
+        screen->menu_labels[3]="ZERO / NOISE";
+        ChannelBaseline *baseline=demo_signal_baseline(demo,(unsigned)demo->response_channel);
+        double gain=demo->adc_simulation?.02:demo_signal_adc_gain(demo,(unsigned)demo->response_channel);
+        if(baseline->valid && fabs(baseline->volts_per_code-gain)>gain*1e-6)screen->menu_values[0]="REMEASURE ZERO";
+        if(demo->baseline_active)snprintf(demo->baseline_text,sizeof(demo->baseline_text),"MEASURING %d / 4",demo->baseline_frames);
+        else if(demo_signal_response_curve(demo,(unsigned)demo->response_channel)->count)snprintf(demo->baseline_text,sizeof(demo->baseline_text),"CLEAR POINTS FIRST");
+        else if(baseline->valid)snprintf(demo->baseline_text,sizeof(demo->baseline_text),"%+.4g V / %.3g mV RMS",baseline->zero,baseline->noise_rms*1000);
+        else snprintf(demo->baseline_text,sizeof(demo->baseline_text),"SHORT INPUT / MEASURE");
+        screen->menu_values[3]=demo->baseline_text;
+        screen->menu_labels[4]="EXIT CALIBRATION";screen->menu_values[4]="BACK";
     } else if(demo->menu_kind==DEMO_MENU_FILES){
         static const char *labels[]={"SCREENSHOT","SAVE WAVE","SCREEN + WAVE","PREVIOUS FILE","NEXT FILE","CLOSE FILE"};
         screen->menu_title="FILES";
@@ -1441,6 +1460,38 @@ void demo_signal_refresh(DemoSignal *demo)
     update_text(demo, 1);
 }
 
+ChannelBaseline *demo_signal_baseline(DemoSignal *demo,unsigned channel)
+{
+    return channel<2?&demo->baseline[channel+(demo->adc_simulation?2:0)]:NULL;
+}
+
+double demo_signal_adc_gain(const DemoSignal *demo,unsigned channel)
+{
+    if(channel>=2)return 0;
+    return input_range_mask_volts_per_code(demo_signal_panel_scale(demo,channel)==CONTROL_SCALE_OFF?
+        0:input_range_relays((unsigned)demo->scale_index[channel]))*(demo->probe_ten[channel]?10:1);
+}
+
+void demo_signal_baseline_observe(DemoSignal *demo,uint64_t sequence,size_t samples,double mean,double rms,double gain)
+{
+    if(!demo->baseline_active || !samples || sequence==demo->baseline_seen_sequence ||
+       !isfinite(mean) || !isfinite(rms) || !isfinite(gain) || gain<=0)return;
+    demo->baseline_seen_sequence=sequence;
+    if(demo->baseline_frames && fabs(gain-demo->baseline_gain)>gain*1e-6){
+        demo->baseline_active=0;demo_signal_notify(demo,"RANGE CHANGED / REPEAT ZERO");return;
+    }
+    demo->baseline_gain=gain;demo->baseline_samples+=samples;
+    demo->baseline_sum+=mean*samples;demo->baseline_power+=rms*rms*samples;
+    if(++demo->baseline_frames>=4){
+        ChannelBaseline *b=demo_signal_baseline(demo,(unsigned)demo->response_channel);
+        b->zero=demo->baseline_sum/demo->baseline_samples;
+        b->noise_rms=sqrt(fmax(0,demo->baseline_power/demo->baseline_samples-b->zero*b->zero));
+        b->volts_per_code=gain;b->valid=1;demo->baseline_active=0;
+        demo_signal_notify(demo,"ZERO / NOISE SAVED");
+    }
+    update_text(demo,0);
+}
+
 void demo_signal_response_observe(DemoSignal *demo,uint64_t sequence,double frequency,double amplitude)
 {
     if(!demo->response_active || sequence==demo->response_seen_sequence)return;
@@ -1519,17 +1570,29 @@ void demo_signal_move_channel(DemoSignal *demo, int channel, int delta)
     update_text(demo, 1);
 }
 
+int demo_signal_panel_scale(const DemoSignal *demo, unsigned channel)
+{
+    if(channel>=2 || !(channel?demo->screen.ch2_enabled:demo->screen.ch1_enabled))return CONTROL_SCALE_OFF;
+    return demo_signal_scale_mv(demo->scale_index[channel]);
+}
+
+static int set_channel_scale(DemoSignal *demo, unsigned channel, int index)
+{
+    if (demo->request_scale && !demo->waveform_loaded && demo_signal_panel_scale(demo,channel)!=CONTROL_SCALE_OFF) {
+        if (!demo->request_scale(demo->scale_context,channel,demo_signal_scale_mv(index)))
+            demo_signal_notify(demo,"STM32 SCALE UNAVAILABLE");
+        return 0;
+    }
+    demo->scale_index[channel]=index;
+    return 1;
+}
+
 void demo_signal_zoom_channel(DemoSignal *demo, int channel, int steps)
 {
     int next;
     if (channel < 0 || channel > 1 || steps == 0) return;
     next = clamp(demo->scale_index[channel] + steps, 0, CONTROL_SCALE_COUNT - 1);
-    if (demo->request_scale && !demo->waveform_loaded) {
-        if (!demo->request_scale(demo->scale_context, (unsigned)channel, demo_signal_scale_mv(next)))
-            demo_signal_notify(demo, "STM32 SCALE UNAVAILABLE");
-        return;
-    }
-    demo->scale_index[channel] = next;
+    if(!set_channel_scale(demo,(unsigned)channel,next))return;
     demo_signal_notify(demo, channel ? "CH2 VOLTS / DIV" : "CH1 VOLTS / DIV");
     update_text(demo, 1);
 }
@@ -1544,7 +1607,8 @@ void demo_signal_bind_scale_control(DemoSignal *demo,
 void demo_signal_accept_scale(DemoSignal *demo, unsigned channel, int millivolts)
 {
     int index = control_scale_index(millivolts);
-    if (channel >= 2 || index < 0 || demo->waveform_loaded) return;
+    if (channel >= 2 || index < 0 || demo->waveform_loaded ||
+        demo_signal_panel_scale(demo,channel)==CONTROL_SCALE_OFF) return;
     if (demo->scale_index[channel] == index) return;
     demo->scale_index[channel] = index;
     update_text(demo, 1);
@@ -1613,7 +1677,7 @@ static void back_menu(DemoSignal *demo)
         open_menu(demo,DEMO_MENU_PRESETS,DEMO_MENU_SETUP);
     } else if(demo->menu_parent==DEMO_MENU_CH1 || demo->menu_parent==DEMO_MENU_CH2){
         DemoMenu parent=demo->menu_parent;
-        demo->response_active=0;demo->screen.response_visible=0;
+        demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;
         open_menu(demo,parent,DEMO_MENU_NONE);
     } else {
         close_menu(demo);
@@ -1698,6 +1762,8 @@ void demo_signal_init(DemoSignal *demo)
 
 void demo_signal_update_time(DemoSignal *demo, uint64_t now_ms)
 {
+    if(demo->baseline_active && !demo->external_capture && demo->adc_simulation)
+        demo_signal_baseline_observe(demo,now_ms/200+1,10000,-.01,sqrt(.0001+.0003),.02);
     if(demo->response_active){
         int next=6+(int)((now_ms-demo->response_started_ms)/1000%13);
         if(next!=demo->response_sim_index){demo->response_sim_index=next;update_text(demo,0);}
@@ -1781,11 +1847,7 @@ static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
         else if (item == 1) demo->coupling[channel] = value;
         else if (item == 2) demo->probe_ten[channel] = value;
         else if (item == 3) {
-            if (demo->request_scale && !demo->waveform_loaded) {
-                if (!demo->request_scale(demo->scale_context, (unsigned)channel,
-                                         demo_signal_scale_mv(value)))
-                    demo_signal_notify(demo, "STM32 SCALE UNAVAILABLE");
-            } else demo->scale_index[channel] = value;
+            set_channel_scale(demo,(unsigned)channel,value);
         }
     } else if (kind == DEMO_MENU_TRIGGER) {
         if (item == 0) demo->trigger_mode_index = value;
@@ -1863,7 +1925,7 @@ static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     }
     if (kind == DEMO_MENU_DEBUG) {
         if (item == 3) {
-            demo->adc_simulation = value;demo->response_active=0;
+            demo->adc_simulation = value;demo->response_active=demo->baseline_active=0;
             for(unsigned channel=0;channel<2;++channel)
                 if(demo_signal_response_curve(demo,channel)->count<2)demo->response_enabled[channel]=0;
         }
@@ -2112,7 +2174,9 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
         return remove ? DEMO_ACTION_BROWSE_DELETE : DEMO_ACTION_NONE;
     } else if (demo->menu_kind == DEMO_MENU_MEASURE) {
         measurement_docked = measurements_docked_at_bottom(demo);
-        if (demo->screen.measurement_clear_confirm) {
+        if (item == SCOPE_MEASURE_HIDE_INDEX) {
+            demo_signal_ui_toggle_measurements_visible(demo);
+        } else if (demo->screen.measurement_clear_confirm) {
             if (demo->screen.measurement_clear_choice) demo->measurement_count = 0;
             demo->screen.measurement_clear_confirm = 0;
         } else if (item == SCOPE_MEASURE_CATALOG_ITEMS) {
@@ -2179,14 +2243,20 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
     } else if ((demo->menu_kind==DEMO_MENU_CH1 || demo->menu_kind==DEMO_MENU_CH2) && item==4) {
         DemoMenu parent=demo->menu_kind;
         if(demo->waveform_loaded){demo_signal_notify(demo,"CLOSE SAVED WAVEFORM FIRST");return DEMO_ACTION_NONE;}
-        demo->response_active=0;
+        demo->response_active=demo->baseline_active=0;
         demo->response_channel=parent==DEMO_MENU_CH2;
         demo->screen.response_visible=1;
         open_menu(demo,DEMO_MENU_RESPONSE,parent);
     } else if(demo->menu_kind==DEMO_MENU_RESPONSE && item!=1){
         if(item==0){demo_signal_ui_toggle_run(demo);close_menu(demo);}
         else if(item==2){memset(demo_signal_response_curve(demo,(unsigned)demo->response_channel),0,sizeof(ChannelResponse));demo->response_enabled[demo->response_channel]=0;update_text(demo,0);}
-        else{demo->response_active=0;demo->screen.response_visible=0;back_menu(demo);}
+        else if(item==3){
+            demo->response_active=0;demo->baseline_active=!demo->baseline_active;
+            demo->baseline_frames=0;demo->baseline_seen_sequence=demo->external_frame_valid?demo->external_sequence:0;demo->baseline_samples=0;
+            demo->baseline_sum=demo->baseline_power=0;
+            demo_signal_notify(demo,demo->baseline_active?"MEASURING SHORTED INPUT":"ZERO / NOISE CANCELLED");update_text(demo,0);
+        }
+        else{demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;back_menu(demo);}
     } else {
         int short_list = demo->screen.menu_option_count[item]>0;
         if (short_list) {
@@ -2288,6 +2358,7 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
 void demo_signal_ui_toggle_run(DemoSignal *demo)
 {
     if(demo->screen.response_visible){
+        if(demo->baseline_active){demo->baseline_active=0;update_text(demo,0);return;}
         demo->response_active=!demo->response_active;
         demo->response_started_ms=demo->now_ms;demo->response_sim_index=6;
         demo->response_seen_sequence=0;update_text(demo,0);return;

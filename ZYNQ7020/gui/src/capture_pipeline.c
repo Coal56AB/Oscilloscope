@@ -116,6 +116,7 @@ static int process_frame(CapturePipeline *p, const CaptureBuffer *b,
                          request->zoom_offset_seconds * b->sample_rate_hz;
     view.skip_spectrum = !request->spectrum_enabled;
     view.calibration_mask=request->calibration_mask;
+    view.baseline_mask=request->baseline_mask;
     view.density_enabled = request->density_enabled;
     view.density_rows = request->density_rows;
     memcpy(view.filter_level, request->filter_level, sizeof(view.filter_level));
@@ -187,7 +188,7 @@ static void hardware_worker(void *context)
     double previous_gain[2] = {0};
     uint64_t expected = 0, next_trigger = 0, forced = 0, last_display = 0, batch_started = 0;
     unsigned rate_index = UINT32_MAX, depth = 0, shift, processed_revision = UINT32_MAX;
-    unsigned single_arm = UINT32_MAX;
+    unsigned single_arm = UINT32_MAX, previous_baseline_mask = 0;
     int have_retained = 0;
     unsigned drained = 0;
     debug.data = p->storage[3]; debug.capacity = CAPTURE_MAX_SAMPLES * 2;
@@ -209,11 +210,17 @@ static void hardware_worker(void *context)
         wanted_rate = capture_rate_index(fmax(request.duration_seconds, request.overview_duration_seconds),
                                          wanted_depth, request.roll);
         force = request.force_sequence != forced;
-        if (memcmp(&previous_debug, &request.debug, sizeof(previous_debug)) ||
+        int source_changed=memcmp(&previous_debug,&request.debug,sizeof(previous_debug)) ||
+            previous_baseline_mask!=request.baseline_mask;
+        if (source_changed ||
             memcmp(previous_gain, request.adc_volts_per_code, sizeof(previous_gain))) {
             capture_history_init(&history, p->storage[0], p->storage[0]+CAPTURE_MAX_SAMPLES*2, wanted_depth);
             last_display = 0; previous_debug = request.debug;
+            previous_baseline_mask=request.baseline_mask;
             memcpy(previous_gain, request.adc_volts_per_code, sizeof(previous_gain));
+            /* A retained normal capture must not be relabelled as a fresh
+               shorted-input measurement or as a different simulated source. */
+            if(source_changed && request.running)have_retained=0;
         }
         if ((request.running || force) && (wanted_rate != rate_index || wanted_depth != depth)) {
             shift = capture_payload_shift(osc_capture_rate(wanted_rate));
@@ -288,8 +295,8 @@ static void hardware_worker(void *context)
                             uint64_t first = candidate.first_sample + (uint64_t)pre;
                             if (first < next_trigger) first = next_trigger;
                             search.bytes -= (size_t)post * 2;
-                            triggered = capture_find_trigger(&search, request.trigger_channel, request.trigger_edge,
-                                request.trigger_voltage, 2, first, &candidate.trigger_sample);
+                            triggered = capture_find_trigger_filtered(&search, request.trigger_channel, request.trigger_edge,
+                                request.trigger_voltage, 2, request.filter_level[request.trigger_channel],first,&candidate.trigger_sample);
                         }
                     }
                     if (force && complete) {
@@ -445,6 +452,7 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
     if (r->running && !p->request.running) ++p->arm_revision;
     if (p->request.duration_seconds != r->duration_seconds ||
         p->request.calibration_mask != r->calibration_mask ||
+        p->request.baseline_mask != r->baseline_mask ||
         p->request.spectrum_enabled != r->spectrum_enabled ||
         p->request.density_enabled != r->density_enabled ||
         p->request.density_rows != r->density_rows ||

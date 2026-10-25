@@ -255,6 +255,33 @@ static void adc_level_test(void)
     atomic_store(&adc_pair,42u|(42u<<8));
 }
 
+static void baseline_fresh_capture_test(void)
+{
+    double gain[2]={0.004,0.004},zero[2]={128,128};
+    CaptureRequest request={0};
+    static DisplayFrame frame;
+    CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);
+    assert(p);
+    request.running=1;request.duration_seconds=0.2e-6;request.record_samples=128;
+    request.pan_fraction=0.5;request.zero_y[0]=request.zero_y[1]=200;
+    request.pixels_per_volt[0]=request.pixels_per_volt[1]=100;
+    request.debug=(CaptureDebug){1,{SIGNAL_WAVE_SINE,SIGNAL_WAVE_SINE},1000000};
+    capture_pipeline_request(p,&request);
+    atomic_store(&available,1);assert(wait_frame(p,&frame));
+    for(unsigned ch=0;ch<2;++ch){
+        uint64_t sequence=frame.sequence;
+        request.baseline_mask=1U<<ch;
+        request.debug.amplitude[ch]=1e-12;
+        capture_pipeline_request(p,&request);
+        scope_sleep_ms(50);
+        assert(!capture_pipeline_frame(p,&frame)); /* No relabelled retained signal. */
+        atomic_store(&available,1);assert(wait_frame(p,&frame));
+        assert(frame.baseline_mask==(1U<<ch) && frame.sequence!=sequence);
+        assert(fabs(frame.mean[ch])<.05 && frame.rms[ch]<.05);
+    }
+    capture_pipeline_destroy(p);assert(!atomic_load(&leased));
+}
+
 int main(void)
 {
     ZynqCaptureSource source;
@@ -404,6 +431,7 @@ int main(void)
         complete_force_frame_test();
     }
     adc_level_test();
+    baseline_fresh_capture_test();
     startup_capture_test();
     return 0;
 }

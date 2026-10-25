@@ -21,6 +21,7 @@ typedef struct {
     ChannelResponse response[2];
     int response_enabled[2];
     unsigned calibration_mask;
+    unsigned baseline_mask;
 } CaptureRequest;
 typedef struct {
     uint64_t blocks, bytes, dropped, overwritten, display_replaced, processing_ns, waveforms;

@@ -79,6 +79,17 @@ static void calibration_test(void)
     assert(settings_document_decode(&decoded,data));
     assert(!memcmp(&document,&decoded,sizeof(document)));
     {
+        char *end=data+strlen(data);
+        for(unsigned line=0;line<4;++line){
+            if(end>data && end[-1]=='\n')--end;
+            while(end>data && end[-1]!='\n')--end;
+        }
+        *end=0;data[strlen("OSCILL_SETUP ")]='2';
+        assert(settings_document_decode(&decoded,data));
+        assert(!memcmp(document.response,decoded.response,sizeof(document.response)));
+        for(unsigned bank=0;bank<4;++bank)assert(!decoded.baseline[bank].valid);
+    }
+    {
         size_t used=(size_t)snprintf(data,sizeof(data),"OSCILL_SETUP 1 65\n0 0\n");
         for(unsigned slot=0;slot<6;++slot)for(unsigned field=0;field<65;++field)
             used+=(size_t)snprintf(data+used,sizeof(data)-used,"%.17g%c",document.last.values[field],field==64?'\n':' ');
@@ -90,6 +101,43 @@ static void calibration_test(void)
     for(unsigned t=0;t<13000;t+=200)demo_signal_update_time(&demo,t);
     assert(demo.response[2].count==13 && demo.response[0].count==0 && demo.response[1].count==0);
     assert(demo.response[2].db[12]<-19);
+}
+
+static void baseline_test(void)
+{
+    ChannelBaseline b={1,.2,.1,.01};
+    double measured=sqrt(1+6*.01/1024);
+    assert(channel_baseline_valid(&b));
+    assert(fabs(channel_baseline_amplitude(&b,.01,1024,measured,.4,sqrt(.51+.16))-1)<1e-12);
+    assert(channel_baseline_amplitude(&b,.02,1024,measured,.4,sqrt(.51+.16))==0);
+    assert(channel_baseline_amplitude(&b,.01,1024,.1,.2,sqrt(.04+.01))==0);
+    b.noise_rms=-.1;assert(!channel_baseline_valid(&b));
+    demo_signal_init(&demo);demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);
+    demo_signal_ui_menu_select(&demo,4);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    demo_signal_rotate(&demo,DEMO_ENC_CH1,-1); /* Skip unavailable CORRECTION/CLEAR. */
+    assert(demo.screen.menu_selected==3);
+    demo_signal_press(&demo,DEMO_ENC_CH1,0);assert(demo.baseline_active);
+    for(unsigned i=1;i<=4;++i){
+        demo_signal_baseline_observe(&demo,i,100,.2,sqrt(.04+.01),.02);
+        demo_signal_baseline_observe(&demo,i,100,100,100,.02); /* Cached frame cannot count twice. */
+    }
+    assert(!demo.baseline_active && demo.baseline_frames==4);
+    b=*demo_signal_baseline(&demo,0);
+    assert(b.valid && fabs(b.zero-.2)<1e-12 && fabs(b.noise_rms-.1)<1e-12);
+    assert(!demo.baseline[0].valid && !demo.baseline[3].valid);
+    SettingsDocument document={0},decoded={0};char data[SETTINGS_STORE_BYTES];
+    demo_settings_capture(&demo,&document.last);document.baseline[2]=b;
+    assert(settings_document_encode(&document,data,sizeof(data)) && settings_document_decode(&decoded,data));
+    assert(!memcmp(document.baseline,decoded.baseline,sizeof(document.baseline)));
+    demo_signal_ui_menu_select(&demo,0);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    demo_signal_response_observe(&demo,10,1000,1);
+    demo_signal_response_observe(&demo,11,10000,.5);
+    demo_signal_ui_toggle_run(&demo);assert(!demo.response_active && demo.response[2].count==2);
+    demo_signal_ui_toggle_run(&demo);assert(demo.response_active && demo.response[2].count==2);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_RESPONSE);demo_signal_ui_menu_select(&demo,2);
+    assert(demo.screen.menu_danger[2] && !demo.screen.menu_disabled[2] && demo.screen.menu_disabled[3]);
+    demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
+    assert(!demo.response[2].count && demo.baseline[2].valid);
 }
 
 static void navigation_test(void)
@@ -112,4 +160,4 @@ static void navigation_test(void)
     demo_signal_press(&demo,DEMO_ENC_TIME,0);demo_signal_rotate(&demo,DEMO_ENC_TIME,1);assert(demo.zoom_offset>0);
 }
 
-int main(void){correction_test();processor_test();calibration_test();navigation_test();return 0;}
+int main(void){correction_test();processor_test();calibration_test();baseline_test();navigation_test();return 0;}
