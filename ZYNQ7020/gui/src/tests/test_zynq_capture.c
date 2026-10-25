@@ -269,13 +269,13 @@ static void zero_correction_test(void)
     capture_pipeline_request(p,&request);atomic_store(&available,1);assert(wait_frame(p,&frame));
     uint64_t sequence=frame.sequence;double mean=frame.mean[0];int y=frame.y[0][512];
     request.running=0;
-    request.baseline[0]=(ChannelBaseline){1,-.3,.01,.004};
-    request.baseline[1]=(ChannelBaseline){1,-.3,.01,.008}; /* Other relay stage: do not apply. */
+    request.baseline[0][0]=(ChannelBaseline){1,-.3,.01,.004};
+    request.baseline[1][0]=(ChannelBaseline){1,-.3,.01,.008}; /* Other relay stage: do not apply. */
     capture_pipeline_request(p,&request);assert(wait_frame(p,&frame));
     assert(frame.sequence==sequence && fabs(frame.mean[0]-(mean+.3))<1e-10);
     assert(fabs(frame.mean[1]-mean)<1e-10 && frame.y[0][512]==y-30);
     assert(fabs(frame.rms[0]-fabs(mean+.3))<1e-10);
-    request.baseline[0].zero=0;
+    request.baseline[0][0].zero=0;
     capture_pipeline_request(p,&request);assert(wait_frame(p,&frame));
     assert(frame.sequence==sequence && frame.mean[0]==mean && frame.y[0][512]==y);
     assert(memory[64]==42); /* The source codes and nominal source zero are unchanged. */
@@ -285,7 +285,7 @@ static void zero_correction_test(void)
     request.record_samples=400;request.pan_fraction=.5;request.trigger_mode=1;request.trigger_voltage=.2;
     request.zero_y[0]=request.zero_y[1]=200;request.pixels_per_volt[0]=request.pixels_per_volt[1]=100;
     request.debug=(CaptureDebug){1,{SIGNAL_WAVE_SINE,SIGNAL_WAVE_SINE},1000000};
-    request.baseline[0]=(ChannelBaseline){CHANNEL_ZERO_VALID,.4,0,.02,0};
+    request.baseline[0][0]=(ChannelBaseline){CHANNEL_ZERO_VALID,.4,0,.02,0};
     capture_pipeline_request(p,&request);atomic_store(&available,2);assert(wait_frame(p,&frame));
     assert(frame.trigger_sample!=CAPTURE_NO_TRIGGER && fabs(frame.trigger_x-512)<1e-6);
     assert(abs(frame.y[0][512]-180)<=2); /* Threshold is .2 V after the same .4 V zero correction. */

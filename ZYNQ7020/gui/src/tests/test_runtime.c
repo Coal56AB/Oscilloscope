@@ -594,7 +594,7 @@ static void noisy_edge_test(void)
     }
     uint8_t saved[sizeof(data)];memcpy(saved,data,sizeof(data));
     for(unsigned start=32;start<512;start+=7)for(unsigned edge=0;edge<2;++edge){
-        assert(capture_find_trigger_filtered(&b,0,edge,4.1,2,2,b.first_sample+start,&trigger));
+        assert(capture_find_trigger_filtered(&b,0,edge,4.1,2,2,0,b.first_sample+start,&trigger));
         double slope=cos(6.283185307179586*(trigger-b.first_sample)/100.);
         assert(edge==0?slope>0:slope<0);
     }

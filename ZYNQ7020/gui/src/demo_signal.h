@@ -4,6 +4,7 @@
 #include "scope_screen.h"
 #include "signal_generator.h"
 #include "channel_response.h"
+#include "input_range.h"
 #include <stddef.h>
 
 typedef enum {
@@ -114,7 +115,7 @@ typedef struct {
     int filter_level[2];
     int intensity_coloring;
     char layout_value_text[5][16];
-    double history_view[29];
+    double history_view[33];
     int persistence_index;
     int settings_available;
     int fft_enabled;
@@ -147,8 +148,11 @@ typedef struct {
     int startup_preset, preset_selected;
     unsigned preset_valid;
     ChannelResponse response[4]; /* Real CH1/CH2, then independent simulation curves. */
-    ChannelBaseline baseline[4];
+    ChannelBaseline baseline[4][INPUT_RANGE_STAGE_COUNT];
+    ChannelBaseline baseline_work[INPUT_RANGE_STAGE_COUNT];
     int baseline_active,baseline_frames;
+    int baseline_stage,baseline_original_scale,calibration_scale_target,calibration_scale_channel;
+    uint64_t baseline_scale_retry_ms,baseline_settle_ms;
     uint64_t baseline_seen_sequence,baseline_samples;
     double baseline_sum,baseline_power,baseline_gain;
     char baseline_text[2][64];
@@ -197,6 +201,7 @@ void demo_signal_refresh(DemoSignal *demo);
 void demo_signal_response_observe(DemoSignal *demo,uint64_t sequence,double frequency,double amplitude);
 void demo_signal_baseline_observe(DemoSignal *demo,uint64_t sequence,size_t samples,double mean,double rms,double gain);
 ChannelBaseline *demo_signal_baseline(DemoSignal *demo,unsigned channel);
+void demo_signal_baseline_cancel(DemoSignal *demo);
 double demo_signal_adc_gain(const DemoSignal *demo,unsigned channel);
 ChannelResponse *demo_signal_response_curve(DemoSignal *demo,unsigned channel);
 int demo_signal_response_enable(DemoSignal *demo,unsigned channel,int enabled);

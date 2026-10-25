@@ -10,6 +10,7 @@ typedef struct {
 int channel_baseline_valid(const ChannelBaseline *baseline);
 /* Voltage correction only for the measured ADC/probe gain. */
 double channel_baseline_zero(const ChannelBaseline *baseline,double gain);
+double channel_baseline_noise(const ChannelBaseline *baseline,double gain);
 /* Correct coherent sine amplitude for independent background noise in a Hann
    FFT bin. Reject records whose added AC power is below the noise uncertainty. */
 double channel_baseline_amplitude(const ChannelBaseline *baseline,double gain,unsigned fft_size,

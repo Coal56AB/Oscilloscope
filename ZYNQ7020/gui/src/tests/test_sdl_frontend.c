@@ -395,6 +395,12 @@ static void test_panel_channel_enable(void)
     restored_scale[0]=-1;metrics.connected=0;sync_panel_ranges(&metrics,600);
     metrics.connected=1;metrics.scale_mv[0]=1000;sync_panel_ranges(&metrics,700);
     assert(restored_scale[0]==2000);
+    assert(request_panel_scale(&serial_controls,0,500));
+    assert(restored_scale[0]==500 && serial_controls.requested_scale[0]==500);
+    event.value=2000;assert(control_queue_push(&controls,&event));drain_controls(701);
+    assert(restored_scale[0]==500 && demo.scale_index[0]==4);
+    event.value=500;assert(control_queue_push(&controls,&event));drain_controls(702);
+    assert(restored_scale[0]==-1 && demo.scale_index[0]==2);
     serial_controls.started=0;scope_mutex_destroy(&serial_controls.mutex);control_queue_destroy(&controls);
     restored_scale[0]=restored_scale[1]=-1;panel_channel_enabled[0]=panel_channel_enabled[1]=-1;
 }

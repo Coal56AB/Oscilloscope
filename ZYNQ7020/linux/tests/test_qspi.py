@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 CHECK = Path(__file__).resolve().parents[1] / 'check_qspi.py'
+ASSEMBLE = CHECK.with_name('assemble-qspi.py')
 
 
 class FlashBudgetTest(unittest.TestCase):
@@ -31,6 +32,21 @@ class FlashBudgetTest(unittest.TestCase):
 
     def test_empty_image_rejected(self):
         self.assertEqual(self.run_budget([1, 0]).returncode, 1)
+
+    def test_combined_image_excludes_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            boot, fit = b'boot-fixture', b'fit-fixture'
+            (root / 'BOOT.BIN').write_bytes(boot)
+            (root / 'image.bin').write_bytes(fit)
+            subprocess.run([sys.executable, str(ASSEMBLE), directory], check=True,
+                           capture_output=True)
+            image = (root / 'qspi.bin').read_bytes()
+            self.assertEqual(len(image), 0xf00000)
+            self.assertEqual(image[:len(boot)], boot)
+            self.assertEqual(image[0x520000:0x520000 + len(fit)], fit)
+            self.assertEqual(image[0x520000 + len(fit):],
+                             b'\xff' * (0xf00000 - 0x520000 - len(fit)))
 
 
 if __name__ == '__main__':

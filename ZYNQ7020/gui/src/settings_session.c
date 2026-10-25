@@ -8,7 +8,7 @@
 size_t settings_document_encode(const SettingsDocument *d,char *data,size_t capacity)
 {
     size_t used;unsigned slot,i;int n;
-    n=snprintf(data,capacity,"OSCILL_SETUP 4 %u\n%d %u\n",(unsigned)DEMO_SETTINGS_COUNT,d->startup,d->valid);
+    n=snprintf(data,capacity,"OSCILL_SETUP 5 %u\n%d %u\n",(unsigned)DEMO_SETTINGS_COUNT,d->startup,d->valid);
     if(n<0 || (size_t)n>=capacity)return 0;used=(size_t)n;
     for(slot=0;slot<6;++slot){
         const DemoSettings *s=slot?&d->preset[slot-1]:&d->last;
@@ -27,8 +27,8 @@ size_t settings_document_encode(const SettingsDocument *d,char *data,size_t capa
             if(n<0 || (size_t)n>=capacity-used)return 0;used+=(size_t)n;
         }
     }
-    for(slot=0;slot<4;++slot){
-        const ChannelBaseline *b=&d->baseline[slot];
+    for(slot=0;slot<4;++slot)for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage){
+        const ChannelBaseline *b=&d->baseline[slot][stage];
         if(!channel_baseline_valid(b))return 0;
         n=snprintf(data+used,capacity-used,"%d %.17g %.17g %.17g %.17g\n",b->valid,b->zero,b->noise_rms,b->volts_per_code,b->noise_volts_per_code);
         if(n<0 || (size_t)n>=capacity-used)return 0;used+=(size_t)n;
@@ -41,7 +41,7 @@ int settings_document_decode(SettingsDocument *d,const char *data)
     SettingsDocument candidate={0};unsigned version,count,slot,i;int consumed=0;
     char *end;double number;
     if(sscanf(data,"OSCILL_SETUP %u %u%n",&version,&count,&consumed)!=2 ||
-       !((version==1 && count==65) || ((version>=2 && version<=4) && count==DEMO_SETTINGS_COUNT)))return 0;
+       !((version==1 && count==65) || ((version>=2 && version<=5) && count==DEMO_SETTINGS_COUNT)))return 0;
     data+=consumed;
     number=strtod(data,&end);if(end==data || !isfinite(number) || number!=floor(number) || number<0 || number>5)return 0;
     candidate.startup=(int)number;data=end;
@@ -63,8 +63,8 @@ int settings_document_decode(SettingsDocument *d,const char *data)
         }
         if(!channel_response_valid(c))return 0;
     }
-    if(version>=3)for(slot=0;slot<4;++slot){
-        ChannelBaseline *b=&candidate.baseline[slot];
+    if(version>=3)for(slot=0;slot<4;++slot)for(unsigned stage=0;stage<(version>=5?INPUT_RANGE_STAGE_COUNT:1);++stage){
+        ChannelBaseline value={0},*b=&value;
         number=strtod(data,&end);if(end==data || !isfinite(number) || number!=floor(number) || number<0 || number>(version==3?1:3))return 0;
         b->valid=(int)number;data=end;
         b->zero=strtod(data,&end);if(end==data)return 0;data=end;
@@ -73,6 +73,19 @@ int settings_document_decode(SettingsDocument *d,const char *data)
         if(version>=4){b->noise_volts_per_code=strtod(data,&end);if(end==data)return 0;data=end;}
         else{b->noise_volts_per_code=b->volts_per_code;if(b->valid)b->valid=CHANNEL_ZERO_VALID|CHANNEL_NOISE_VALID;}
         if(!channel_baseline_valid(b))return 0;
+        if(version>=5)candidate.baseline[slot][stage]=value;
+        else for(unsigned kind=1;kind<=2;kind<<=1)if(value.valid&(int)kind){
+            unsigned index=(unsigned)candidate.last.values[slot%2?DEMO_SETTING_CH2_SCALE:DEMO_SETTING_CH1_SCALE];
+            unsigned target=input_range_stage(index);
+            double gain=kind==CHANNEL_ZERO_VALID?value.volts_per_code:value.noise_volts_per_code;
+            if(slot<2)for(unsigned k=0;k<INPUT_RANGE_STAGE_COUNT;++k){
+                double nominal=input_range_volts_per_code(input_range_stage_scale(k));
+                if(fabs(gain-nominal)<=gain*1e-6 || fabs(gain-10*nominal)<=gain*1e-6){target=k;break;}
+            }
+            ChannelBaseline *old=&candidate.baseline[slot][target];old->valid|=(int)kind;
+            if(kind==CHANNEL_ZERO_VALID){old->zero=value.zero;old->volts_per_code=value.volts_per_code;}
+            else{old->noise_rms=value.noise_rms;old->noise_volts_per_code=value.noise_volts_per_code;}
+        }
     }
     while(isspace((unsigned char)*data))++data;
     if(*data)return 0;
@@ -111,7 +124,12 @@ int settings_session_open(SettingsSession *s,DemoSignal *demo,const char *path)
         demo_settings_apply(demo,preset && (s->document.valid&(1U<<(preset-1)))?
                             &s->document.preset[preset-1]:&s->document.last);
         loaded=1;
-    }else{if(loaded)fprintf(stderr,"Settings: invalid document, using defaults\n");loaded=0;}
+    }else if(loaded){
+        fprintf(stderr,"Settings: cannot load document; preserving file without writes\n");
+        demo->settings_available=0;
+        demo_signal_notify(demo,"SETTINGS LOAD FAILED");
+        return 0;
+    }
     demo->startup_preset=s->document.startup;demo->preset_valid=s->document.valid;
     s->store=settings_store_open(path);
     demo->settings_available=s->store!=NULL;

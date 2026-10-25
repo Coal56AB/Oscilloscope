@@ -64,7 +64,8 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     if (r->pan_fraction > 1)
         r->pan_fraction = 1;
     for (ch = 0; ch < 2; ++ch) {
-        r->baseline[ch]=d->baseline[ch+(d->adc_simulation?2:0)];
+        memcpy(r->baseline[ch],d->baseline[ch+(d->adc_simulation?2:0)],sizeof(r->baseline[ch]));
+        r->range_stage[ch]=input_range_stage((unsigned)d->scale_index[ch]);
         r->response_enabled[ch]=d->response_enabled[ch] && !d->response_active && !d->baseline_active;
         if(r->response_enabled[ch])r->response[ch]=d->response[ch+(d->adc_simulation?2:0)];
         if(r->response[ch].count<2)r->response_enabled[ch]=0;
@@ -73,6 +74,7 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
         r->pixels_per_volt[ch] = (SCOPE_PLOT_HEIGHT / 8.0) * 1000 / wave.mv_per_div[ch];
         r->adc_volts_per_code[ch] = demo_signal_adc_gain(d,ch);
     }
+    if(d->calibration_scale_target>=0 || (d->baseline_active && d->now_ms<d->baseline_settle_ms))r->running=0;
 }
 void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
 {

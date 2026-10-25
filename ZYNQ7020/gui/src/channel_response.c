@@ -33,6 +33,12 @@ double channel_baseline_amplitude(const ChannelBaseline *b,double gain,unsigned 
     return power>0?sqrt(power):0;
 }
 
+double channel_baseline_noise(const ChannelBaseline *b,double gain)
+{
+    return channel_baseline_valid(b) && (b->valid&CHANNEL_NOISE_VALID) && isfinite(gain) && gain>0 &&
+        fabs(gain-b->noise_volts_per_code)<=gain*1e-6?b->noise_rms:0;
+}
+
 int channel_response_valid(const ChannelResponse *c)
 {
     unsigned i;

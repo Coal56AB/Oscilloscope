@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from qspi_layout import FLASH_BYTES, FIT_OFFSET, SETTINGS_BYTES, SETTINGS_OFFSET, image_layout
+from qspi_layout import FIT_OFFSET, SETTINGS_BYTES, SETTINGS_OFFSET, image_layout
 
 
 def require(condition, message):
@@ -26,7 +26,7 @@ def main(directory):
     names = ('BOOT.BIN', 'image.bin')
     layout = image_layout(zip(('boot', 'linux-fit'), (directory / name for name in names)))
     flash = (directory / 'qspi.bin').read_bytes()
-    require(len(flash) == FLASH_BYTES, 'QSPI length')
+    require(len(flash) == SETTINGS_OFFSET, 'QSPI firmware length (settings excluded)')
     end = 0
     for part, name in zip(layout, names):
         data = (directory / name).read_bytes()
@@ -41,7 +41,7 @@ def main(directory):
             'QSPI boot/FIT offsets')
     require(end == SETTINGS_OFFSET and SETTINGS_BYTES == 0x100000,
             'QSPI settings layout')
-    require(flash[end:] == b'\xff' * (len(flash) - end), 'QSPI settings padding')
+    require(len(flash[end:]) == 0, 'QSPI must not contain settings')
     fit = (directory / 'image.bin').read_bytes()
     require(len(fit) >= 40, 'Truncated FIT header')
     require(struct.unpack_from('>I', fit)[0] == 0xd00dfeed, 'FIT header')

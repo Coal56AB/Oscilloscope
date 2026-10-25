@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "settings_store.h"
 #include "scope_thread.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,8 +43,8 @@ int settings_store_default_path(char *path,size_t capacity)
 int settings_store_read(const char *path,char *data,size_t capacity)
 {
     FILE *file=open_file(path,"rb");size_t size;int ok;
-    if(!file)return 0;
-    size=fread(data,1,capacity,file);ok=!ferror(file)&&size<capacity;
+    if(!file)return errno==ENOENT?0:-1;
+    size=fread(data,1,capacity,file);ok=!ferror(file)&&size>0&&size<capacity;
     if(ok)data[size]=0;
     if(fclose(file))ok=0;
     return ok?(int)size:-1;

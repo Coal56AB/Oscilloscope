@@ -223,7 +223,35 @@ static void persistence_test(void)
     settings_session_close(&session,&demo);assert(!remove(path));
 }
 
+static void preserve_unreadable_settings_test(void)
+{
+    SettingsSession session;SettingsDocument document={0};
+    char path[1200],data[SETTINGS_STORE_BYTES],actual[SETTINGS_STORE_BYTES];size_t size;
+    const char *directory=getenv("TEMP");if(!directory)directory="/tmp";
+    snprintf(path,sizeof(path),"%s/oscill-settings-invalid-%lu.conf",directory,(unsigned long)process_id());
+    demo_signal_init(&demo);demo_settings_capture(&demo,&document.last);
+    size=settings_document_encode(&document,data,sizeof(data));assert(size);
+    for(unsigned variant=0;variant<4;++variant){
+        size_t bytes=variant==0?0:variant==1?size/2:variant==2?size:sizeof(data);
+        FILE *file;
+        if(variant==2)data[strlen("OSCILL_SETUP ")]='6';
+        if(variant==3)memset(data,'x',sizeof(data));
+        file=fopen(path,"wb");assert(file);
+        assert(fwrite(data,1,bytes,file)==bytes);assert(!fclose(file));
+        demo_signal_init(&demo);assert(!settings_session_open(&session,&demo,path));
+        assert(!session.store && !demo.settings_available);
+        demo.adc_simulation=0;demo.filter_level[0]=3;
+        assert(!settings_session_save(&session,&demo,0));
+        settings_session_poll(&session,&demo);settings_session_close(&session,&demo);
+        file=fopen(path,"rb");assert(file);
+        assert(fread(actual,1,sizeof(actual),file)==bytes && fgetc(file)==EOF);
+        assert(!memcmp(data,actual,bytes));assert(!fclose(file));
+    }
+    assert(!remove(path));
+}
+
 int main(void)
 {
-    controls_test();availability_test();menu_encoder_test();document_test();persistence_test();return 0;
+    controls_test();availability_test();menu_encoder_test();document_test();persistence_test();
+    preserve_unreadable_settings_test();return 0;
 }

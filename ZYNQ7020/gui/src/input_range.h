@@ -1,6 +1,16 @@
 #ifndef INPUT_RANGE_H
 #define INPUT_RANGE_H
 #include "control_protocol.h"
+#define INPUT_RANGE_STAGE_COUNT 3
+static inline unsigned input_range_stage(unsigned index)
+{
+    return index<2?0:index<5?1:2;
+}
+static inline unsigned input_range_stage_scale(unsigned stage)
+{
+    static const unsigned indices[INPUT_RANGE_STAGE_COUNT]={0,2,5};
+    return stage<INPUT_RANGE_STAGE_COUNT?indices[stage]:0;
+}
 
 /* DiffMeasure.SchDoc: a high output opens the NC shunt of its resistor. */
 static inline unsigned input_range_relays(unsigned index)

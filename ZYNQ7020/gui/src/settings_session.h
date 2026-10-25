@@ -6,7 +6,7 @@ typedef struct {
     DemoSettings last,preset[5];
     unsigned valid;int startup;
     ChannelResponse response[4];
-    ChannelBaseline baseline[4];
+    ChannelBaseline baseline[4][INPUT_RANGE_STAGE_COUNT];
 } SettingsDocument;
 typedef struct {
     SettingsDocument document;
@@ -16,7 +16,7 @@ typedef struct {
 size_t settings_document_encode(const SettingsDocument *document,char *data,size_t capacity);
 int settings_document_decode(SettingsDocument *document,const char *data);
 /* Apply validated user fields; the frontend synchronizes hardware afterwards.
-   Missing/invalid data keeps defaults. */
+   A missing file keeps defaults. Unreadable/invalid data is never overwritten. */
 int settings_session_open(SettingsSession *session,DemoSignal *demo,const char *path);
 int settings_session_save(SettingsSession *session,DemoSignal *demo,unsigned slot);
 int settings_session_load(SettingsSession *session,DemoSignal *demo,unsigned slot);

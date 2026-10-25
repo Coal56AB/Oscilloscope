@@ -6,6 +6,7 @@ void demo_settings_capture(const DemoSignal *demo, DemoSettings *s)
 #define CAPTURE(name,member,type,low,high) s->values[DEMO_SETTING_##name] = demo->member;
     DEMO_SETTING_FIELDS(CAPTURE)
 #undef CAPTURE
+    if(demo->baseline_active || demo->calibration_scale_target>=0)s->values[demo->calibration_scale_channel?DEMO_SETTING_CH2_SCALE:DEMO_SETTING_CH1_SCALE]=demo->baseline_original_scale;
 }
 
 int demo_settings_valid(const DemoSettings *s)
@@ -33,7 +34,7 @@ int demo_settings_apply(DemoSignal *demo, const DemoSettings *s)
 #undef APPLY
     demo->trigger_preview_voltage=demo->trigger_voltage;
     demo->screen.trigger_preview=0;
-    demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;
+    demo->response_active=demo->baseline_active=0;demo->calibration_scale_target=-1;demo->screen.response_visible=0;
     for(int channel=0;channel<2;++channel)
         if(demo_signal_response_curve(demo,(unsigned)channel)->count<2)demo->response_enabled[channel]=0;
     demo->history_count=demo->screen.history_count=0;

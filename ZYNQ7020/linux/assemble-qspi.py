@@ -1,7 +1,7 @@
-"""Assemble the fixed 16 MiB QSPI image without accessing hardware."""
+"""Assemble the QSPI firmware area, excluding persistent settings."""
 import argparse
 from pathlib import Path
-from qspi_layout import FLASH_BYTES, image_layout
+from qspi_layout import SETTINGS_OFFSET, image_layout
 
 
 def main():
@@ -11,7 +11,7 @@ def main():
     images = args.images.resolve()
     paths = [images / name for name in ('BOOT.BIN', 'image.bin')]
     layout = image_layout(zip(('boot', 'linux-fit'), paths))
-    image = bytearray(b'\xff') * FLASH_BYTES
+    image = bytearray(b'\xff') * SETTINGS_OFFSET
     for part, path in zip(layout, paths):
         data = path.read_bytes()
         if len(data) != part['bytes']:

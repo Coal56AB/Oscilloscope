@@ -13,6 +13,7 @@ typedef struct {
     int density_enabled;
     unsigned density_rows;
     unsigned filter_level[2];
+    double noise_rms[2];
     const ChannelResponse *response[2];
     const double *corrected[2];
     unsigned calibration_mask;
@@ -55,6 +56,6 @@ int capture_find_trigger(const CaptureBuffer *buffer, unsigned channel, unsigned
                          uint64_t first_allowed, uint64_t *sample);
 /* Trigger on the same centered sample filter as the displayed channel. */
 int capture_find_trigger_filtered(const CaptureBuffer *buffer,unsigned channel,unsigned edge,
-                                  double volts,unsigned hysteresis_codes,unsigned filter_level,
+                                  double volts,unsigned hysteresis_codes,unsigned filter_level,double noise_rms,
                                   uint64_t first_allowed,uint64_t *sample);
 #endif

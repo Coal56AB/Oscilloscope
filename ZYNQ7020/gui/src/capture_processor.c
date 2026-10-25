@@ -107,15 +107,18 @@ int capture_find_trigger(const CaptureBuffer *b,unsigned ch,unsigned edge,double
     return find_trigger(b,ch,edge,volts,hysteresis,first_allowed,sample,NULL);
 }
 int capture_find_trigger_filtered(const CaptureBuffer *b,unsigned ch,unsigned edge,double volts,unsigned hysteresis,
-                                  unsigned filter,uint64_t first_allowed,uint64_t *sample)
+                                  unsigned filter,double noise_rms,uint64_t first_allowed,uint64_t *sample)
 {
     double *workspace;size_t count,i;int found;
-    if(!filter)return capture_find_trigger(b,ch,edge,volts,hysteresis,first_allowed,sample);
+    if(!isfinite(noise_rms) || noise_rms<0)return 0;
+    if(!filter && noise_rms<=0)return capture_find_trigger(b,ch,edge,volts,hysteresis,first_allowed,sample);
     if(!capture_buffer_valid(b) || ch>=2 || filter>3 || b->bytes/2>SIZE_MAX/(2*sizeof(double)))return 0;
     count=b->bytes/2;workspace=malloc(count*2*sizeof(double));if(!workspace)return 0;
     for(i=0;i<count;++i)workspace[i]=b->data[2*i+ch];
-    signal_filter_apply(workspace,count,filter,workspace+count);
-    found=find_trigger(b,ch,edge,volts,hysteresis,first_allowed,sample,workspace+count);
+    double *input=workspace,*output=workspace+count,*swap;
+    if(noise_rms>0){signal_filter_denoise(input,count,noise_rms/b->volts_per_code[ch],output);swap=input;input=output;output=swap;}
+    if(filter){signal_filter_apply(input,count,filter,output);input=output;}
+    found=find_trigger(b,ch,edge,volts,hysteresis,first_allowed,sample,input);
     free(workspace);return found;
 }
 static void source_range(const void *context, size_t first, size_t end, unsigned channel,
@@ -274,12 +277,34 @@ static void filtered_range(const void *context, size_t first, size_t end, unsign
 
 /* Filtering precedes every display representation. Optional response correction
    is a separate derived record; the immutable ADC input still drives triggering. */
+typedef struct { const CaptureBuffer *buffer;const double *values;double noise; } AutoEnvelope;
+static double auto_value(const void *context,size_t sample,unsigned channel)
+{
+    return filtered_value(((const AutoEnvelope *)context)->values,sample,channel);
+}
+static void auto_range(const void *context,size_t first,size_t end,unsigned channel,double *low,double *high)
+{
+    filtered_range(((const AutoEnvelope *)context)->values,first,end,channel,low,high);
+}
+static void auto_envelope(const void *context,size_t first,size_t end,unsigned channel,double *low,double *high)
+{
+    const AutoEnvelope *source=context;
+    source_envelope(source->buffer,first,end,channel,low,high);
+    /* Retain unresolved signal excursions, suppress only the measured noise
+       envelope. Never replace a real fast square wave with its decimated base. */
+    if(*high-*low<=8*source->noise){
+        size_t last=end*2,count=source->buffer->bytes/2;
+        if(last>count)last=count;
+        filtered_range(source->values,first*2,last,channel,low,high);
+    }
+}
 static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *f,
                            unsigned ch, double first, double samples)
 {
     WaveformSource source = {0};
     size_t count = b->bytes / 2, i;
     double *workspace = NULL;
+    AutoEnvelope auto_source={0};
     const double *filtered = v->corrected[ch];
     int ok = 1;
     unsigned rows = v->density_rows ? v->density_rows : SCOPE_PLOT_HEIGHT;
@@ -293,13 +318,15 @@ static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayF
         source.context=(void *)filtered;source.range=filtered_range;source.value=filtered_value;
         source.envelope=NULL;source.envelope_samples=0;
     }
-    if (v->filter_level[ch]) {
+    if (v->filter_level[ch] || v->noise_rms[ch]>0) {
         if (count > SIZE_MAX / (2 * sizeof(*workspace))) return 0;
         workspace = malloc(2 * count * sizeof(*workspace));
         if (!workspace) return 0;
-        filtered = workspace + count;
         for (i = 0; i < count; ++i) workspace[i] = v->corrected[ch]?v->corrected[ch][i]:sample_voltage(b, i, ch);
-        signal_filter_apply(workspace, count, v->filter_level[ch], workspace+count);
+        double *input=workspace,*output=workspace+count,*swap;
+        if(v->noise_rms[ch]>0){signal_filter_denoise(input,count,v->noise_rms[ch],output);swap=input;input=output;output=swap;}
+        if(v->filter_level[ch]){signal_filter_apply(input,count,v->filter_level[ch],output);input=output;}
+        filtered=input;
         source.context = filtered;
         source.range = filtered_range;
         source.value = filtered_value;
@@ -307,6 +334,11 @@ static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayF
            through a time-domain filter or overlay its smoothed result. */
         source.envelope = NULL;
         source.envelope_samples = 0;
+        if(b->peaks && !v->filter_level[ch] && !v->corrected[ch]){
+            auto_source=(AutoEnvelope){b,filtered,v->noise_rms[ch]};
+            source.context=&auto_source;source.range=auto_range;source.value=auto_value;
+            source.envelope=auto_envelope;source.envelope_samples=2;
+        }
     }
     waveform_view_reduce(&source, first, samples, ch, v->zero_y[ch], v->pixels_per_volt[ch],
                          SCOPE_PLOT_WIDTH, f->y[ch], f->y_min[ch], f->y_max[ch]);
@@ -343,7 +375,8 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
     uint64_t start_ns = scope_clock_ns();
     if (!capture_buffer_valid(b) || !v || !f)
         return 0;
-    if(v->density_rows>SCOPE_PLOT_HEIGHT || v->filter_level[0]>3 || v->filter_level[1]>3)return 0;
+    if(v->density_rows>SCOPE_PLOT_HEIGHT || v->filter_level[0]>3 || v->filter_level[1]>3 ||
+       !isfinite(v->noise_rms[0]) || !isfinite(v->noise_rms[1]) || v->noise_rms[0]<0 || v->noise_rms[1]<0)return 0;
     if (v->display_samples != 0) {
         double first, end;
         if (!isfinite(v->display_first) || !isfinite(v->display_samples) || v->display_samples <= 0)

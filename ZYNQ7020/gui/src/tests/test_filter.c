@@ -36,6 +36,23 @@ static void kernel_test(void)
     }
 }
 
+static void denoise_test(void)
+{
+    double source[4096],result[4096],manual[4096],input_error=0,output_error=0;
+    unsigned random=7;
+    for(unsigned i=0;i<4096;++i){random=random*1664525u+1013904223u;source[i]=(i<2048?-1:1)+((int)(random>>24)-127.5)/512;}
+    signal_filter_denoise(source,4096,.1444,result);
+    for(unsigned i=32;i<4064;++i)if(i<2028 || i>2068){
+        double expected=i<2048?-1:1;
+        input_error+=(source[i]-expected)*(source[i]-expected);output_error+=(result[i]-expected)*(result[i]-expected);
+    }
+    assert(output_error<input_error*.25);
+    assert(result[2047]==source[2047] && result[2048]==source[2048]);
+    signal_filter_apply(result,4096,3,manual);assert(manual[2047]>-.2 && manual[2048]<.2);
+    signal_filter_denoise(source,4096,0,result);assert(!memcmp(source,result,sizeof(source)));
+    source[20]=NAN;signal_filter_denoise(source,4096,.1444,result);assert(isnan(result[20]));
+}
+
 static double plateau_error(const DisplayFrame *frame)
 {
     unsigned x, count = 0;
@@ -98,6 +115,12 @@ static void processor_test(void)
         assert(!memcmp(original, data, sizeof(data)) && filtered.sequence == 47);
     }
     assert(previous < plateau_error(&raw) * .2);
+    view.filter_level[0]=0;view.noise_rms[0]=.1761;
+    assert(capture_process(&buffer,&view,&filtered));
+    assert(plateau_error(&filtered)<plateau_error(&raw)*.7);
+    assert(!memcmp(raw.fft,filtered.fft,sizeof(raw.fft)) && !memcmp(raw.rms,filtered.rms,sizeof(raw.rms)));
+    assert(!memcmp(raw.y[1],filtered.y[1],sizeof(raw.y[1])) && !memcmp(original,data,sizeof(data)));
+    view.noise_rms[0]=0;view.filter_level[0]=3;
     /* Unknown native extrema must not repaint noise over the filtered curve. */
     for (i = 0; i < sizeof(peaks); i += 4) {
         peaks[i] = peaks[i+1] = 0; peaks[i+2] = peaks[i+3] = 255;
@@ -105,6 +128,10 @@ static void processor_test(void)
     buffer.peaks = peaks;
     assert(capture_process(&buffer, &view, &filtered));
     for (i = 0; i < SCOPE_PLOT_WIDTH; ++i) assert(!filtered.peak_strength[0][i]);
+    view.filter_level[0]=0;view.noise_rms[0]=.1761;
+    assert(capture_process(&buffer,&view,&filtered));
+    for(i=0;i<SCOPE_PLOT_WIDTH;++i)assert(filtered.peak_strength[0][i]); /* Strong unresolved peaks survive AUTO. */
+    view.noise_rms[0]=0;view.filter_level[0]=3;
     buffer.peaks = NULL;
     view.filter_level[0] = 0;
     assert(capture_process(&buffer, &view, &filtered));
@@ -176,6 +203,6 @@ static void stopped_pipeline_test(void)
 
 int main(void)
 {
-    kernel_test(); processor_test(); stopped_pipeline_test();
+    kernel_test(); denoise_test(); processor_test(); stopped_pipeline_test();
     return 0;
 }

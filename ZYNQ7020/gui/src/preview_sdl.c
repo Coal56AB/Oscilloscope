@@ -71,7 +71,9 @@ static uint64_t pc_activity_until;
 
 static int request_panel_scale(void *context, unsigned channel, int millivolts)
 {
-    return serial_control_set_scale(context, channel, millivolts);
+    int queued=serial_control_set_scale(context,channel,millivolts);
+    if(queued){restored_scale[channel]=millivolts;restore_retry_ms=0;}
+    return queued;
 }
 
 static void update_pc_console(uint64_t now)
@@ -984,8 +986,14 @@ static void remote_state(FILE *response)
         demo.screen.measurement_hidden,mx,my,mw,mh);
     fprintf(response,"\"panel_scale_valid\":%u,\"ch1_panel_scale_mv\":%d,\"ch2_panel_scale_mv\":%d,",
         panel.scale_valid,panel.scale_mv[0],panel.scale_mv[1]);
-    fprintf(response,"\"zero_measuring\":%d,\"noise_measuring\":%d,\"zero_frames\":%d,",demo.baseline_active==CHANNEL_ZERO_VALID,demo.baseline_active==CHANNEL_NOISE_VALID,demo.baseline_frames);
+    fprintf(response,"\"zero_measuring\":%d,\"noise_measuring\":%d,\"zero_frames\":%d,\"calibration_range\":%d,\"calibration_returning\":%d,",demo.baseline_active==CHANNEL_ZERO_VALID,demo.baseline_active==CHANNEL_NOISE_VALID,demo.baseline_frames,demo.baseline_stage,demo.calibration_scale_target>=0);
     for(channel=0;channel<2;++channel){ChannelBaseline *b=demo_signal_baseline(&demo,(unsigned)channel);
+        unsigned zero_ranges=0,noise_ranges=0,bank=(unsigned)channel+(demo.adc_simulation?2:0);
+        for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage){
+            if(demo.baseline[bank][stage].valid&CHANNEL_ZERO_VALID)zero_ranges|=1U<<stage;
+            if(demo.baseline[bank][stage].valid&CHANNEL_NOISE_VALID)noise_ranges|=1U<<stage;
+        }
+        fprintf(response,"\"ch%d_zero_ranges\":%u,\"ch%d_noise_ranges\":%u,",channel+1,zero_ranges,channel+1,noise_ranges);
         fprintf(response,"\"ch%d_zero_known\":%d,\"ch%d_noise_known\":%d,\"ch%d_zero\":%.9g,\"ch%d_noise_rms\":%.9g,",
             channel+1,!!(b->valid&CHANNEL_ZERO_VALID),channel+1,!!(b->valid&CHANNEL_NOISE_VALID),channel+1,b->zero,channel+1,b->noise_rms);}
     fprintf(response,"\"startup_preset\":%d,\"preset_valid\":%u,",demo.startup_preset,demo.preset_valid);
@@ -1082,7 +1090,7 @@ static int remote_command(const char *command, FILE *response, void *context)
             memset(demo_signal_response_curve(&demo,channel-1),0,sizeof(ChannelResponse));
             demo.response_enabled[channel-1]=0;demo_signal_refresh(&demo);
         }else if(!strcmp(operation,"exit")){
-            demo.response_active=demo.baseline_active=0;demo.screen.response_visible=0;demo_signal_ui_dismiss_menu(&demo);demo_signal_refresh(&demo);
+            demo_signal_baseline_cancel(&demo);demo.response_active=0;demo.screen.response_visible=0;demo_signal_ui_dismiss_menu(&demo);demo_signal_refresh(&demo);
         }else return 0;
     }
     else if(sscanf(command,"set %63s %lf%n",key,&value,&n)==2&&command[n]=='\0'&&remote_set(key,value)){}

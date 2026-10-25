@@ -82,11 +82,23 @@ static void acquisition_worker(void *context)
 }
 /* Keep the acquired codes and their nominal zero immutable. Apply the current
    zero to a metadata view, including when rerendering a retained STOP record. */
+static const ChannelBaseline *capture_baseline(const CaptureRequest *request,const CaptureBuffer *b,unsigned ch)
+{
+    for(unsigned i=0;i<INPUT_RANGE_STAGE_COUNT;++i){
+        unsigned stage=request->debug.enabled?request->range_stage[ch]:i;
+        const ChannelBaseline *cal=&request->baseline[ch][stage];
+        double gain=b->volts_per_code[ch];
+        if(((cal->valid&CHANNEL_ZERO_VALID) && fabs(cal->volts_per_code-gain)<=gain*1e-6) ||
+           ((cal->valid&CHANNEL_NOISE_VALID) && fabs(cal->noise_volts_per_code-gain)<=gain*1e-6))return cal;
+        if(request->debug.enabled)break;
+    }
+    return NULL;
+}
 static CaptureBuffer calibrated_buffer(const CaptureBuffer *b,const CaptureRequest *request)
 {
     CaptureBuffer result=*b;
     for(unsigned ch=0;ch<2;++ch)if(!(request->baseline_mask&(1U<<ch))){
-        double zero=channel_baseline_zero(&request->baseline[ch],b->volts_per_code[ch]);
+        double zero=channel_baseline_zero(capture_baseline(request,b,ch),b->volts_per_code[ch]);
         if(zero)result.zero_code[ch]+=zero/b->volts_per_code[ch];
     }
     return result;
@@ -131,6 +143,8 @@ static int process_frame(CapturePipeline *p, const CaptureBuffer *raw,
     view.skip_spectrum = !request->spectrum_enabled;
     view.calibration_mask=request->calibration_mask;
     view.baseline_mask=request->baseline_mask;
+    if(!request->baseline_mask && !request->calibration_mask)for(unsigned ch=0;ch<2;++ch)
+        view.noise_rms[ch]=channel_baseline_noise(capture_baseline(request,raw,ch),raw->volts_per_code[ch]);
     view.density_enabled = request->density_enabled;
     view.density_rows = request->density_rows;
     memcpy(view.filter_level, request->filter_level, sizeof(view.filter_level));
@@ -310,7 +324,8 @@ static void hardware_worker(void *context)
                             if (first < next_trigger) first = next_trigger;
                             search.bytes -= (size_t)post * 2;
                             triggered = capture_find_trigger_filtered(&search, request.trigger_channel, request.trigger_edge,
-                                request.trigger_voltage, 2, request.filter_level[request.trigger_channel],first,&candidate.trigger_sample);
+                                request.trigger_voltage, 2, request.filter_level[request.trigger_channel],
+                                request.baseline_mask || request.calibration_mask?0:channel_baseline_noise(capture_baseline(&request,&candidate,(unsigned)request.trigger_channel),candidate.volts_per_code[request.trigger_channel]),first,&candidate.trigger_sample);
                         }
                     }
                     if (force && complete) {
@@ -454,9 +469,11 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
         return;
     for (ch = 0; ch < 2; ++ch)
         if (!isfinite(r->zero_y[ch]) || !isfinite(r->pixels_per_volt[ch]) || r->filter_level[ch] > 3 ||
-            !channel_baseline_valid(&r->baseline[ch]) ||
+            r->range_stage[ch]>=INPUT_RANGE_STAGE_COUNT ||
             (r->response_enabled[ch] && (!channel_response_valid(&r->response[ch]) || r->response[ch].count<2)))
             return;
+    for(unsigned ch=0;ch<2;++ch)for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage)
+        if(!channel_baseline_valid(&r->baseline[ch][stage]))return;
     if (!isfinite(r->overview_duration_seconds) || r->overview_duration_seconds < 0 ||
         !isfinite(r->zoom_offset_seconds) || !isfinite(r->trigger_voltage) ||
         r->trigger_channel < 0 || r->trigger_channel > 1 ||
@@ -469,6 +486,7 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
         p->request.calibration_mask != r->calibration_mask ||
         p->request.baseline_mask != r->baseline_mask ||
         memcmp(p->request.baseline,r->baseline,sizeof(r->baseline)) ||
+        memcmp(p->request.range_stage,r->range_stage,sizeof(r->range_stage)) ||
         p->request.spectrum_enabled != r->spectrum_enabled ||
         p->request.density_enabled != r->density_enabled ||
         p->request.density_rows != r->density_rows ||

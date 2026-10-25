@@ -143,6 +143,12 @@ static void uppercase_filename(char destination[DEMO_BROWSE_NAME], const char *s
     destination[i] = '\0';
 }
 
+static double calibrated_noise(const DemoSignal *demo,unsigned ch)
+{
+    if(demo->baseline_active || demo->response_active)return 0;
+    return channel_baseline_noise(&demo->baseline[ch+(demo->adc_simulation?2:0)][input_range_stage((unsigned)demo->scale_index[ch])],.02);
+}
+
 static double volts_per_div(const DemoSignal *demo, int channel)
 {
     return demo_signal_scale_mv(demo->scale_index[channel]) *
@@ -330,7 +336,7 @@ static int trigger_fraction(const DemoSignal *demo, double *fraction)
     double amplitude = channel ? 1.60 : 1.20;
     if (!(channel ? demo->screen.ch2_enabled : demo->screen.ch1_enabled)) return 0;
     *fraction = (demo->trigger_voltage+channel_baseline_zero(
-                    &demo->baseline[channel+(demo->adc_simulation?2:0)],.02)) / amplitude +
+                    &demo->baseline[channel+(demo->adc_simulation?2:0)][input_range_stage((unsigned)demo->scale_index[channel])],.02)) / amplitude +
                 (demo->coupling[channel] == 1 ? 0.5 : 0.0);
     return *fraction > 0.01 && *fraction < 0.99;
 }
@@ -426,7 +432,7 @@ static void generator_source_range(const void *context, size_t first, size_t end
                                    unsigned channel, double *minimum, double *maximum)
 {
     const DemoSignal *demo = context;
-    const double *values = (demo->filter_level[channel] || demo->response_enabled[channel]) ? demo->filtered_samples[channel] : demo->source_samples[channel];
+    const double *values = (demo->filter_level[channel] || demo->response_enabled[channel] || calibrated_noise(demo,(unsigned)channel)>0) ? demo->filtered_samples[channel] : demo->source_samples[channel];
     size_t i;
     *minimum = *maximum = values[first];
     for (i = first + 1; i < end; ++i) {
@@ -460,23 +466,30 @@ static void render_generator_view(DemoSignal *demo, double start_us, double us_p
         double scale = PIXELS_PER_DIV / volts_per_div(demo, x);
         double zero = channel_zero(demo, x) +
                       (demo->coupling[x] ? (x ? 1.60 : 1.20) * scale * 0.5 : 0.0) +
-                      channel_baseline_zero(&demo->baseline[x+(demo->adc_simulation?2:0)],.02)*scale;
+                      channel_baseline_zero(&demo->baseline[x+(demo->adc_simulation?2:0)][input_range_stage((unsigned)demo->scale_index[x])],.02)*scale;
         demo->screen.density_levels[x] = NULL;
         demo->screen.connections[x] = NULL;
         demo->screen.peak_detect = 0;
+        double noise=calibrated_noise(demo,(unsigned)x);
+        const double *input=demo->source_samples[x];double *work=NULL;
         if(demo->response_enabled[x]){
-            double *work=malloc(demo->source_count*sizeof(double));
-            memcpy(demo->filtered_samples[x],demo->source_samples[x],demo->source_count*sizeof(double));
-            if(work){
-                memcpy(work,demo->source_samples[x],demo->source_count*sizeof(double));
-                channel_response_correct(work,demo->source_count,1e6/demo->source_step_us,demo_signal_response_curve(demo,(unsigned)x));
-                signal_filter_apply(work,demo->source_count,(unsigned)demo->filter_level[x],demo->filtered_samples[x]);
-                free(work);
+            memcpy(demo->filtered_samples[x],input,demo->source_count*sizeof(double));
+            channel_response_correct(demo->filtered_samples[x],demo->source_count,1e6/demo->source_step_us,demo_signal_response_curve(demo,(unsigned)x));
+            input=demo->filtered_samples[x];
+        }
+        if(noise>0){
+            work=malloc(demo->source_count*sizeof(double));
+            if(work){signal_filter_denoise(input,demo->source_count,noise,work);input=work;}
+        }
+        if(demo->filter_level[x]){
+            if(input==demo->filtered_samples[x]){
+                if(!work)work=malloc(demo->source_count*sizeof(double));
+                if(work){memcpy(work,input,demo->source_count*sizeof(double));input=work;}
             }
-        }else if (demo->filter_level[x])
-            signal_filter_apply(demo->source_samples[x], demo->source_count,
-                                (unsigned)demo->filter_level[x], demo->filtered_samples[x]);
-        demo->screen.density_source[x].context = (demo->filter_level[x] || demo->response_enabled[x]) ? demo->filtered_samples[x] : demo->source_samples[x];
+            if(input!=demo->filtered_samples[x])signal_filter_apply(input,demo->source_count,(unsigned)demo->filter_level[x],demo->filtered_samples[x]);
+        }else if(input!=demo->source_samples[x] && input!=demo->filtered_samples[x])memcpy(demo->filtered_samples[x],input,demo->source_count*sizeof(double));
+        free(work);
+        demo->screen.density_source[x].context = (demo->filter_level[x] || demo->response_enabled[x] || noise>0) ? demo->filtered_samples[x] : demo->source_samples[x];
         demo->screen.density_source[x].samples = demo->source_count;
         demo->screen.density_source[x].range = density_source_range;
         demo->screen.density_first = (start_us-demo->capture_start_us)/demo->source_step_us;
@@ -544,7 +557,9 @@ static void record_history(DemoSignal *demo)
         demo->zoom_split_height,demo->filter_level[0],demo->filter_level[1],demo->intensity_coloring,
         demo->response_enabled[0],demo->response_enabled[1],demo->adc_simulation,demo->acquisition_rate_hz,
         demo->trigger_source_index,demo->trigger_edge_index,demo->trigger_voltage,demo->trigger_mode_index,
-        demo->baseline[demo->adc_simulation?2:0].zero,demo->baseline[demo->adc_simulation?3:1].zero};
+        demo_signal_baseline(demo,0)->zero,demo_signal_baseline(demo,1)->zero,
+        demo_signal_baseline(demo,0)->noise_rms,demo_signal_baseline(demo,1)->noise_rms,
+        demo_signal_baseline(demo,0)->valid,demo_signal_baseline(demo,1)->valid};
     if(memcmp(demo->history_view,view,sizeof(view))){demo->history_count=0;memcpy(demo->history_view,view,sizeof(view));}
     for (i = 7; i > 0; --i) {
         memcpy(demo->history_ch1[i], demo->history_ch1[i - 1], sizeof(demo->ch1));
@@ -1004,6 +1019,13 @@ static int menu_value_count(const DemoSignal *demo)
 }
 
 /* Availability is shared by rendering, touch, the panel and remote settings. */
+static int calibration_has_kind(const DemoSignal *d,int flag)
+{
+    unsigned bank=(unsigned)d->response_channel+(d->adc_simulation?2:0);
+    for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage)if(d->baseline[bank][stage].valid&flag)return 1;
+    return 0;
+}
+
 static int menu_disabled(const DemoSignal *d,DemoMenu kind,int row)
 {
     if(kind==DEMO_MENU_PC)return row==1 || !d->pc_available;
@@ -1024,7 +1046,7 @@ static int menu_disabled(const DemoSignal *d,DemoMenu kind,int row)
     if(kind==DEMO_MENU_ZERO || kind==DEMO_MENU_NOISE){
         const ChannelBaseline *b=demo_signal_baseline((DemoSignal *)d,(unsigned)d->response_channel);
         int flag=kind==DEMO_MENU_ZERO?CHANNEL_ZERO_VALID:CHANNEL_NOISE_VALID;
-        return row==0?!demo_signal_panel_scale(d,(unsigned)d->response_channel):d->baseline_active || !(b->valid&flag);
+        return row==0?(!demo_signal_panel_scale(d,(unsigned)d->response_channel) || (!d->baseline_active && d->calibration_scale_target>=0)):d->baseline_active || !calibration_has_kind(d,flag);
     }
     if(kind==DEMO_MENU_PROCESSING)return d->waveform_loaded && (row==3 || row==5);
     if(kind==DEMO_MENU_MEASURE)return row==SCOPE_MEASURE_CATALOG_ITEMS?!d->measurement_count:
@@ -1257,10 +1279,10 @@ static void refresh_menu(DemoSignal *demo)
         double measured_gain=noise?baseline->noise_volts_per_code:baseline->volts_per_code;
         screen->menu_title=noise?(demo->response_channel?"CH2 NOISE":"CH1 NOISE"):(demo->response_channel?"CH2 ZERO":"CH1 ZERO");
         screen->menu_labels[0]=noise?"MEASURE NOISE":"MEASURE ZERO";
-        if(demo->baseline_active)snprintf(demo->baseline_text[noise],64,"MEASURING %d / 4",demo->baseline_frames);
+        if(demo->baseline_active)snprintf(demo->baseline_text[noise],64,"RANGE %d/3 / %d/4",demo->baseline_stage+1,demo->baseline_frames);
         else if(!(baseline->valid&flag))snprintf(demo->baseline_text[noise],64,"SHORT INPUT / MEASURE");
         else if(fabs(measured_gain-gain)>gain*1e-6)snprintf(demo->baseline_text[noise],64,"OTHER RANGE / MEASURE");
-        else snprintf(demo->baseline_text[noise],64,noise?"%.4g mV RMS / MEASURE":"%+.4g V / MEASURE",noise?baseline->noise_rms*1000:baseline->zero);
+        else snprintf(demo->baseline_text[noise],64,noise?"%.4g mV RMS / AUTO":"%+.4g V / APPLIED",noise?baseline->noise_rms*1000:baseline->zero);
         screen->menu_values[0]=demo->baseline_text[noise];
         screen->menu_labels[1]=noise?"RESET NOISE":"RESET ZERO";screen->menu_values[1]="RESET";screen->menu_danger[1]=1;
     } else if (demo->menu_kind == DEMO_MENU_RESPONSE) {
@@ -1480,7 +1502,7 @@ void demo_signal_refresh(DemoSignal *demo)
 
 ChannelBaseline *demo_signal_baseline(DemoSignal *demo,unsigned channel)
 {
-    return channel<2?&demo->baseline[channel+(demo->adc_simulation?2:0)]:NULL;
+    return channel<2?&demo->baseline[channel+(demo->adc_simulation?2:0)][input_range_stage((unsigned)demo->scale_index[channel])]:NULL;
 }
 
 double demo_signal_adc_gain(const DemoSignal *demo,unsigned channel)
@@ -1490,23 +1512,49 @@ double demo_signal_adc_gain(const DemoSignal *demo,unsigned channel)
         0:input_range_relays((unsigned)demo->scale_index[channel]))*(demo->probe_ten[channel]?10:1);
 }
 
+static void calibration_scale_tick(DemoSignal *demo)
+{
+    if(demo->calibration_scale_target<0)return;
+    unsigned ch=(unsigned)demo->calibration_scale_channel;
+    if(!demo->request_scale){demo->scale_index[ch]=demo->calibration_scale_target;demo->calibration_scale_target=-1;demo->baseline_settle_ms=demo->now_ms+50;update_text(demo,1);}
+    else if(demo->now_ms>=demo->baseline_scale_retry_ms){
+        demo->request_scale(demo->scale_context,ch,demo_signal_scale_mv(demo->calibration_scale_target));
+        demo->baseline_scale_retry_ms=demo->now_ms+100;
+    }
+}
+
+void demo_signal_baseline_cancel(DemoSignal *demo)
+{
+    if(!demo->baseline_active)return;
+    demo->baseline_active=0;demo->calibration_scale_target=demo->baseline_original_scale;
+    demo->baseline_scale_retry_ms=0;calibration_scale_tick(demo);
+}
+
 void demo_signal_baseline_observe(DemoSignal *demo,uint64_t sequence,size_t samples,double mean,double rms,double gain)
 {
-    if(!demo->baseline_active || !samples || sequence==demo->baseline_seen_sequence ||
-       !isfinite(mean) || !isfinite(rms) || !isfinite(gain) || gain<=0)return;
+    if(!demo->baseline_active || demo->calibration_scale_target>=0 || demo->now_ms<demo->baseline_settle_ms ||
+       input_range_stage((unsigned)demo->scale_index[demo->response_channel])!=(unsigned)demo->baseline_stage ||
+       !samples || sequence==demo->baseline_seen_sequence || !isfinite(mean) || !isfinite(rms) || !isfinite(gain) || gain<=0)return;
+    double expected=demo->adc_simulation?.02:demo_signal_adc_gain(demo,(unsigned)demo->response_channel);
+    if(fabs(gain-expected)>expected*1e-6)return; /* A queued frame from the preceding relay stage. */
     demo->baseline_seen_sequence=sequence;
-    if(demo->baseline_frames && fabs(gain-demo->baseline_gain)>gain*1e-6){
-        demo->baseline_active=0;demo_signal_notify(demo,"RANGE CHANGED / REPEAT ZERO");return;
-    }
     demo->baseline_gain=gain;demo->baseline_samples+=samples;
     demo->baseline_sum+=mean*samples;demo->baseline_power+=rms*rms*samples;
     if(++demo->baseline_frames>=4){
-        ChannelBaseline *b=demo_signal_baseline(demo,(unsigned)demo->response_channel);
-        double mean=demo->baseline_sum/demo->baseline_samples;
-        if(demo->baseline_active==CHANNEL_ZERO_VALID){b->zero=mean;b->volts_per_code=gain;b->valid|=CHANNEL_ZERO_VALID;}
-        else{b->noise_rms=sqrt(fmax(0,demo->baseline_power/demo->baseline_samples-mean*mean));b->noise_volts_per_code=gain;b->valid|=CHANNEL_NOISE_VALID;}
-        demo_signal_notify(demo,demo->baseline_active==CHANNEL_ZERO_VALID?"ZERO SAVED / APPLIED":"NOISE SAVED");
-        demo->baseline_active=0;
+        ChannelBaseline *b=&demo->baseline_work[demo->baseline_stage];
+        double average=demo->baseline_sum/demo->baseline_samples;
+        if(demo->baseline_active==CHANNEL_ZERO_VALID){b->zero=average;b->volts_per_code=gain;b->valid|=CHANNEL_ZERO_VALID;}
+        else{b->noise_rms=sqrt(fmax(0,demo->baseline_power/demo->baseline_samples-average*average));b->noise_volts_per_code=gain;b->valid|=CHANNEL_NOISE_VALID;}
+        if(++demo->baseline_stage==INPUT_RANGE_STAGE_COUNT){
+            unsigned bank=(unsigned)demo->response_channel+(demo->adc_simulation?2:0);
+            memcpy(demo->baseline[bank],demo->baseline_work,sizeof(demo->baseline_work));
+            demo_signal_notify(demo,demo->baseline_active==CHANNEL_ZERO_VALID?"ZERO SAVED / ALL RANGES":"NOISE SAVED / AUTO ACTIVE");
+            demo_signal_baseline_cancel(demo);
+        }else{
+            demo->baseline_frames=0;demo->baseline_samples=0;demo->baseline_sum=demo->baseline_power=0;
+            demo->calibration_scale_target=(int)input_range_stage_scale((unsigned)demo->baseline_stage);
+            demo->baseline_scale_retry_ms=0;calibration_scale_tick(demo);
+        }
     }
     update_text(demo,!demo->baseline_active);
 }
@@ -1632,6 +1680,12 @@ void demo_signal_accept_scale(DemoSignal *demo, unsigned channel, int millivolts
     int index = control_scale_index(millivolts);
     if (channel >= 2 || index < 0 || demo->waveform_loaded ||
         demo_signal_panel_scale(demo,channel)==CONTROL_SCALE_OFF) return;
+    if(channel==(unsigned)demo->calibration_scale_channel){
+        if(demo->calibration_scale_target>=0){
+            if(index!=demo->calibration_scale_target)return;
+            demo->calibration_scale_target=-1;demo->baseline_settle_ms=demo->now_ms+50;
+        }else if(demo->baseline_active && index!=demo->scale_index[channel])return;
+    }
     if (demo->scale_index[channel] == index) return;
     demo->scale_index[channel] = index;
     update_text(demo, 1);
@@ -1699,11 +1753,11 @@ static void back_menu(DemoSignal *demo)
     } else if(demo->menu_parent==DEMO_MENU_PRESETS){
         open_menu(demo,DEMO_MENU_PRESETS,DEMO_MENU_SETUP);
     } else if(demo->menu_parent==DEMO_MENU_CALIBRATION){
-        demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;
+        demo_signal_baseline_cancel(demo);demo->response_active=0;demo->screen.response_visible=0;
         open_menu(demo,DEMO_MENU_CALIBRATION,demo->response_channel?DEMO_MENU_CH2:DEMO_MENU_CH1);
     } else if(demo->menu_parent==DEMO_MENU_CH1 || demo->menu_parent==DEMO_MENU_CH2){
         DemoMenu parent=demo->menu_parent;
-        demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;
+        demo_signal_baseline_cancel(demo);demo->response_active=0;demo->screen.response_visible=0;
         open_menu(demo,parent,DEMO_MENU_NONE);
     } else {
         close_menu(demo);
@@ -1740,6 +1794,7 @@ void demo_signal_notify(DemoSignal *demo, const char *message)
 void demo_signal_init(DemoSignal *demo)
 {
     memset(demo, 0, sizeof(*demo));
+    demo->calibration_scale_target=-1;
     demo->screen.ch1_samples = demo->ch1;
     demo->screen.ch2_samples = demo->ch2;
     demo->screen.status_message = demo->status_text;
@@ -1788,6 +1843,7 @@ void demo_signal_init(DemoSignal *demo)
 
 void demo_signal_update_time(DemoSignal *demo, uint64_t now_ms)
 {
+    calibration_scale_tick(demo);
     if(demo->baseline_active && !demo->external_capture && demo->adc_simulation)
         demo_signal_baseline_observe(demo,now_ms/200+1,10000,-.01,sqrt(.0001+.0003),.02);
     if(demo->response_active){
@@ -1951,7 +2007,7 @@ static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     }
     if (kind == DEMO_MENU_DEBUG) {
         if (item == 3) {
-            demo->adc_simulation = value;demo->response_active=demo->baseline_active=0;
+            demo->adc_simulation = value;demo_signal_baseline_cancel(demo);demo->response_active=0;
             for(unsigned channel=0;channel<2;++channel)
                 if(demo_signal_response_curve(demo,channel)->count<2)demo->response_enabled[channel]=0;
         }
@@ -2269,7 +2325,7 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
     } else if ((demo->menu_kind==DEMO_MENU_CH1 || demo->menu_kind==DEMO_MENU_CH2) && item==4) {
         DemoMenu parent=demo->menu_kind;
         if(demo->waveform_loaded){demo_signal_notify(demo,"CLOSE SAVED WAVEFORM FIRST");return DEMO_ACTION_NONE;}
-        demo->response_active=demo->baseline_active=0;demo->screen.response_visible=0;
+        demo_signal_baseline_cancel(demo);demo->response_active=0;demo->screen.response_visible=0;
         demo->response_channel=parent==DEMO_MENU_CH2;
         open_menu(demo,DEMO_MENU_CALIBRATION,parent);
     } else if(demo->menu_kind==DEMO_MENU_CALIBRATION){
@@ -2279,14 +2335,25 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
         ChannelBaseline *b=demo_signal_baseline(demo,(unsigned)demo->response_channel);
         int flag=demo->menu_kind==DEMO_MENU_ZERO?CHANNEL_ZERO_VALID:CHANNEL_NOISE_VALID;
         if(item==0){
-            demo->response_active=0;demo->baseline_active=demo->baseline_active?0:flag;
+            demo->response_active=0;
+            if(demo->baseline_active)demo_signal_baseline_cancel(demo);
+            else{
+                demo->baseline_active=flag;demo->baseline_stage=0;
+                demo->calibration_scale_channel=demo->response_channel;
+                demo->baseline_original_scale=demo->scale_index[demo->response_channel];
+                memcpy(demo->baseline_work,demo->baseline[demo->response_channel+(demo->adc_simulation?2:0)],sizeof(demo->baseline_work));
+                demo->calibration_scale_target=(int)input_range_stage_scale(0);demo->baseline_scale_retry_ms=0;calibration_scale_tick(demo);
+            }
             demo->baseline_frames=0;demo->baseline_seen_sequence=demo->external_frame_valid?demo->external_sequence:0;demo->baseline_samples=0;
             demo->baseline_sum=demo->baseline_power=0;
             demo_signal_notify(demo,demo->baseline_active?"MEASURING SHORTED INPUT":"MEASUREMENT CANCELLED");update_text(demo,0);
         }else{
-            b->valid&=~flag;
-            if(flag==CHANNEL_ZERO_VALID){b->zero=0;b->volts_per_code=0;}
-            else{b->noise_rms=0;b->noise_volts_per_code=0;}
+            unsigned bank=(unsigned)demo->response_channel+(demo->adc_simulation?2:0);
+            for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage){
+                b=&demo->baseline[bank][stage];b->valid&=~flag;
+                if(flag==CHANNEL_ZERO_VALID){b->zero=0;b->volts_per_code=0;}
+                else{b->noise_rms=0;b->noise_volts_per_code=0;}
+            }
             demo->history_count=demo->screen.history_count=0;
             demo_signal_notify(demo,flag==CHANNEL_ZERO_VALID?"ZERO RESET":"NOISE RESET");update_text(demo,1);
         }
@@ -2393,7 +2460,7 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
 
 void demo_signal_ui_toggle_run(DemoSignal *demo)
 {
-    if(demo->baseline_active){demo->baseline_active=0;update_text(demo,0);return;}
+    if(demo->baseline_active){demo_signal_baseline_cancel(demo);update_text(demo,0);return;}
     if(demo->screen.response_visible){
         demo->response_active=!demo->response_active;
         demo->response_started_ms=demo->now_ms;demo->response_sim_index=6;

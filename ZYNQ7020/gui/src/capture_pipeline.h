@@ -2,6 +2,7 @@
 #define CAPTURE_PIPELINE_H
 #include "capture_processor.h"
 #include "capture_debug.h"
+#include "input_range.h"
 typedef struct CapturePipeline CapturePipeline;
 typedef struct {
     double duration_seconds, pan_fraction;
@@ -22,7 +23,8 @@ typedef struct {
     int response_enabled[2];
     unsigned calibration_mask;
     unsigned baseline_mask;
-    ChannelBaseline baseline[2];
+    ChannelBaseline baseline[2][INPUT_RANGE_STAGE_COUNT];
+    unsigned range_stage[2];
 } CaptureRequest;
 typedef struct {
     uint64_t blocks, bytes, dropped, overwritten, display_replaced, processing_ns, waveforms;

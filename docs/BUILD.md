@@ -122,7 +122,7 @@ Rootfs-overlay задаёт автозапуск, настройки порто�
 python3 ZYNQ7020/linux/assemble-qspi.py /absolute/release
 ```
 
-Сборщик проверяет размеры и формирует `qspi.bin` на 16 МиБ: `BOOT.BIN` с адреса 0, `image.bin` с 0x520000. Лимиты файлов — 0x500000 и 0x9e0000 байт соответственно. U-Boot сначала читает 40-байтовый заголовок FIT, проверяет его и длину в границах раздела, затем читает сам образ без пустого хвоста. Диапазон 0x500000–0x51ffff оставлен свободным; последние 1 МиБ от 0xf00000 отведены настройкам. U-Boot environment хранится в самом U-Boot. Это один системный слот, без A/B обновления.
+Сборщик проверяет размеры и формирует `qspi.bin` на 15 МиБ: `BOOT.BIN` с адреса 0, `image.bin` с 0x520000. Лимиты файлов — 0x500000 и 0x9e0000 байт соответственно. U-Boot сначала читает 40-байтовый заголовок FIT, проверяет его и длину в границах раздела, затем читает сам образ без пустого хвоста. Диапазон 0x500000–0x51ffff оставлен свободным; последние 1 МиБ от 0xf00000 отведены настройкам и в `qspi.bin` не входят. U-Boot environment хранится в самом U-Boot. Это один системный слот, без A/B обновления.
 
 Независимая проверка собранных файлов без устройства:
 
@@ -133,9 +133,10 @@ python3 ZYNQ7020/linux/tests/verify_release.py /absolute/release
 Проверка Linux/GUI в QEMU 10.2.0 с QSPI-образом:
 
 ```sh
+python3 -c "from pathlib import Path; Path('/absolute/build/qspi-emulation.bin').write_bytes(Path('/absolute/release/qspi.bin').read_bytes()+b'\xff'*0x100000)"
 qemu-system-arm -M xilinx-zynq-a9,boot-mode=qspi -m 512M -smp 1 \
   -kernel /absolute/buildroot/images/u-boot.elf \
-  -drive file=/absolute/release/qspi.bin,if=mtd,index=8,format=raw,snapshot=on \
+  -drive file=/absolute/build/qspi-emulation.bin,if=mtd,index=8,format=raw,snapshot=on \
   -display none -serial null -serial stdio -monitor none -nic none
 ```
 
