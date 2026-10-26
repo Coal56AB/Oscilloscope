@@ -26,7 +26,7 @@ module adc_stream_ip_tb;
         .s_axis_tdata(packed_data), .s_axis_tvalid(packed_valid), .s_axis_tready(packed_ready),
         .m_axis_tdata(fifo_data), .m_axis_tvalid(fifo_valid), .m_axis_tready(fifo_ready));
     axis_capture_frame #(.BLOCK_BYTES(1024)) frame_ip(sample_clk,stream_resetn,32'd960,rate,
-        fifo_data,fifo_valid,fifo_ready,frame_data,frame_keep,frame_valid,frame_ready,frame_last,divider!=0);
+        fifo_data,fifo_valid,fifo_ready,frame_data,frame_keep,frame_valid,frame_ready,frame_last,divider!=0,18'd0);
     adc_cdc_test cdc_ip(.s_axis_aclk(sample_clk), .s_axis_aresetn(stream_resetn),
         .m_axis_aclk(clk), .m_axis_aresetn(resetn),
         .s_axis_tdata(frame_data), .s_axis_tkeep(frame_keep), .s_axis_tlast(frame_last),
@@ -55,7 +55,9 @@ module adc_stream_ip_tb;
                 2: if(data!==blocks) $fatal(1,"sequence");
                 3: if(data!==blocks*(divider==0?480:240)) $fatal(1,"sample counter");
                 4: if(data!==(divider==0?64'd0:64'd2)) $fatal(1,"peak flag");
-                5,6,7: if(data!==0) $fatal(1,"reserved");
+                5: if(data!==(blocks?64'(blocks-1):64'd0)) $fatal(1,"summary sequence");
+                6: if(blocks && data[63:32]!==32'h31584d4d) $fatal(1,"summary magic");
+                7: if(data!==(blocks?{rate,32'd960}:64'd0)) $fatal(1,"summary size/rate");
                 default: begin
                     if(read+1>=written || data!=={expected[read+1],expected[read]})
                         $fatal(1,"data loss at %d",read);

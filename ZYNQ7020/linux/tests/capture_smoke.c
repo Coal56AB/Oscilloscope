@@ -30,7 +30,7 @@ static uint32_t hash_block(const volatile uint32_t *data, size_t bytes)
     return hash;
 }
 
-static int run(unsigned pass, unsigned rate_index)
+static int run(unsigned pass, unsigned rate_index,unsigned depth)
 {
     struct osc_capture_info info = {0};
     struct osc_capture_block block = {0};
@@ -39,7 +39,7 @@ static int run(unsigned pass, unsigned rate_index)
     uint32_t held = UINT32_MAX, hash = 0;
     uint64_t blocks = 0, previous = 0, gaps = 0;
     unsigned rate = osc_capture_rate(rate_index);
-    struct osc_capture_config config = {rate_index, capture_payload_shift(rate)};
+    struct osc_capture_config config = {rate_index, depth?capture_payload_shift_for_depth(rate,depth):capture_payload_shift(rate)};
     unsigned payload = 8u << config.payload_shift;
     double begin = 0, elapsed;
     int fd = open("/dev/oscill-capture", O_RDWR | O_NONBLOCK), result = 1;
@@ -72,6 +72,13 @@ static int run(unsigned pass, unsigned rate_index)
             block.bytes != payload || block.sample_rate_hz != rate ||
             block.first_sample != block.sequence * (payload / (rate_index?4:2)) ||
             (blocks && block.sequence <= previous)) goto out;
+        /* Read the userspace mapping after every lease, including slot
+           reuse. Its header must be as fresh as the driver's ioctl metadata. */
+        volatile uint32_t *header=(volatile uint32_t *)(memory+block.index*info.block_bytes);
+        if(header[0]!=0x5043534f || header[1]!=4 || header[2]!=block.bytes ||
+           header[3]!=block.sample_rate_hz ||
+           ((uint64_t)header[5]<<32|header[4])!=block.sequence ||
+           ((uint64_t)header[7]<<32|header[6])!=block.first_sample)goto out;
         if (blocks) gaps += block.sequence - previous - 1;
         previous = block.sequence;
         ++blocks;
@@ -102,8 +109,9 @@ out:
 int main(int argc, char **argv)
 {
     unsigned pass, rate = argc > 1 ? (unsigned)atoi(argv[1]) : 0;
+    unsigned depth=argc>2?(unsigned)atoi(argv[2]):0;
     if (!osc_capture_rate(rate)) return 2;
     for (pass = 1; pass <= 2; ++pass)
-        if (run(pass, rate)) return 1;
+        if (run(pass, rate,depth)) return 1;
     return 0;
 }

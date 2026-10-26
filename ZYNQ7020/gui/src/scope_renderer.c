@@ -2,7 +2,6 @@
 #include "scope_thread.h"
 #include <stdlib.h>
 #include <string.h>
-
 typedef struct {
     ScopeScreen screen;
     unsigned char *snapshot;
@@ -21,14 +20,14 @@ struct ScopeRenderer {
     size_t capacity;
     unsigned pending,working,ready,reading;
     uint64_t generation,frames,nanoseconds,output_nanoseconds;
-    int stop,failed,background;
+    int stop,failed;
     ScopeRenderFunction draw;
     ScopeRenderOutput output;
     void *output_context;
     ScopeRenderer *plot;
     const uint32_t *plot_pixels;
     uint64_t plot_generation,plot_ready_generation;
-    uint64_t plot_ready_id,presented_id,taken_id;
+    uint64_t plot_ready_id,presented_id,presented_at_ns,presented_count,taken_id;
 };
 
 static const void *relocate(const void *pointer,const ScopeRenderRegion *regions,
@@ -77,16 +76,13 @@ static void snapshot_screen(RenderSlot *slot,const ScopeScreen *screen,
 static void render_worker(void *context)
 {
     ScopeRenderer *r=context;
-    int priority_set=0;
     for(;;){
         unsigned slot;uint64_t started,drawn;int presented=0;
         scope_mutex_lock(&r->mutex);
         while(!r->pending && !r->stop)scope_condition_wait(&r->wake,&r->mutex,100);
         if(r->stop){scope_mutex_unlock(&r->mutex);return;}
         slot=r->pending;r->pending=0;r->working=slot;
-        int background=r->background;
         scope_mutex_unlock(&r->mutex);
-        if(background && !priority_set){scope_thread_background();priority_set=1;}
         started=scope_clock_ns();
         r->draw(r->slots[slot-1].pixels,SCOPE_WIDTH,&r->slots[slot-1].screen);
         release_leases(&r->slots[slot-1]);
@@ -105,7 +101,9 @@ static void render_worker(void *context)
         scope_mutex_lock(&r->mutex);
         uint64_t finished=scope_clock_ns();
         r->nanoseconds+=finished-started;r->output_nanoseconds+=finished-drawn;++r->frames;
-        if(presented)r->presented_id=r->slots[slot-1].screen.plot_id;
+        if(presented && r->presented_id!=r->slots[slot-1].screen.plot_id){
+            r->presented_id=r->slots[slot-1].screen.plot_id;r->presented_at_ns=finished;++r->presented_count;
+        }
         r->working=0;r->ready=slot;
         scope_mutex_unlock(&r->mutex);
     }
@@ -183,7 +181,6 @@ int scope_renderer_enable_plot_layer(ScopeRenderer *r,ScopeRenderFunction draw)
     /* UI may pin a working and a pending plot while the newest cached plot is
        leased. Two more slots let the channel painter work and queue a refresh. */
     r->plot=create_renderer(r->capacity,draw?draw:draw_plot,5);
-    if(r->plot){scope_mutex_lock(&r->plot->mutex);r->plot->background=1;scope_mutex_unlock(&r->plot->mutex);}
     return r->plot!=NULL;
 }
 
@@ -247,6 +244,15 @@ uint64_t scope_renderer_submit(ScopeRenderer *r,const ScopeScreen *screen,
                                const ScopeRenderRegion *regions,unsigned count)
 { return submit_layers(r,screen,regions,count,1); }
 
+uint64_t scope_renderer_submit_plot(ScopeRenderer *r,const ScopeScreen *screen,
+                                    const ScopeRenderRegion *regions,unsigned count)
+{
+    if(!r || !r->plot)return submit(r,screen,regions,count);
+    uint64_t generation=submit(r->plot,screen,regions,count);
+    if(generation)r->plot_generation=generation;
+    return generation;
+}
+
 uint64_t scope_renderer_submit_overlay(ScopeRenderer *r,const ScopeScreen *screen,
                                        const ScopeRenderRegion *regions,unsigned count)
 { return submit_layers(r,screen,regions,count,0); }
@@ -269,9 +275,22 @@ uint64_t scope_renderer_presented_plot(ScopeRenderer *r)
 {
     uint64_t id;scope_mutex_lock(&r->mutex);id=r->presented_id;scope_mutex_unlock(&r->mutex);return id;
 }
+uint64_t scope_renderer_presented_time(ScopeRenderer *r)
+{
+    uint64_t at;scope_renderer_presentation(r,NULL,&at);return at;
+}
+void scope_renderer_presentation(ScopeRenderer *r,uint64_t *count,uint64_t *at)
+{
+    scope_mutex_lock(&r->mutex);
+    if(count)*count=r->presented_count;
+    if(at)*at=r->presented_at_ns;
+    scope_mutex_unlock(&r->mutex);
+}
 void scope_renderer_acknowledge(ScopeRenderer *r)
 {
-    scope_mutex_lock(&r->mutex);r->presented_id=r->taken_id;scope_mutex_unlock(&r->mutex);
+    scope_mutex_lock(&r->mutex);
+    if(r->presented_id!=r->taken_id){r->presented_id=r->taken_id;r->presented_at_ns=scope_clock_ns();++r->presented_count;}
+    scope_mutex_unlock(&r->mutex);
 }
 
 int scope_renderer_flush(ScopeRenderer *r,uint64_t generation,uint32_t *pixels,unsigned timeout)

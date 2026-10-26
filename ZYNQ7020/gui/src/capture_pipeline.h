@@ -18,6 +18,7 @@ typedef struct {
     int roll;
     int density_enabled;
     unsigned density_rows;
+    unsigned hidden_channel_mask;
     unsigned filter_level[2];
     ChannelResponse response[2];
     int response_enabled[2];
@@ -29,6 +30,10 @@ typedef struct {
 typedef struct {
     uint64_t blocks, bytes, dropped, overwritten, display_replaced, processing_ns, waveforms;
     uint64_t triggered_ns; /* Source accepted a record; processing may still be busy. */
+    uint64_t acquisition_ns, search_ns, search_max_ns; /* Cumulative hardware-stage times. */
+    uint64_t rejected_blocks; /* Quiet payloads rejected by hardware bounds. */
+    uint64_t deadtime_blocks; /* Input drained while the accepted record is presented or in holdoff. */
+    uint64_t probe_blocks; /* Headers with a matching hardware filter/level probe. */
     size_t occupancy, peak_occupancy;
     int source_error;
     int waiting;
@@ -51,5 +56,8 @@ int capture_pipeline_frame(CapturePipeline *pipeline, DisplayFrame *frame);
 const DisplayFrame *capture_pipeline_acquire(CapturePipeline *pipeline);
 void capture_pipeline_retain_frame(CapturePipeline *pipeline,const DisplayFrame *frame);
 void capture_pipeline_release_frame(CapturePipeline *pipeline,const DisplayFrame *frame);
+/* Opt into first-trigger presentation: acknowledge an actually displayed
+   capture_id (zero enables it before the first frame). DMA keeps draining. */
+void capture_pipeline_presented(CapturePipeline *pipeline,uint64_t capture_id);
 void capture_pipeline_metrics(CapturePipeline *pipeline, CaptureMetrics *metrics);
 #endif

@@ -52,7 +52,7 @@ struct session {
     dma_addr_t dma;
     struct capture_slot slot[BUFFERS];
     unsigned inflight;
-    u32 payload_bytes, sample_rate, control;
+    u32 payload_bytes, sample_rate, control, probe_control;
     bool peak_detect;
     bool stopped, error;
     u64 next_sequence;
@@ -264,8 +264,19 @@ static long capture_ioctl(struct file *file, unsigned int command, unsigned long
     int error = 0;
     if (command == OSC_CAPTURE_GET_INFO) return copy_to_user(user, &info, sizeof(info)) ? -EFAULT : 0;
     if (command != OSC_CAPTURE_DEQUEUE && command != OSC_CAPTURE_RELEASE &&
-        command != OSC_CAPTURE_CONFIGURE && command != OSC_CAPTURE_TEST_CLOCK) return -ENOTTY;
+        command != OSC_CAPTURE_CONFIGURE && command != OSC_CAPTURE_TEST_CLOCK &&
+        command != OSC_CAPTURE_SET_PROBE) return -ENOTTY;
     if (mutex_lock_interruptible(&s->ioctl_lock)) return -ERESTARTSYS;
+    if(command==OSC_CAPTURE_SET_PROBE){
+        struct osc_capture_probe probe;
+        if(copy_from_user(&probe,user,sizeof(probe))){error=-EFAULT;goto unlock;}
+        if(probe.control&~OSC_CAPTURE_PROBE_MASK){error=-EINVAL;goto unlock;}
+        spin_lock_irqsave(&s->lock,flags);
+        for(i=0;i<BUFFERS;++i)if(s->slot[i].state==LEASED)error=-EBUSY;
+        spin_unlock_irqrestore(&s->lock,flags);
+        if(!error)s->probe_control=probe.control;
+        goto unlock;
+    }
     if (command == OSC_CAPTURE_CONFIGURE || command == OSC_CAPTURE_TEST_CLOCK) {
         struct osc_capture_config config;
         struct osc_capture_test_clock test;
@@ -274,7 +285,7 @@ static long capture_ioctl(struct file *file, unsigned int command, unsigned long
             if (copy_from_user(&config, user, sizeof(config))) { error = -EFAULT; goto unlock; }
             if (!osc_capture_rate(config.rate_index) || config.payload_shift > 17) { error = -EINVAL; goto unlock; }
             payload_shift=config.payload_shift; rate=osc_capture_rate(config.rate_index);
-            control=config.rate_index << 1;
+            control=(config.rate_index << 1) | (s->probe_control << 14);
         } else {
             if (copy_from_user(&test, user, sizeof(test))) { error = -EFAULT; goto unlock; }
             if (test.shift>6 || test.payload_shift>17) { error = -EINVAL; goto unlock; }

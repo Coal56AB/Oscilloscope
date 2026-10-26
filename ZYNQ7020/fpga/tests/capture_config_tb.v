@@ -6,7 +6,7 @@ module capture_config_tb;
     wire [2:0] clock_shift;
     wire [31:0] rate,divider,payload;
     integer index,expected_rate,scale;
-    capture_config dut(clk,control,enable,rate,divider,payload,clock_shift);
+    capture_config dut(clk,control,enable,rate,divider,payload,clock_shift,);
     always #5 clk=~clk;
     initial begin
         expected_rate=200000000;

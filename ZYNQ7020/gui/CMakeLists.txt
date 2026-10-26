@@ -60,6 +60,7 @@ if(SCOPE_ENABLE_ZYNQ)
     target_compile_definitions(scope_runtime PUBLIC SCOPE_ENABLE_ZYNQ=1)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
         target_compile_options(scope_runtime PRIVATE -O3 -mfpu=neon)
+        target_compile_options(waveform_view PRIVATE -O3 -mfpu=neon)
     endif()
 endif()
 
@@ -144,6 +145,7 @@ if(BUILD_TESTING)
         add_executable(scope_zynq_test src/tests/test_zynq_capture.c)
         target_link_libraries(scope_zynq_test PRIVATE scope_runtime)
         target_link_options(scope_zynq_test PRIVATE
+            -Wl,--wrap=capture_process
             -Wl,--wrap=open -Wl,--wrap=close -Wl,--wrap=mmap -Wl,--wrap=munmap
             -Wl,--wrap=poll -Wl,--wrap=ioctl)
         add_test(NAME scope_zynq_capture COMMAND scope_zynq_test)

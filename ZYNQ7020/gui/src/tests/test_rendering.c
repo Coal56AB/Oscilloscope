@@ -491,6 +491,20 @@ static void test_corner_composition(void)
     assert(corners[67 * 68 + 67] == base);
 }
 
+static void test_response_with_cached_plot(uint32_t *pixels,int stride)
+{
+    size_t bytes=(size_t)stride*SCOPE_HEIGHT*sizeof(*pixels);
+    uint32_t *reference=malloc(bytes);assert(reference);
+    demo_signal_init(&demo);demo.screen.response_visible=1;
+    scope_screen_render(reference,stride,&demo.screen);
+    memset(pixels,0xa5,bytes);
+    demo.screen.plot_pixels=reference;
+    scope_screen_render(pixels,stride,&demo.screen);
+    for(int y=0;y<SCOPE_HEIGHT;++y)
+        assert(!memcmp(pixels+(size_t)y*stride,reference+(size_t)y*stride,SCOPE_WIDTH*sizeof(*pixels)));
+    free(reference);
+}
+
 int main(void)
 {
     test_spectrum_projection();
@@ -501,6 +515,7 @@ int main(void)
     assert(pixels);
     test_persistence(pixels,SCOPE_WIDTH+3);
     test_trigger_wait(pixels,SCOPE_WIDTH+3);
+    test_response_with_cached_plot(pixels,SCOPE_WIDTH+3);
     test_corner_composition();
     test_trace_width(pixels, SCOPE_WIDTH + 3);
     test_trace_gaps(pixels, SCOPE_WIDTH + 3);

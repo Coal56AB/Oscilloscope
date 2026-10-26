@@ -58,6 +58,7 @@ net capture_decimate/peak_detect capture_frame/peak_detect
 net capture_config/group_divider capture_decimate/group_divider
 net capture_config/sample_rate capture_frame/sample_rate
 net capture_config/payload_bytes capture_frame/payload_bytes
+net capture_config/probe_control capture_frame/probe_control
 net adc/stream_resetn capture_decimate/resetn capture_width/aresetn capture_fifo/s_axis_aresetn capture_frame/resetn capture_cdc/s_axis_aresetn
 net adc/overflow capture_status/overflow
 net capture_status/status capture_gpio/gpio2_io_i

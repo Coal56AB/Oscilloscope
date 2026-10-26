@@ -25,6 +25,10 @@ int scope_renderer_flush_plot(ScopeRenderer *renderer,unsigned timeout_ms);
 /* A plot is acknowledged only after display output, never after painting alone.
    Windowed frontends call acknowledge after presenting pixels from take(). */
 uint64_t scope_renderer_presented_plot(ScopeRenderer *renderer);
+/* Monotonic time of the latest newly presented capture, excluding UI refreshes. */
+uint64_t scope_renderer_presented_time(ScopeRenderer *renderer);
+/* Consistent actual plot count/time snapshot, excluding repaints of the same capture. */
+void scope_renderer_presentation(ScopeRenderer *renderer,uint64_t *count,uint64_t *at_ns);
 void scope_renderer_acknowledge(ScopeRenderer *renderer);
 /* Optional display output runs on the same worker. Set before first submit.
    Return 1 when presented, 0 to retry, negative on a device error. */
@@ -32,6 +36,9 @@ void scope_renderer_set_output(ScopeRenderer *renderer,ScopeRenderOutput output,
 int scope_renderer_failed(ScopeRenderer *renderer);
 uint64_t scope_renderer_submit(ScopeRenderer *renderer,const ScopeScreen *screen,
                                const ScopeRenderRegion *regions,unsigned count);
+/* Queue only channel painting; poll_plot announces when composition is needed. */
+uint64_t scope_renderer_submit_plot(ScopeRenderer *renderer,const ScopeScreen *screen,
+                                    const ScopeRenderRegion *regions,unsigned count);
 uint64_t scope_renderer_submit_overlay(ScopeRenderer *renderer,const ScopeScreen *screen,
                                        const ScopeRenderRegion *regions,unsigned count);
 uint64_t scope_renderer_take(ScopeRenderer *renderer,uint32_t *pixels);

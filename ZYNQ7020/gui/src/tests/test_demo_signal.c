@@ -556,6 +556,33 @@ static void test_fft_cursor(void)
     assert(!demo.screen.fft_cursor_visible && demo.screen.fft_cursor_x == 1023);
 }
 
+static void test_cursor_encoder_direction(void)
+{
+    static DemoSignal demo;
+    demo_signal_init(&demo);
+    demo_signal_ui_cycle_cursor_mode(&demo);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
+    assert(demo.screen.cursor_a == 248); /* TIME: positive rotation moves right. */
+    demo_signal_ui_cycle_cursor_mode(&demo);
+    for (int selected = 0; selected < 2; ++selected) {
+        demo_signal_ui_select_cursor(&demo, selected);
+        for (int fine = 0; fine < 2; ++fine) {
+            demo.screen.fine_mode = fine;
+            demo_signal_ui_move_cursor(&demo, 200);
+            demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
+            assert((selected ? demo.screen.cursor_b : demo.screen.cursor_a) == (fine ? 199 : 192));
+            demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -1);
+            assert((selected ? demo.screen.cursor_b : demo.screen.cursor_a) == 200);
+            demo_signal_ui_move_cursor(&demo, 0);
+            demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, 1);
+            assert((selected ? demo.screen.cursor_b : demo.screen.cursor_a) == 0);
+            demo_signal_ui_move_cursor(&demo, SCOPE_PLOT_HEIGHT - 1);
+            demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -1);
+            assert((selected ? demo.screen.cursor_b : demo.screen.cursor_a) == SCOPE_PLOT_HEIGHT - 1);
+        }
+    }
+}
+
 static void test_fft_encoder_cycle(void)
 {
     static DemoSignal demo;
@@ -662,6 +689,7 @@ int main(void)
     test_generator_megahertz_and_fft();
     test_fft_cursor();
     test_fft_encoder_cycle();
+    test_cursor_encoder_direction();
     test_scale_direction_and_stopped_trigger();
     test_adc_level_menu();
     test_stopped_time_view();

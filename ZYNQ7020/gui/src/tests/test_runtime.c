@@ -288,7 +288,7 @@ static void processor_statistics_test(void)
         assert(capture_process(&b,&view,&f));
         assert(fabs(f.minimum[0]-low)<1e-12&&fabs(f.maximum[0]-high)<1e-12);
         assert(fabs(f.mean[0]-sum/256)<1e-12&&fabs(f.rms[0]-sqrt(squares/256))<1e-12);
-        assert(f.duty[0]==(sign?50:100)&&f.frequency_hz[0]==0);
+        assert(isnan(f.duty[0]) && f.frequency_hz[0]==0);
     }
 }
 
@@ -303,21 +303,16 @@ static void processor_large_statistics_test(void)
         data[2*i+ch]=i<65539?255:(uint8_t)generator_noise_code(37,i,ch);
     for(int sign=-1;sign<=1;++sign){
         b.volts_per_code[0]=sign*0.02;b.zero_code[0]=127.25;
-        uint64_t sum=0,squares=0;size_t high=0,crossings=0,first=0,last=0;
-        int previous=sign>=0;
+        uint64_t sum=0,squares=0;
         for(size_t i=0;i<count;++i){
             unsigned code=data[2*(i+1)];
-            int level=sign==0||(sign>0?code>=128:code<=127);
-            sum+=code;squares+=code*code;high+=level;
-            if(level&&!previous){if(!crossings)first=i;last=i;++crossings;}
-            previous=level;
+            sum+=code;squares+=code*code;
         }
         assert(capture_process(&b,&view,&f));
         double mean=(double)sum/count,zero=b.zero_code[0],gain=b.volts_per_code[0];
         double rms=sqrt((double)squares/count-2*zero*mean+zero*zero)*fabs(gain);
         assert(fabs(f.mean[0]-(mean-zero)*gain)<1e-12&&fabs(f.rms[0]-rms)<1e-12);
-        assert(fabs(f.duty[0]-100.0*high/count)<1e-12);
-        assert(fabs(f.frequency_hz[0]-(crossings>1?(double)(crossings-1)*b.sample_rate_hz/(last-first):0))<1e-9);
+        assert(isnan(f.duty[0]) && f.frequency_hz[0]==0);
         assert(fabs(f.minimum[0]-(gain<0?255-zero:-zero)*gain)<1e-12);
         assert(fabs(f.maximum[0]-(gain<0?-zero:255-zero)*gain)<1e-12);
     }

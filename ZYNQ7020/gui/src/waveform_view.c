@@ -46,6 +46,7 @@ static int connect_samples(const uint8_t *data, const double *values, size_t cou
 {
     size_t x, y;
     int32_t *difference;
+    uint8_t palettes[65][65],prepared[65]={0};
     if (!coverage || !columns || !rows) return 0;
     memset(coverage,0,columns*rows);
     if ((!values && (!data || !stride)) || !isfinite(first) || !isfinite(samples) || samples<=0) return 0;
@@ -57,6 +58,7 @@ static int connect_samples(const uint8_t *data, const double *values, size_t cou
         double right=fmin(count-1.0,first+(x+1)*samples/columns);
         size_t i,end;
         int32_t level=0,peak=0;
+        size_t first_row=rows,last_row=0;
         if(left>=right)continue;
         memset(difference,0,(rows+1)*sizeof(*difference));
         i=(size_t)floor(left);end=(size_t)ceil(right);
@@ -71,12 +73,23 @@ static int connect_samples(const uint8_t *data, const double *values, size_t cou
             if(finish<0 || start>=rows)continue;
             low=start<=0?0:(int)start;high=finish>=rows-1.0?(int)rows-1:(int)finish;
             ++difference[low];--difference[high+1];
+            if((size_t)low<first_row)first_row=(size_t)low;
+            if((size_t)high>last_row)last_row=(size_t)high;
         }
-        for(y=0;y<rows;++y){level+=difference[y];if(level>peak)peak=level;}
+        for(y=first_row;y<=last_row && y<rows;++y){level+=difference[y];if(level>peak)peak=level;}
+        if(!peak)continue;
+        uint8_t *palette=peak<65?palettes[peak]:NULL;
+        if(palette && !prepared[peak]){
+            palette[0]=0;
+            for(int32_t hit=1;hit<=peak;++hit)
+                palette[hit]=(uint8_t)(hit==peak?255:96+159*sqrt((double)hit/peak));
+            prepared[peak]=1;
+        }
         level=0;
-        for(y=0;y<rows;++y){
+        for(y=first_row;y<=last_row && y<rows;++y){
             level+=difference[y];
-            if(level)coverage[x*rows+y]=(uint8_t)(level==peak?255:96+159*sqrt((double)level/peak));
+            if(level)coverage[x*rows+y]=palette?palette[level]:
+                (uint8_t)(level==peak?255:96+159*sqrt((double)level/peak));
         }
     }
     free(difference);

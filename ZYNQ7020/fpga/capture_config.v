@@ -2,11 +2,12 @@
 module capture_config(input wire clk, input wire [31:0] control,
     output wire enable, output reg [31:0] sample_rate,
     output reg [31:0] group_divider, output wire [31:0] payload_bytes,
-    output wire [2:0] clock_shift);
+    output wire [2:0] clock_shift,output wire [17:0] probe_control);
     (* ASYNC_REG="TRUE" *) reg [31:0] sync1=32'h3000, sync2=32'h3000;
     assign enable=control[0];
     assign payload_bytes=32'd8 << sync2[10:6];
     assign clock_shift=sync2[13:11];
+    assign probe_control=sync2[31:14];
     always @(posedge clk) begin
         sync1<=control; sync2<=sync1;
         if (clock_shift!=0) begin

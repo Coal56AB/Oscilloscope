@@ -54,7 +54,7 @@ static int live_snapshot_valid;
 static char browse_names[DEMO_BROWSE_FILES][DEMO_BROWSE_NAME];
 static char application_dir[PATH_MAX];
 static int require_data_device;
-static int dirty = 1,plot_dirty=1;
+static int dirty = 1,plot_dirty=1,overlay_dirty=1;
 static int panel_enabled = 1;
 static ControlQueue controls;
 static KeyboardControlTransport keyboard_controls;
@@ -147,7 +147,7 @@ static uint64_t now_ms(void)
     previous = current;
     return high + current;
 }
-static void invalidate(void) { dirty = plot_dirty = 1; }
+static void invalidate(void) { dirty = plot_dirty = overlay_dirty = 1; }
 
 static int capture_waiting(const CaptureMetrics *metrics,uint64_t presented,int running,int mode)
 {
@@ -200,9 +200,11 @@ static void draw_all(void)
         ScopeRenderRegion regions[]={{&demo,sizeof(demo)},{frame,0,capture_frame_valid && leased_frame?retain_display_frame:NULL,
              capture_frame_valid && leased_frame?release_display_frame:NULL,capture_pipeline},
             {browse_pixels,demo.screen.browser_visible?sizeof(browse_pixels):0}};
-        render_generation=plot_dirty?scope_renderer_submit(renderer,&demo.screen,regions,3):
+        if(plot_dirty && !overlay_dirty)
+            scope_renderer_submit_plot(renderer,&demo.screen,regions,3);
+        else render_generation=plot_dirty?scope_renderer_submit(renderer,&demo.screen,regions,3):
             scope_renderer_submit_overlay(renderer,&demo.screen,regions,3);
-        plot_dirty=0;
+        plot_dirty=overlay_dirty=0;
     }else scope_screen_render(screen_pixels, SCOPE_WIDTH, &demo.screen);
     if(panel_enabled)
         panel_sdl_draw(panel_pixels, &demo, active, hovered, progress, demo.hold_time_ms);
@@ -981,6 +983,36 @@ static void remote_state(FILE *response)
             channel+1,channel?demo.screen.ch2_enabled:demo.screen.ch1_enabled,channel+1,demo.coupling[channel],
             channel+1,demo.probe_ten[channel],channel+1,demo.scale_index[channel],channel+1,demo.channel_position[channel],channel+1,demo.filter_level[channel]);
     }
+    if(capture_frame_valid){
+        const DisplayFrame *f=leased_frame?leased_frame:&capture_frame;
+        for(unsigned ch=0;ch<2;++ch){
+            fprintf(response,"\"ch%u_frequency_hz\":",ch+1);
+            if(f->frequency_hz[ch]>0)fprintf(response,"%.9g,",f->frequency_hz[ch]);else fputs("null,",response);
+            fprintf(response,"\"ch%u_duty_percent\":",ch+1);
+            if(isfinite(f->duty[ch]))fprintf(response,"%.9g,",f->duty[ch]);else fputs("null,",response);
+            const char *names[]={"vpp","minimum","maximum","mean","rms","raw_mean","raw_rms"};
+            const double values[]={f->maximum[ch]-f->minimum[ch],f->minimum[ch],f->maximum[ch],
+                f->mean[ch],f->rms[ch],f->raw_mean[ch],f->raw_rms[ch]};
+            int enabled=ch?demo.screen.ch2_enabled:demo.screen.ch1_enabled;
+            for(unsigned i=0;i<sizeof(values)/sizeof(*values);++i){
+                fprintf(response,"\"ch%u_%s_volts\":",ch+1,names[i]);
+                if(enabled && isfinite(values[i]))fprintf(response,"%.9g,",values[i]);else fputs("null,",response);
+            }
+        }
+    }
+    uint64_t presented_count=0,presented_at=0;
+    if(renderer)scope_renderer_presentation(renderer,&presented_count,&presented_at);
+    fprintf(response,"\"presented_at_ns\":%llu,\"presented_plots\":%llu,",
+        (unsigned long long)presented_at,(unsigned long long)presented_count);
+    fprintf(response,"\"capture_blocks\":%llu,\"capture_dropped\":%llu,\"capture_overwritten\":%llu,\"source_error\":%d,",
+        (unsigned long long)capture.blocks,(unsigned long long)capture.dropped,
+        (unsigned long long)capture.overwritten,capture.source_error);
+    fprintf(response,"\"capture_acquisition_ns\":%llu,\"capture_search_ns\":%llu,\"capture_search_max_ns\":%llu,",
+        (unsigned long long)capture.acquisition_ns,(unsigned long long)capture.search_ns,
+        (unsigned long long)capture.search_max_ns);
+    fprintf(response,"\"capture_rejected\":%llu,",(unsigned long long)capture.rejected_blocks);
+    fprintf(response,"\"capture_deadtime\":%llu,",(unsigned long long)capture.deadtime_blocks);
+    fprintf(response,"\"capture_probe_blocks\":%llu,",(unsigned long long)capture.probe_blocks);
     fprintf(response,"\"record_depth_index\":%d,\"sample_rate_hz\":%.9g,",demo.record_depth_index,demo.acquisition_rate_hz);
     fprintf(response,"\"measurement_hidden\":%d,\"measurement_x\":%d,\"measurement_y\":%d,\"measurement_width\":%d,\"measurement_height\":%d,",
         demo.screen.measurement_hidden,mx,my,mw,mh);
@@ -1056,8 +1088,9 @@ static int remote_command(const char *command, FILE *response, void *context)
     char key[64],operation[32];double value;int n=0;unsigned channel;
     (void)context;
     pc_activity_until = now_ms() + 10000;
+    int pc_was_active=demo.pc_active;
     demo_signal_pc_status(&demo, demo.pc_available, console_baud, 1);
-    invalidate();
+    if(demo.pc_active!=pc_was_active)dirty=overlay_dirty=1;
     if(!strcmp(command,"ping")){fputs("OSCILL REMOTE 1\n",response);return 1;}
     if(!strcmp(command,"state")){remote_state(response);return !ferror(response);}
     if(!strcmp(command,"csv")||!strcmp(command,"window")){
@@ -1461,6 +1494,7 @@ int main(int argc, char **argv)
                 demo_signal_accept_scale(&demo,(unsigned)i,panel.scale_mv[i]);invalidate();}
         }
         if(capture_pipeline){CaptureRequest request;CaptureMetrics metrics;
+            if(adc_device)capture_pipeline_presented(capture_pipeline,scope_renderer_presented_plot(renderer));
             int restoring=restored_scale[0]>0 || restored_scale[1]>0;
             if(!restoring && restore_capture_pending){demo_signal_force_trigger(&demo);restore_capture_pending=0;}
             capture_request_from_demo(&demo,&request);
@@ -1470,7 +1504,7 @@ int main(int argc, char **argv)
             if(next_frame){leased_frame=next_frame;capture_frame_valid=1;
                 if(raw_file)demo.screen.running=0;
                 if(adc_device&&demo.trigger_mode_index==2)single_capture_id=next_frame->capture_id;
-                invalidate();}
+                dirty=plot_dirty=1;}
             capture_pipeline_metrics(capture_pipeline,&metrics);
             if(demo_signal_set_adc_level(&demo,metrics.adc_code,
                 metrics.adc_valid&&metrics.adc_age_ms<=STATUS_HEARTBEAT_MS)&&
@@ -1482,18 +1516,18 @@ int main(int argc, char **argv)
                 }else if(demo.trigger_mode_index!=2)single_capture_id=0;
                 /* Accepted source record -> RUN; actual plot presentation -> HOLD. */
                 int waiting=capture_waiting(&metrics,presented,demo.screen.running,demo.trigger_mode_index);
-                if(demo.screen.waiting_for_trigger!=waiting){demo.screen.waiting_for_trigger=waiting;invalidate();}
+                if(demo.screen.waiting_for_trigger!=waiting){demo.screen.waiting_for_trigger=waiting;dirty=overlay_dirty=1;}
             }
             if(metrics.source_error&&demo.screen.running){demo.screen.running=0;demo_signal_notify(&demo,"ADC CAPTURE ERROR");invalidate();}}
         if(demo.screen.running&&!demo.external_capture){demo_signal_advance(&demo);demo.screen.plot_id=demo.capture_sequence;invalidate();}
         if(!demo.external_capture && demo.screen.running && demo.trigger_mode_index!=0){
             int waiting=demo.capture_sequence<=scope_renderer_presented_plot(renderer);
-            if(demo.screen.waiting_for_trigger!=waiting){demo.screen.waiting_for_trigger=waiting;invalidate();}
+            if(demo.screen.waiting_for_trigger!=waiting){demo.screen.waiting_for_trigger=waiting;dirty=overlay_dirty=1;}
         }
         if(settings_session_poll(&settings,live_settings()))invalidate();
         if(demo.response_active)invalidate();
         if(demo.screen.status_visible||mouse_hold.active||key_holds[0].active||key_holds[1].active)invalidate();
-        if(scope_renderer_poll_plot(renderer))dirty=1;
+        if(scope_renderer_poll_plot(renderer))dirty=overlay_dirty=1;
         if(dirty&&running && now_ms()>=frame_deadline){frame_deadline=now_ms()+16;draw_all();dirty=0;}
         if(worker_present){
             scope_renderer_metrics(renderer,&render_frames,&render_time,NULL);

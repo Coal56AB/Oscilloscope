@@ -123,13 +123,19 @@ int main(void)
     scope_screen_render(expected,SCOPE_WIDTH,&ui);
     assert(scope_renderer_flush(r,generation,actual,2000));
     assert(!memcmp(expected,actual,sizeof(expected)));
-    assert(scope_renderer_presented_plot(r)==0);
+    assert(scope_renderer_presented_plot(r)==0);assert(scope_renderer_presented_time(r)==0);
     scope_renderer_acknowledge(r);assert(scope_renderer_presented_plot(r)==41);
+    uint64_t presented_at=scope_renderer_presented_time(r);assert(presented_at);
+    scope_renderer_acknowledge(r);assert(scope_renderer_presented_time(r)==presented_at);
+    uint64_t plot_count=0,plot_at=0;
+    scope_renderer_presentation(r,&plot_count,&plot_at);assert(plot_count==1 && plot_at==presented_at);
     release_render();assert(scope_renderer_flush_plot(r,2000));
     generation=scope_renderer_submit_overlay(r,&demo.screen,&region,1);
     assert(scope_renderer_flush(r,generation,actual,2000));
     assert(scope_renderer_presented_plot(r)==41);
     scope_renderer_acknowledge(r);assert(scope_renderer_presented_plot(r)==42);
+    assert(scope_renderer_presented_time(r)>=presented_at);
+    scope_renderer_presentation(r,&plot_count,&plot_at);assert(plot_count==2 && plot_at>=presented_at);
     scope_renderer_destroy(r);
     /* A slow UI painter can pin an older plot while pending snapshots and the
        channel painter advance. The final stopped refresh must still arrive. */
@@ -148,6 +154,18 @@ int main(void)
     generation=scope_renderer_submit_overlay(r,&demo.screen,&region,1);assert(generation);
     release_render();assert(scope_renderer_flush(r,generation,actual,2000));
     scope_renderer_acknowledge(r);assert(scope_renderer_presented_plot(r)==110);
+    scope_renderer_destroy(r);
+    /* New capture data queues channel painting without composing the old plot
+       a second time. Presentation follows the completed plot notification. */
+    r=scope_renderer_create(sizeof(demo),NULL);assert(r);
+    assert(scope_renderer_enable_plot_layer(r,NULL));
+    demo.screen.plot_id=200;
+    assert(scope_renderer_submit_plot(r,&demo.screen,&region,1));
+    assert(scope_renderer_flush_plot(r,2000));
+    scope_renderer_metrics(r,&frames,&ns,NULL);assert(frames==0);
+    generation=scope_renderer_submit_overlay(r,&demo.screen,&region,1);
+    assert(scope_renderer_flush(r,generation,actual,2000));
+    scope_renderer_acknowledge(r);assert(scope_renderer_presented_plot(r)==200);
     scope_renderer_destroy(r);
     scope_condition_destroy(&wake);scope_mutex_destroy(&mutex);
     return 0;

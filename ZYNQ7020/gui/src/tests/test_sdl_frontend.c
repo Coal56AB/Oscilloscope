@@ -141,14 +141,14 @@ static void test_response_capture(void)
     assert(!request.response_enabled[0]);
     f.sequence=1;f.sample_rate_hz=65536;f.fft_size=1024;f.calibration_mask=1;
     f.volts_per_code[0]=f.volts_per_code[1]=.02;
-    f.fundamental_hz[0]=1000;f.fundamental_amplitude[0]=1;f.rms[0]=sqrt(.5);
+    f.fundamental_hz[0]=1000;f.fundamental_amplitude[0]=1;f.raw_rms[0]=sqrt(.5);
     capture_display_apply(&demo,&f);
-    f.sequence=2;f.fundamental_hz[0]=10000;f.fundamental_amplitude[0]=.5;f.rms[0]=sqrt(.125);
+    f.sequence=2;f.fundamental_hz[0]=10000;f.fundamental_amplitude[0]=.5;f.raw_rms[0]=sqrt(.125);
     capture_display_apply(&demo,&f);
     assert(demo.response[2].count==2 && demo.response[0].count==0);
     f.sequence=3;f.fundamental_hz[0]=3000;f.clipped_mask=1;
     capture_display_apply(&demo,&f);assert(demo.response[2].count==2);
-    f.sequence=4;f.clipped_mask=0;f.rms[0]=10;
+    f.sequence=4;f.clipped_mask=0;f.raw_rms[0]=10;
     capture_display_apply(&demo,&f);assert(demo.response[2].count==2);
     assert(remote_set("ch1_response",1));
     capture_request_from_demo(&demo,&request);assert(!request.response_enabled[0]);
@@ -159,6 +159,25 @@ static void test_response_capture(void)
     assert(!demo.response[0].count && demo.response[2].count==2);
     pc_activity_until=0;
     fclose(reply);
+}
+
+static void test_baseline_uses_raw_statistics(void)
+{
+    static DisplayFrame f;
+    demo_signal_init(&demo);demo_signal_begin_external(&demo);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);
+    demo_signal_ui_menu_select(&demo,4);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    demo_signal_ui_menu_select(&demo,1);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    assert(demo.baseline_active==CHANNEL_NOISE_VALID);
+    demo.now_ms+=100;
+    f.baseline_mask=1;f.view_samples=1000;f.volts_per_code[0]=.02;
+    f.raw_mean[0]=.5;f.raw_rms[0]=.55;
+    f.mean[0]=0;f.rms[0]=.01; /* A smoothed trace must not lower measured ADC noise. */
+    for(f.sequence=1;f.sequence<=4;++f.sequence)capture_display_apply(&demo,&f);
+    assert(demo.baseline_stage==1);
+    assert(fabs(demo.baseline_work[0].noise_rms-sqrt(.55*.55-.5*.5))<1e-12);
+    demo_signal_baseline_cancel(&demo);
 }
 
 static void test_external_trigger_marker(void)
@@ -454,7 +473,9 @@ static void test_remote_commands(void)
     assert(demo.time_index==previous);fclose(response);
     response=tmpfile();assert(response);assert(remote_command("csv",response,NULL));
     rewind(response);assert(fgets(header,sizeof(header),response));assert(!strcmp(header,"#oscill_wave=2\n"));fclose(response);
+    dirty=plot_dirty=overlay_dirty=0;
     response=tmpfile();assert(response);assert(remote_command("state",response,NULL));
+    assert(!plot_dirty);
     rewind(response);assert(fread(header,1,1,response)==1);assert(header[0]=='{');fclose(response);
 }
 
@@ -523,6 +544,7 @@ int main(void)
     test_console_baud_and_status();
     test_fft_fine_touch();
     test_remote_commands();
+    test_baseline_uses_raw_statistics();
     test_panel_owned_scale();
     test_panel_channel_enable();
     demo_signal_init(&demo);

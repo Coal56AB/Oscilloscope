@@ -21,9 +21,15 @@ struct osc_capture_block {
 struct osc_capture_config { __u32 rate_index, payload_shift; };
 /* Diagnostic physical encode clock = 100 MHz / 2^shift, both branches kept. */
 struct osc_capture_test_clock { __u32 shift, payload_shift; };
+/* Optional necessary-side probe: level[7:0], noise-power bin[15:8],
+   channel[16], enable[17]. Applied by the next CONFIGURE, never mid-block. */
+struct osc_capture_probe { __u32 control; };
+#define OSC_CAPTURE_PROBE_ENABLE (1u<<17)
+#define OSC_CAPTURE_PROBE_MASK ((1u<<18)-1)
 #include "capture_rates.h"
 #define OSC_CAPTURE_CONFIGURE _IOW('O', 0x13, struct osc_capture_config)
 #define OSC_CAPTURE_TEST_CLOCK _IOW('O', 0x14, struct osc_capture_test_clock)
+#define OSC_CAPTURE_SET_PROBE _IOW('O', 0x15, struct osc_capture_probe)
 #define OSC_CAPTURE_GET_INFO _IOR('O', 0x10, struct osc_capture_info)
 #define OSC_CAPTURE_DEQUEUE _IOR('O', 0x11, struct osc_capture_block)
 #define OSC_CAPTURE_RELEASE _IOW('O', 0x12, __u32)

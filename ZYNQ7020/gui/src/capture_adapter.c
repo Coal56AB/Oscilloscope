@@ -20,6 +20,7 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     r->spectrum_enabled = d->fft_enabled;
     r->density_enabled = 1;
     r->density_rows = (unsigned)scope_screen_waveform_height(&d->screen);
+    r->hidden_channel_mask = (d->screen.ch1_enabled?0u:1u) | (d->screen.ch2_enabled?0u:2u);
     r->debug.enabled = d->adc_simulation;
     r->debug.wave[0] = d->generator_wave[0];
     r->debug.wave[1] = d->generator_wave[1];
@@ -82,7 +83,7 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
     if(d->baseline_active){
         unsigned channel=(unsigned)d->response_channel;
         if((f->baseline_mask&(1U<<channel)) && !(f->clipped_mask&(1U<<channel)))
-            demo_signal_baseline_observe(d,f->sequence,f->view_samples,f->mean[channel],f->rms[channel],f->volts_per_code[channel]);
+            demo_signal_baseline_observe(d,f->sequence,f->view_samples,f->raw_mean[channel],f->raw_rms[channel],f->volts_per_code[channel]);
     }
     if(d->response_active){
         unsigned channel=(unsigned)d->response_channel;
@@ -92,8 +93,8 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
             d->response_active=0;demo_signal_notify(d,"RANGE CHANGED / REPEAT NOISE");demo_signal_refresh(d);
         }
         double amplitude=channel_baseline_amplitude(baseline,f->volts_per_code[channel],f->fft_size,
-            f->fundamental_amplitude[channel],f->mean[channel],f->rms[channel]);
-        double variance=f->rms[channel]*f->rms[channel]-f->mean[channel]*f->mean[channel];
+            f->fundamental_amplitude[channel],f->raw_mean[channel],f->raw_rms[channel]);
+        double variance=f->raw_rms[channel]*f->raw_rms[channel]-f->raw_mean[channel]*f->raw_mean[channel];
         if(baseline->valid&CHANNEL_NOISE_VALID)variance=fmax(0,variance-baseline->noise_rms*baseline->noise_rms);
         if((f->calibration_mask&(1U<<channel)) && !(f->clipped_mask&(1U<<channel)) && amplitude>0 && variance>0 && amplitude*amplitude>1.2*variance &&
            f->fundamental_hz[channel]>=3.0*f->sample_rate_hz/f->fft_size &&
@@ -170,14 +171,18 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
             }
             if (isfinite(value)) snprintf(text, size, "%.2f V", value);
             else snprintf(text, size, "--");
-        } else if (id == DEMO_MEAS_CH1_FREQ || id == DEMO_MEAS_CH2_FREQ)
-            snprintf(text, size, "%.2f kHz", f->frequency_hz[ch] / 1000);
+        } else if (id == DEMO_MEAS_CH1_FREQ || id == DEMO_MEAS_CH2_FREQ){
+            if(f->frequency_hz[ch]>0)snprintf(text,size,"%.2f kHz",f->frequency_hz[ch]/1000);
+            else snprintf(text,size,"--");
+        }
         else if (id == DEMO_MEAS_CH1_PERIOD || id == DEMO_MEAS_CH2_PERIOD) {
             if (f->frequency_hz[ch] > 0)
                 snprintf(text, size, "%.1f us", 1e6 / f->frequency_hz[ch]);
             else
                 snprintf(text, size, "--");
-        } else if (id == DEMO_MEAS_CH1_DUTY || id == DEMO_MEAS_CH2_DUTY)
-            snprintf(text, size, "%.1f %%", f->duty[ch]);
+        } else if (id == DEMO_MEAS_CH1_DUTY || id == DEMO_MEAS_CH2_DUTY){
+            if(isfinite(f->duty[ch]))snprintf(text,size,"%.1f %%",f->duty[ch]);
+            else snprintf(text,size,"--");
+        }
     }
 }

@@ -1,6 +1,10 @@
 #ifndef CAPTURE_PROCESSOR_H
 #define CAPTURE_PROCESSOR_H
 #include "capture.h"
+/* Necessary bounds for confirmation, before filtering. Callers must still
+   preserve preceding samples and posttrigger data across rejected blocks. */
+int capture_trigger_bounds_possible(const CaptureBuffer *metadata,const double minimum[2],
+    const double maximum[2],unsigned channel,unsigned edge,double volts,unsigned hysteresis);
 #include "scope_screen.h"
 #include "channel_response.h"
 typedef struct {
@@ -12,6 +16,7 @@ typedef struct {
     int skip_spectrum;
     int density_enabled;
     unsigned density_rows;
+    unsigned hidden_channel_mask; /* Skip invisible projections/timing; amplitude statistics and FFT remain available. */
     unsigned filter_level[2];
     double noise_rms[2];
     const ChannelResponse *response[2];
@@ -26,6 +31,8 @@ typedef struct {
     int16_t overview[2][SCOPE_PLOT_WIDTH];
     uint8_t fft[2][SCOPE_FFT_BINS];
     double minimum[2], maximum[2], mean[2], rms[2], frequency_hz[2], duty[2];
+    /* Acquired uniform samples before display filtering/response correction. */
+    double raw_mean[2], raw_rms[2];
     double fundamental_hz[2],fundamental_amplitude[2];
     double volts_per_code[2];
     uint64_t sequence, sample_rate_hz, processing_ns;
@@ -54,7 +61,8 @@ int capture_value_at(const CaptureBuffer *buffer, size_t sample, unsigned channe
 int capture_find_trigger(const CaptureBuffer *buffer, unsigned channel, unsigned edge,
                          double volts, unsigned hysteresis_codes,
                          uint64_t first_allowed, uint64_t *sample);
-/* Trigger on the same centered sample filter as the displayed channel. */
+/* Same centered filter as the display. Search a growing window around first_allowed;
+   its adaptive noise guard and both boundaries require complete filter support. */
 int capture_find_trigger_filtered(const CaptureBuffer *buffer,unsigned channel,unsigned edge,
                                   double volts,unsigned hysteresis_codes,unsigned filter_level,double noise_rms,
                                   uint64_t first_allowed,uint64_t *sample);

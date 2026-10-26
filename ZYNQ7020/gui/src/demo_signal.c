@@ -2868,8 +2868,9 @@ void demo_signal_rotate(DemoSignal *demo, DemoControl control, int steps)
             int *selected = demo->screen.cursor_selected ? &demo->screen.cursor_b : &demo->screen.cursor_a;
             int limit = demo->screen.cursor_mode == SCOPE_CURSOR_TIME ?
                         SCOPE_PLOT_WIDTH - 1 : SCOPE_PLOT_HEIGHT - 1;
+            int direction = demo->screen.cursor_mode == SCOPE_CURSOR_VOLTAGE ? -1 : 1;
             *selected = clamp(*selected +
-                              steps * (demo->screen.fine_mode ? 1 : 8), 0, limit);
+                              direction * steps * (demo->screen.fine_mode ? 1 : 8), 0, limit);
             demo_signal_notify(demo, "FUNC / MOVE CURSOR");
         }
     }

@@ -14,7 +14,7 @@ create_project oscill $root -part $part -force
 set_property ip_repo_paths [list $ip_repo/ip/rgb2dvi $ip_repo/if] [current_project]
 set_param general.maxThreads 8
 update_ip_catalog
-add_files [list $here/ad9288_input.v $here/axis_capture_frame.v $here/capture_status.v $here/capture_config.v $here/axis_capture_decimate.v]
+add_files [list $here/ad9288_input.v $here/axis_capture_frame.v $here/capture_window_stats.v $here/capture_trigger_probe.v $here/capture_status.v $here/capture_config.v $here/axis_capture_decimate.v]
 source $here/board.tcl
 create_bd_design system
 proc cell {name vlnv properties} {
@@ -122,6 +122,8 @@ set_property top system_wrapper [current_fileset]
 launch_runs synth_1 -jobs 8
 wait_on_run synth_1
 if {[get_property STATUS [get_runs synth_1]] ne "synth_design Complete!"} { error "Synthesis failed" }
+set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
+set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
 if {[get_property STATUS [get_runs impl_1]] ne "write_bitstream Complete!"} { error "Implementation failed" }

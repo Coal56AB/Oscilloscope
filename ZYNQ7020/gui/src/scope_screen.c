@@ -10,6 +10,9 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 #define RGB(r, g, b) (((uint32_t)(r) << 16) | ((uint32_t)(g) << 8) | (uint32_t)(b))
 
@@ -774,10 +777,21 @@ static void trace_density(const ScopeScreen *screen, unsigned channel, uint32_t 
            tiles keep both working sets cached, even for a dense waveform. */
         for(int bx=0;bx<SCOPE_PLOT_WIDTH;bx+=16)
             for(int by=0;by<rows;by+=16)
-                for(y=by;y<by+16 && y<rows;++y)
-                    for(x=bx;x<bx+16 && x<SCOPE_PLOT_WIDTH;++x)
+                for(x=bx;x<bx+16 && x<SCOPE_PLOT_WIDTH;++x){
+                    int end=by+16<rows?by+16:rows;
+#if defined(__ARM_NEON)
+                    if(end-by==16){
+                        uint8x16_t occupied=vld1q_u8(levels+x*SCOPE_PLOT_HEIGHT+by);
+                        if(screen->connections[channel])
+                            occupied=vorrq_u8(occupied,vld1q_u8(screen->connections[channel]+x*rows+by));
+                        uint64x2_t bits=vreinterpretq_u64_u8(occupied);
+                        if(!(vgetq_lane_u64(bits,0)|vgetq_lane_u64(bits,1)))continue;
+                    }
+#endif
+                    for(y=by;y<end;++y)
                         density_pixel(screen,channel,x,y,rows,levels[x*SCOPE_PLOT_HEIGHT+y],
                             palette,alphas,attenuation[x],screen_y,saved_alpha,color);
+                }
         draw_alpha=saved_alpha;return;
     }
     if (!levels) {
@@ -1038,19 +1052,23 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
     view_top = scope_screen_waveform_top(screen);
     view_height = scope_screen_waveform_height(screen);
 
-    fill(0, 0, SCOPE_WIDTH, SCOPE_HEIGHT, BOOT_SPLASH_BACKGROUND);
-    fill(0, 0, SCOPE_WIDTH, 50, RGB(23, 33, 76));
-    navigation_box(screen, white, green);
-    action_box(188, 180, "SCREENSHOT", white);
-    action_box(372, 176, "SAVE WAVE", white);
-    action_box(552, 140, screen->fine_mode ? "FINE" : "COARSE",
-               screen->fine_mode ? green : white);
-    action_box(696, 156, "PROCESSING", white);
-    acquisition_box(screen->response_visible?screen->response_active:screen->running, screen->waveform_loaded,
-                    !screen->response_visible && screen->waiting_for_trigger);
+    if(!screen->plot_only){
+        fill(0, 0, SCOPE_WIDTH, 50, RGB(23, 33, 76));
+        navigation_box(screen, white, green);
+        action_box(188, 180, "SCREENSHOT", white);
+        action_box(372, 176, "SAVE WAVE", white);
+        action_box(552, 140, screen->fine_mode ? "FINE" : "COARSE",
+                   screen->fine_mode ? green : white);
+        action_box(696, 156, "PROCESSING", white);
+        acquisition_box(screen->response_visible?screen->response_active:screen->running, screen->waveform_loaded,
+                        !screen->response_visible && screen->waiting_for_trigger);
 
-    fill(0, 50, SCOPE_WIDTH, SCOPE_BOTTOM_Y - 50, RGB(8, 9, 16));
-    fill(PLOT_X, PLOT_Y, SCOPE_PLOT_WIDTH, SCOPE_PLOT_HEIGHT, RGB(7, 8, 14));
+        fill(0, 50, SCOPE_WIDTH, PLOT_Y-50, RGB(8, 9, 16));
+        fill(0, PLOT_Y+SCOPE_PLOT_HEIGHT, SCOPE_WIDTH, SCOPE_BOTTOM_Y-PLOT_Y-SCOPE_PLOT_HEIGHT, RGB(8, 9, 16));
+        fill(0, SCOPE_BOTTOM_Y, SCOPE_WIDTH, SCOPE_HEIGHT-SCOPE_BOTTOM_Y, BOOT_SPLASH_BACKGROUND);
+    }
+    if(!screen->plot_pixels || screen->response_visible)
+        fill(PLOT_X, PLOT_Y, SCOPE_PLOT_WIDTH, SCOPE_PLOT_HEIGHT, RGB(7, 8, 14));
     if(screen->response_visible){response_plot(screen);goto bottom_cards;}
     if(screen->plot_pixels){
         for(int y=PLOT_Y;y<PLOT_Y+SCOPE_PLOT_HEIGHT;++y)
