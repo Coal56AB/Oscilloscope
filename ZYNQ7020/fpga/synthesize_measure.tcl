@@ -27,7 +27,7 @@ set_part $part
 create_clock -period 10 -name default
 config_interface -m_axi_addr64=false
 set_directive_inline signal_edge_advance
-set_directive_inline signal_edge_time
+set_directive_inline signal_edge_fraction
 set_directive_inline value_at
 set_directive_inline code_at
 set_directive_inline record_trace_begin

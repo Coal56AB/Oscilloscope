@@ -158,7 +158,9 @@ void signal_measure_timing(const SignalTrace *s,SignalNumber sample_rate,SignalN
 {
     unsigned histogram[256]={0},code;size_t count=s->samples,total=0,n=0,i;
     SignalNumber range=maximum-minimum,low=minimum,high=maximum;
-    SignalNumber last_rise=-1,last_fall=-1,all_span=0,all_width=0,all_squares=0;
+    size_t last_rise=SIZE_MAX,last_fall=SIZE_MAX;
+    SignalNumber rise_fraction=0,fall_fraction=0,all_span=0,all_width=0,all_squares=0;
+    SignalNumber span_error=0,width_error=0,square_error=0;
     size_t capacity=count/2<SIGNAL_TIMING_CAPACITY?count/2:SIGNAL_TIMING_CAPACITY;
     result->frequency=0;result->duty=NAN;
     if(count<3 || !isfinite(range) || range<4*signal_number_abs(s->gain) || range<=0 || !workspace)return;
@@ -193,15 +195,21 @@ void signal_measure_timing(const SignalTrace *s,SignalNumber sample_rate,SignalN
 #endif
             int edge=signal_edge_advance(&detector,value_at(s,i),i);
             if(edge){
-                SignalNumber at=signal_edge_time(&detector);detector.crossing_sample=SIZE_MAX;
-                if(edge<0)last_fall=at;
+                size_t at=detector.crossing_sample;
+                SignalNumber fraction=signal_edge_fraction(&detector);detector.crossing_sample=SIZE_MAX;
+                if(edge<0){last_fall=at;fall_fraction=fraction;}
                 else{
-                    if(last_rise>=0 && last_fall>last_rise && last_fall<at){
-                        SignalNumber period=at-last_rise,width=last_fall-last_rise;
-                        all_span+=period;all_width+=width;all_squares+=period*period;
+                    if(last_rise!=SIZE_MAX && last_fall>last_rise && last_fall<at){
+                        /* Subtract integer positions before adding fractions:
+                           float must never round an absolute 1M timestamp. */
+                        SignalNumber period=(SignalNumber)(at-last_rise)+(fraction-rise_fraction);
+                        SignalNumber width=(SignalNumber)(last_fall-last_rise)+(fall_fraction-rise_fraction);
+                        accumulate(period,&all_span,&span_error);
+                        accumulate(width,&all_width,&width_error);
+                        accumulate(period*period,&all_squares,&square_error);
                         if(n<capacity){periods[n]=ordered[n]=period;widths[n]=width;}++n;
                     }
-                    last_rise=at;
+                    last_rise=at;rise_fraction=fraction;
                 }
             }
         }
@@ -211,8 +219,12 @@ void signal_measure_timing(const SignalTrace *s,SignalNumber sample_rate,SignalN
         if(variance<=mean*mean*SIGNAL_NUMBER(.04)){result->frequency=n*sample_rate/all_span;result->duty=100*all_width/all_span;}
     }else if(n){
         sort_periods(ordered,n);
-        SignalNumber median=(ordered[(n-1)/2]+ordered[n/2])*SIGNAL_NUMBER(.5),span=0,positive=0;size_t accepted=0;
-        for(i=0;i<n;++i)if(signal_number_abs(periods[i]-median)<=median*SIGNAL_NUMBER(.2)){span+=periods[i];positive+=widths[i];++accepted;}
+        SignalNumber median=(ordered[(n-1)/2]+ordered[n/2])*SIGNAL_NUMBER(.5),span=0,positive=0;
+        SignalNumber accepted_span_error=0,positive_error=0;size_t accepted=0;
+        for(i=0;i<n;++i)if(signal_number_abs(periods[i]-median)<=median*SIGNAL_NUMBER(.2)){
+            accumulate(periods[i],&span,&accepted_span_error);
+            accumulate(widths[i],&positive,&positive_error);++accepted;
+        }
         if(accepted && accepted>=n-n/4){result->frequency=accepted*sample_rate/span;result->duty=100*positive/span;}
     }
 }

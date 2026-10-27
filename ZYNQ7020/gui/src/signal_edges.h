@@ -14,9 +14,13 @@ static inline void signal_edge_init(SignalEdgeDetector *e,SignalNumber level,Sig
 {
     *e=(SignalEdgeDetector){level,band,value,0,1,SIZE_MAX,value<=level-band?-1:value>=level+band?1:0};
 }
+static inline SignalNumber signal_edge_fraction(const SignalEdgeDetector *e)
+{
+    return e->numerator/e->denominator;
+}
 static inline SignalNumber signal_edge_time(const SignalEdgeDetector *e)
 {
-    return e->crossing_sample-1+e->numerator/e->denominator;
+    return e->crossing_sample-1+signal_edge_fraction(e);
 }
 /* Confirmation and timestamp are separate: ringing inside the guard cannot
    create another edge, and interpolation keeps the original level crossing. */

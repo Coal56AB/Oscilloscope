@@ -41,6 +41,10 @@ int main(int argc,char **argv)
     record_measure(codes,values,result,0,2,0,.01,128,1100000);
     assert(result[7]==1 && isnan(result[0]) && isnan(result[3]) && result[4]==0);
     record_measure(codes,values,result,1000001,2,0,.01,128,1100000);assert(result[7]==0);
+    unsigned precise_count=argc>1?1000:1000000;
+    for(i=0;i<precise_count;++i)values[i]=i%100<64?1:i%100==64?-0.1724137931034483:-1;
+    record_measure(codes,values,result,precise_count,0,1,.01,128,1100000);
+    near(result[4],11000,.01);near(result[5],64.35294117647059,.0001);
     free(codes);free(values);
     puts("PASS: DDR measurement replay, DC, 11 kHz/33% duty, raw/filtered, many periods, noise rejection and bounds");
     return 0;
