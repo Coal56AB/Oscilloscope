@@ -262,8 +262,8 @@ static void retain_record(CaptureBuffer *b, unsigned depth, double pan,size_t mi
 }
 typedef struct {
     ZynqCapturePacket pending[2],context;
-    ZynqCapturePacket dsp_context[5];
-    unsigned dsp_count;
+    ZynqCapturePacket encoded_context[5];
+    unsigned encoded_count;
     unsigned pending_count;
     int have_context,post;
 } HardwarePackets;
@@ -271,22 +271,22 @@ static int release_packets(CapturePipeline *p,HardwarePackets *q)
 {
     int ok=1;
     for(unsigned i=0;i<q->pending_count;++i)ok&=zynq_capture_release_index(&p->zynq,q->pending[i].index);
-    for(unsigned i=0;i<q->dsp_count;++i)ok&=zynq_capture_release_index(&p->zynq,q->dsp_context[i].index);
+    for(unsigned i=0;i<q->encoded_count;++i)ok&=zynq_capture_release_index(&p->zynq,q->encoded_context[i].index);
     if(q->have_context)ok&=zynq_capture_release_index(&p->zynq,q->context.index);
     memset(q,0,sizeof(*q));return ok;
 }
-static int keep_dsp_context(CapturePipeline *p,HardwarePackets *q,const ZynqCapturePacket *packet,unsigned limit)
+static int keep_encoded_context(CapturePipeline *p,HardwarePackets *q,const ZynqCapturePacket *packet,unsigned limit)
 {
     int ok=1;
-    if(q->dsp_count && q->dsp_context[q->dsp_count-1].metadata.sequence+1!=packet->metadata.sequence){
-        for(unsigned i=0;i<q->dsp_count;++i)ok&=zynq_capture_release_index(&p->zynq,q->dsp_context[i].index);
-        q->dsp_count=0;
+    if(q->encoded_count && q->encoded_context[q->encoded_count-1].metadata.sequence+1!=packet->metadata.sequence){
+        for(unsigned i=0;i<q->encoded_count;++i)ok&=zynq_capture_release_index(&p->zynq,q->encoded_context[i].index);
+        q->encoded_count=0;
     }
-    if(q->dsp_count==limit){
-        ok&=zynq_capture_release_index(&p->zynq,q->dsp_context[0].index);
-        memmove(q->dsp_context,q->dsp_context+1,(q->dsp_count-1)*sizeof(q->dsp_context[0]));--q->dsp_count;
+    if(q->encoded_count==limit){
+        ok&=zynq_capture_release_index(&p->zynq,q->encoded_context[0].index);
+        memmove(q->encoded_context,q->encoded_context+1,(q->encoded_count-1)*sizeof(q->encoded_context[0]));--q->encoded_count;
     }
-    q->dsp_context[q->dsp_count++]=*packet;return ok;
+    q->encoded_context[q->encoded_count++]=*packet;return ok;
 }
 static int decode_history(CapturePipeline *p,CaptureHistory *h,const ZynqCapturePacket *packet,
     const CaptureRequest *request,size_t tail,CaptureBuffer *b)
@@ -301,6 +301,24 @@ static int decode_history(CapturePipeline *p,CaptureHistory *h,const ZynqCapture
     for(unsigned ch=0;ch<2;++ch)if(isfinite(request->adc_volts_per_code[ch]) && request->adc_volts_per_code[ch]>0)
         b->volts_per_code[ch]=request->adc_volts_per_code[ch];
     return 1;
+}
+static size_t retained_samples(const HardwarePackets *packets,const ZynqCapturePacket *packet,const CaptureHistory *history)
+{
+    size_t samples=packet->metadata.bytes/2;
+    const ZynqCapturePacket *next=packet;
+    for(unsigned i=packets->encoded_count;i>0;--i){
+        const ZynqCapturePacket *previous=&packets->encoded_context[i-1];
+        if(previous->metadata.sequence+1!=next->metadata.sequence ||
+           previous->metadata.first_sample+previous->metadata.bytes/2!=next->metadata.first_sample ||
+           previous->metadata.sample_rate_hz!=next->metadata.sample_rate_hz ||
+           previous->peak_detect!=next->peak_detect)break;
+        samples+=previous->metadata.bytes/2;next=previous;
+    }
+    if(history->count && history->latest.sequence+1==next->metadata.sequence &&
+       history->latest.first_sample+history->latest.bytes/2==next->metadata.first_sample &&
+       history->latest.sample_rate_hz==next->metadata.sample_rate_hz &&
+       !!history->latest.peaks==!!next->peak_detect)samples+=history->count;
+    return samples;
 }
 static void count_hardware_block(CapturePipeline *p,const CaptureBuffer *metadata,
     const uint8_t last[2],uint64_t started,uint64_t *expected)
@@ -494,8 +512,8 @@ static void hardware_worker(void *context)
                     scope_mutex_lock(&p->mutex);++p->hardware_metrics.dsp_blocks;scope_mutex_unlock(&p->mutex);
                     if(newest.dsp_triggered && !dsp_rearm)dsp_event=newest.dsp_sample;
                 }
-                unsigned dsp_context_limit=(depth+incoming-1)/incoming+1;
-                int dsp_fast=hardware_dsp && dsp_context_limit<=5;
+                unsigned encoded_context_limit=(depth+incoming-1)/incoming+1;
+                int dsp_fast=hardware_dsp && encoded_context_limit<=5;
                 int fast=!hardware_dsp && !request.roll && !request.debug.enabled && !request.baseline_mask && !request.calibration_mask && depth<=incoming;
                 int bounds=0,possible=1,current_possible=1;
                 if(packets.pending_count){
@@ -556,7 +574,11 @@ static void hardware_worker(void *context)
                 }
                 int deadtime=synchronize && (busy || packet.metadata.first_sample+packet.metadata.bytes/2<=next_trigger);
                 int auto_due=request.trigger_mode==0 && (revision!=published_revision || started-last_display>=40000000);
-                int skip=deadtime || (((fast && bounds && !possible && !packets.post) ||
+                /* Preserve a complete contiguous record before its first bulk
+                   decode. At large depth, decoding one incomplete payload can
+                   take longer than the next payload and perpetually reset history. */
+                int collecting=dsp_fast && depth>incoming && retained_samples(&packets,&packet,&history)<depth;
+                int skip=collecting || deadtime || (((fast && bounds && !possible && !packets.post) ||
                     (dsp_fast && (dsp_event==CAPTURE_NO_TRIGGER || dsp_rearm || !current_dsp))) && !force && !auto_due);
                 int drain_history=deadtime && depth>incoming && !dsp_fast;
                 if(skip && !drain_history){
@@ -567,27 +589,27 @@ static void hardware_worker(void *context)
                         scope_mutex_lock(&p->mutex);p->source_error=1;scope_mutex_unlock(&p->mutex);continue;
                     }
                     count_hardware_block(p,&packet.metadata,tail.data+tail.bytes-2,started,&expected);
-                    if(dsp_fast){if(!keep_dsp_context(p,&packets,&packet,dsp_context_limit))failed=1;}
+                    if(dsp_fast){if(!keep_encoded_context(p,&packets,&packet,encoded_context_limit))failed=1;}
                     else {
                         if(packets.have_context && !zynq_capture_release_index(&p->zynq,packets.context.index))failed=1;
                         packets.context=packet;packets.have_context=1;
                     }
                     scope_mutex_lock(&p->mutex);
                     if(deadtime){++p->hardware_metrics.deadtime_blocks;packets.post=0;}
-                    else ++p->hardware_metrics.rejected_blocks;
+                    else if(!collecting)++p->hardware_metrics.rejected_blocks;
                     p->hardware_metrics.acquisition_ns+=scope_clock_ns()-acquiring;
                     p->hardware_metrics.waiting=!busy && request.trigger_mode!=0;
                     if(failed)p->source_error=1;
                     scope_mutex_unlock(&p->mutex);continue;
                 }
                 packets.post=bounds?current_possible:1;
-                for(unsigned i=0;i<packets.dsp_count;++i){
+                for(unsigned i=0;i<packets.encoded_count;++i){
                     CaptureBuffer preceding;
-                    if(!decode_history(p,&history,&packets.dsp_context[i],&request,0,&preceding))failed=1;
+                    if(!decode_history(p,&history,&packets.encoded_context[i],&request,0,&preceding))failed=1;
                     else capture_history_append(&history,&preceding);
-                    if(!zynq_capture_release_index(&p->zynq,packets.dsp_context[i].index))failed=1;
+                    if(!zynq_capture_release_index(&p->zynq,packets.encoded_context[i].index))failed=1;
                 }
-                packets.dsp_count=0;
+                packets.encoded_count=0;
                 if(packets.have_context){
                     CaptureBuffer preceding;
                     if(!decode_history(p,&history,&packets.context,&request,depth,&preceding))failed=1;

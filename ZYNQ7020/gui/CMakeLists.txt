@@ -157,6 +157,7 @@ if(BUILD_TESTING)
         target_link_libraries(scope_zynq_test PRIVATE scope_runtime)
         target_link_options(scope_zynq_test PRIVATE
             -Wl,--wrap=capture_process
+            -Wl,--wrap=zynq_capture_decode_packet
             -Wl,--wrap=capture_find_trigger_filtered
             -Wl,--wrap=open -Wl,--wrap=close -Wl,--wrap=mmap -Wl,--wrap=munmap
             -Wl,--wrap=poll -Wl,--wrap=ioctl)

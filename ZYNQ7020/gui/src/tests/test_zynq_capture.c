@@ -22,6 +22,7 @@ static uint8_t memory[8 * FIXTURE_BLOCK_BYTES];
 static atomic_uint leased, available, counter, releases, configurations;
 static atomic_int fail_poll, bad_offset, bad_info;
 static atomic_int analysis_present,analysis_jobs;
+static atomic_int slow_bulk_decode;
 static atomic_uint sample_rate = 200000000;
 static atomic_uint adc_pair = 42 | (42 << 8);
 static atomic_int poison_release;
@@ -119,6 +120,17 @@ static int selftest_mode, selftest_fail_shift=-1, selftest_rail=-1;
 static unsigned selftest_clocks, selftest_progress_count;
 static unsigned selftest_poll_fail_rate;
 int __real_capture_process(const CaptureBuffer *,const CaptureView *,DisplayFrame *);
+int __real_zynq_capture_decode_packet(ZynqCaptureSource *,const ZynqCapturePacket *,size_t,size_t,
+    CaptureBuffer *,uint8_t *,uint8_t *,size_t);
+int __wrap_zynq_capture_decode_packet(ZynqCaptureSource *s,const ZynqCapturePacket *packet,size_t first,size_t samples,
+    CaptureBuffer *buffer,uint8_t *data,uint8_t *peaks,size_t capacity)
+{
+    int result=__real_zynq_capture_decode_packet(s,packet,first,samples,buffer,data,peaks,capacity);
+    /* Model packets arriving during expensive bulk decoding. Already leased
+       neighbours stay intact; a subsequent dequeue observes a sequence gap. */
+    if(atomic_load(&slow_bulk_decode) && samples>2)atomic_fetch_add(&counter,3);
+    return result;
+}
 int __wrap_capture_process(const CaptureBuffer *b,const CaptureView *v,DisplayFrame *f)
 {
     atomic_store(&processed_samples,(unsigned)(b->bytes/2));
@@ -885,6 +897,36 @@ static void hardware_dsp_pipeline_test(unsigned depth,double duration,unsigned c
     atomic_store(&burst_samples,0);atomic_store(&packed_peaks,0);atomic_store(&burst_channel,0);atomic_store(&burst_width,32);
     memset(&dsp_configuration,0,sizeof(dsp_configuration));dsp_fixture_sample=dsp_last_sample=CAPTURE_NO_TRIGGER;
 }
+static void complete_encoded_record_test(int peaks,int force)
+{
+    CaptureRequest request={0};CaptureMetrics metrics;static DisplayFrame frame;
+    double gain[2]={.004,.004},zero[2]={128,128};
+    const unsigned depth=1000000;double duration=peaks?.01:.001;
+    unsigned rate=osc_capture_rate(capture_rate_index(duration,depth,0));
+    unsigned incoming=(rate==200000000?4u:2u)<<capture_payload_shift_for_depth(rate,depth);
+    unsigned configured=atomic_load(&configurations);
+    atomic_store(&supports_dsp,1);atomic_store(&dsp_fixture,1);
+    dsp_fixture_sample=CAPTURE_NO_TRIGGER;atomic_store(&burst_samples,incoming);
+    atomic_store(&packed_peaks,peaks);atomic_store(&burst_at,UINT64_C(1)<<60);
+    atomic_store(&burst_width,32);atomic_store(&summary_gap,peaks);
+    atomic_store(&slow_bulk_decode,1);
+    CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);assert(p);
+    request.running=!force;request.force_sequence=force?1:0;
+    request.duration_seconds=duration;request.record_samples=depth;request.pan_fraction=.5;
+    request.zero_y[0]=request.zero_y[1]=200;request.pixels_per_volt[0]=request.pixels_per_volt[1]=100;
+    capture_pipeline_request(p,&request);
+    for(unsigned i=0;i<100 && atomic_load(&configurations)==configured;++i)scope_sleep_ms(5);
+    atomic_store(&available,16);
+    assert(wait_frame(p,&frame) && atomic_load(&processed_samples)==depth);
+    assert(frame.view_samples==(size_t)(duration*rate));
+    capture_pipeline_metrics(p,&metrics);assert(metrics.waveforms && !metrics.source_error);
+    capture_pipeline_destroy(p);assert(!atomic_load(&leased));
+    atomic_store(&available,0);atomic_store(&slow_bulk_decode,0);atomic_store(&summary_gap,0);
+    atomic_store(&supports_dsp,0);atomic_store(&dsp_fixture,0);atomic_store(&packed_peaks,0);
+    atomic_store(&burst_samples,0);atomic_store(&burst_at,0);
+    memset(&dsp_configuration,0,sizeof(dsp_configuration));dsp_fixture_sample=CAPTURE_NO_TRIGGER;
+}
+
 static void first_presented_trigger_test(unsigned depth,double duration,int hardware_dsp)
 {
     CaptureRequest request={0};CaptureMetrics metrics;
@@ -1163,5 +1205,6 @@ int main(void)
         hardware_bounds_burst_test(bound_samples-16,edge,1,edge==1,1);
         hardware_bounds_burst_test(bound_samples/2,edge,1,edge==1,2);
     }
+    for(int peaks=0;peaks<2;++peaks)for(int force=0;force<2;++force)complete_encoded_record_test(peaks,force);
     return 0;
 }
