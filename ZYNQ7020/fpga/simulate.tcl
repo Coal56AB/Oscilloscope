@@ -14,13 +14,13 @@ set_property -dict {CONFIG.TDATA_NUM_BYTES 8 CONFIG.HAS_TKEEP 1 CONFIG.HAS_TLAST
 generate_target simulation [get_ips {adc_fifo_test adc_cdc_test}]
 add_files [file join $source_dir axis_capture_pack.v]
 foreach source {axis_capture_frame.v capture_window_stats.v capture_trigger_probe.v
-    signal_wiener.v signal_mean.v signal_boxcar.v signal_edges.v signal_trigger.v
+    signal_wiener.v signal_mean.v signal_boxcar.v signal_edges.v signal_trigger.v capture_dsp_config.v
     ad9288_input.v axis_capture_decimate.v capture_config.v} {
     add_files [file join $source_dir $source]
 }
 set tops {axis_capture_pack_tb axis_capture_frame_tb axis_capture_bounds_tb
     capture_window_stats_tb capture_trigger_probe_tb signal_wiener_tb
-    signal_boxcar_tb signal_edges_tb signal_trigger_tb capture_window_header_tb
+    signal_boxcar_tb signal_edges_tb signal_trigger_tb capture_dsp_config_tb capture_window_header_tb
     axis_capture_stream_tb ad9288_input_tb adc_stream_ip_tb axis_capture_decimate_tb
     capture_config_tb ad9288_clock_tb ad9288_settle_tb}
 foreach top $tops {

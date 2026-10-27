@@ -22,7 +22,7 @@
     };
     capture@41210000 {
         compatible = "oscill,ad9288-capture";
-        reg = <0x41210000 0x10000>;
+        reg = <0x41210000 0x10000>, <0x41220000 0x10000>;
         dmas = <&capture_dma 1>;
         dma-names = "rx";
     };

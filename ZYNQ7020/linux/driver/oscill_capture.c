@@ -5,6 +5,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/fs.h>
 #include <linux/io.h>
+#include <linux/iopoll.h>
 #include <linux/kref.h>
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
@@ -26,13 +27,34 @@
 #define MAPPING_BYTES (BUFFERS * BLOCK_BYTES)
 #define GPIO_STATUS 8
 #define PL_ID 0xadc50000
+#define PL_DSP_PRESENT 2
+#define DSP_ID 0x31505344
 
 struct receiver {
     struct miscdevice misc;
     struct dma_chan *chan;
-    void __iomem *gpio;
+    void __iomem *gpio,*dsp;
     atomic_t busy;
 };
+static int configure_dsp(struct receiver *r,const struct osc_capture_dsp *config)
+{
+    u32 status;
+    int error;
+    if(!r->dsp || !(readl(r->gpio+GPIO_STATUS)&PL_DSP_PRESENT))return -ENOTTY;
+    if(readl(r->dsp)!=DSP_ID)return -ENODEV;
+    error=readl_poll_timeout(r->dsp+4,status,!(status&1),1,10000);
+    if(error)return error;
+    writel(config->control,r->dsp+16);writel(config->noise_power,r->dsp+20);
+    writel((u32)config->level,r->dsp+24);writel(config->hysteresis,r->dsp+28);
+    writel(lower_32_bits(config->minimum_sample),r->dsp+32);
+    writel(upper_32_bits(config->minimum_sample),r->dsp+36);
+    writel(lower_32_bits(config->holdoff_samples),r->dsp+40);
+    writel(upper_32_bits(config->holdoff_samples),r->dsp+44);
+    writel(config->arm_id,r->dsp+8);
+    error=readl_poll_timeout(r->dsp+4,status,!(status&1),1,10000);
+    if(error)return error;
+    return readl(r->dsp+12)==config->arm_id?0:-EIO;
+}
 enum buffer_state { QUEUED, READY, LEASED };
 struct session;
 struct capture_slot {
@@ -265,8 +287,17 @@ static long capture_ioctl(struct file *file, unsigned int command, unsigned long
     if (command == OSC_CAPTURE_GET_INFO) return copy_to_user(user, &info, sizeof(info)) ? -EFAULT : 0;
     if (command != OSC_CAPTURE_DEQUEUE && command != OSC_CAPTURE_RELEASE &&
         command != OSC_CAPTURE_CONFIGURE && command != OSC_CAPTURE_TEST_CLOCK &&
-        command != OSC_CAPTURE_SET_PROBE) return -ENOTTY;
+        command != OSC_CAPTURE_SET_PROBE && command != OSC_CAPTURE_SET_DSP) return -ENOTTY;
     if (mutex_lock_interruptible(&s->ioctl_lock)) return -ERESTARTSYS;
+    if(command==OSC_CAPTURE_SET_DSP){
+        struct osc_capture_dsp config;
+        if(copy_from_user(&config,user,sizeof(config))){error=-EFAULT;goto unlock;}
+        if((config.control&~OSC_CAPTURE_DSP_MASK) ||
+           ((config.control>>OSC_CAPTURE_DSP_EDGE_SHIFT)&3)>2 ||
+           config.hysteresis>0xffffff || config.reserved){error=-EINVAL;goto unlock;}
+        error=configure_dsp(s->receiver,&config);
+        goto unlock;
+    }
     if(command==OSC_CAPTURE_SET_PROBE){
         struct osc_capture_probe probe;
         if(copy_from_user(&probe,user,sizeof(probe))){error=-EFAULT;goto unlock;}
@@ -397,6 +428,10 @@ static int capture_probe(struct platform_device *device)
     r->gpio = devm_platform_ioremap_resource(device, 0);
     if (IS_ERR(r->gpio)) return PTR_ERR(r->gpio);
     if ((readl(r->gpio + GPIO_STATUS) & 0xffff0000) != PL_ID) return -ENODEV;
+    if(platform_get_resource(device,IORESOURCE_MEM,1)){
+        r->dsp=devm_platform_ioremap_resource(device,1);
+        if(IS_ERR(r->dsp))return PTR_ERR(r->dsp);
+    }
     r->chan = dma_request_chan(&device->dev, "rx");
     if (IS_ERR(r->chan)) return dev_err_probe(&device->dev, PTR_ERR(r->chan), "capture DMA\n");
     r->misc = (struct miscdevice){ .minor = MISC_DYNAMIC_MINOR, .name = "oscill-capture",

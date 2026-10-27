@@ -26,10 +26,25 @@ struct osc_capture_test_clock { __u32 shift, payload_shift; };
 struct osc_capture_probe { __u32 control; };
 #define OSC_CAPTURE_PROBE_ENABLE (1u<<17)
 #define OSC_CAPTURE_PROBE_MASK ((1u<<18)-1)
+/* Atomic hardware DSP configuration. A new arm_id admits one trigger;
+   minimum_sample/holdoff_samples are in effective samples of the stream. */
+struct osc_capture_dsp {
+    __u32 control,noise_power;
+    __s32 level;
+    __u32 hysteresis;
+    __aligned_u64 minimum_sample,holdoff_samples;
+    __u32 arm_id,reserved;
+};
+#define OSC_CAPTURE_DSP_ENABLE 1u
+#define OSC_CAPTURE_DSP_CHANNEL_SHIFT 1
+#define OSC_CAPTURE_DSP_EDGE_SHIFT 2
+#define OSC_CAPTURE_DSP_FILTER_SHIFT 4
+#define OSC_CAPTURE_DSP_MASK 63u
 #include "capture_rates.h"
 #define OSC_CAPTURE_CONFIGURE _IOW('O', 0x13, struct osc_capture_config)
 #define OSC_CAPTURE_TEST_CLOCK _IOW('O', 0x14, struct osc_capture_test_clock)
 #define OSC_CAPTURE_SET_PROBE _IOW('O', 0x15, struct osc_capture_probe)
+#define OSC_CAPTURE_SET_DSP _IOW('O', 0x16, struct osc_capture_dsp)
 #define OSC_CAPTURE_GET_INFO _IOR('O', 0x10, struct osc_capture_info)
 #define OSC_CAPTURE_DEQUEUE _IOR('O', 0x11, struct osc_capture_block)
 #define OSC_CAPTURE_RELEASE _IOW('O', 0x12, __u32)
