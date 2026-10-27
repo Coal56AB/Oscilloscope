@@ -31,8 +31,8 @@ void record_measure(const uint8_t *codes,const SignalNumber *values,SignalNumber
     static SignalNumber workspace[SIGNAL_TIMING_WORKSPACE];
     result[7]=0;
     if(count>1000000 || stride>2 || (!filtered && !stride) || filtered>1 ||
-        !isfinite(gain) || !isfinite(zero) || !isfinite(sample_rate) || sample_rate<0 ||
-        operation>1 || filter_level>3 || !isfinite(noise_rms) || noise_rms<0)return;
+        !signal_number_finite(gain) || !signal_number_finite(zero) || !signal_number_finite(sample_rate) || sample_rate<0 ||
+        operation>1 || filter_level>3 || !signal_number_finite(noise_rms) || noise_rms<0)return;
     record_trace_begin();
     SignalTrace trace={codes,values,count,stride,gain,zero,filtered?SIGNAL_TRACE_VALUES:SIGNAL_TRACE_BYTES};
     if(operation){

@@ -28,4 +28,16 @@ typedef double SignalNumber;
 #define signal_number_min fmin
 #endif
 #define SIGNAL_NUMBER(value) ((SignalNumber)(value))
+static inline int signal_number_finite(SignalNumber value)
+{
+#if defined(SIGNAL_NUMBER_FLOAT)
+    /* Use binary32 directly: the Windows fpclassify macros and HLS library
+       use different classification flags. The union is a bitcast in HLS. */
+    union { float value;uint32_t word; } bits;
+    bits.value=value;
+    return (bits.word&UINT32_C(0x7f800000))!=UINT32_C(0x7f800000);
+#else
+    return isfinite(value);
+#endif
+}
 #endif

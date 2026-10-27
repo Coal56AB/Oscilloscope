@@ -39,7 +39,7 @@ set_directive_inline record_trace_code
 set_directive_inline record_trace_value
 set_directive_inline signal_measure_amplitude
 set_directive_inline signal_measure_timing
-foreach function {signal_filter_trace signal_filter_apply signal_filter_denoise signal_filter_denoise_u8 signal_filter_padding filter_origin denoise_value} {
+foreach function {signal_filter_trace signal_filter_apply signal_filter_denoise signal_filter_denoise_u8 signal_filter_padding filter_origin denoise_value signal_number_finite} {
     set_directive_inline $function
 }
 foreach operation {fadd fsub fmul fdiv fcmp} {

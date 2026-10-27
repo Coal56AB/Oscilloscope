@@ -163,7 +163,7 @@ void signal_measure_timing(const SignalTrace *s,SignalNumber sample_rate,SignalN
     SignalNumber span_error=0,width_error=0,square_error=0;
     SignalIndex capacity=count/2<SIGNAL_TIMING_CAPACITY?count/2:SIGNAL_TIMING_CAPACITY;
     result->frequency=0;result->duty=NAN;
-    if(count<3 || !isfinite(range) || range<4*signal_number_abs(s->gain) || range<=0 || !workspace)return;
+    if(count<3 || !signal_number_finite(range) || range<4*signal_number_abs(s->gain) || range<=0 || !workspace)return;
     SignalNumber histogram_scale=255/range;
     i=0;
     while(i<count){SignalIndex end=prepare(s,i);

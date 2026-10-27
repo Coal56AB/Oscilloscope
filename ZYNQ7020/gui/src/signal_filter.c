@@ -32,9 +32,9 @@ void signal_filter_denoise_bounds(SignalNumber raw_low,SignalNumber raw_high,Sig
 {
     SignalNumber noise=noise_rms*noise_rms;
     *low=raw_low;*high=raw_high;
-    if(!(noise>0) || !isfinite(noise))return;
+    if(!(noise>0) || !signal_number_finite(noise))return;
     *low=signal_number_min(raw_low,mean_low);*high=signal_number_max(raw_high,mean_high);
-    if(!isfinite(maximum_variance) || maximum_variance<0 || mean_low>mean_high ||
+    if(!signal_number_finite(maximum_variance) || maximum_variance<0 || mean_low>mean_high ||
        maximum_variance>=SIGNAL_FILTER_DENOISE_EDGE_POWER*noise)return;
     SignalNumber retained=maximum_variance>noise?1-noise/maximum_variance:0;
     *low=signal_number_min(mean_low,mean_low+retained*(raw_low-mean_low));
@@ -43,7 +43,7 @@ void signal_filter_denoise_bounds(SignalNumber raw_low,SignalNumber raw_high,Sig
 
 static SignalNumber filter_origin(const SignalNumber *source,SignalIndex samples)
 {
-    for(SignalIndex i=0;i<samples;++i)if(isfinite(source[i]))return source[i];
+    for(SignalIndex i=0;i<samples;++i)if(signal_number_finite(source[i]))return source[i];
     return 0;
 }
 
@@ -53,7 +53,7 @@ void signal_filter_denoise_u8(const uint8_t *source,SignalIndex samples,SignalIn
     uint16_t sum=0;
     unsigned squares=0;
     SignalNumber noise=noise_rms*noise_rms;
-    if(!isfinite(noise) || noise<=0){for(SignalIndex i=0;i<samples;++i)result[i]=source[i*stride];return;}
+    if(!signal_number_finite(noise) || noise<=0){for(SignalIndex i=0;i<samples;++i)result[i]=source[i*stride];return;}
     for(SignalIndex j=0;j<samples && j<SIGNAL_FILTER_DENOISE_RADIUS;++j){unsigned value=source[j*stride];sum+=value;squares+=value*value;}
     for(SignalIndex i=0;i<samples;++i){
 #if defined(__SYNTHESIS__)
@@ -76,23 +76,23 @@ void signal_filter_denoise(const SignalNumber *source,SignalIndex samples,Signal
 {
     uint8_t count=0;
     SignalNumber sum=0,squares=0,noise=noise_rms*noise_rms;
-    if(!isfinite(noise) || noise<=0){for(SignalIndex i=0;i<samples;++i)result[i]=source[i];return;}
+    if(!signal_number_finite(noise) || noise<=0){for(SignalIndex i=0;i<samples;++i)result[i]=source[i];return;}
     SignalNumber origin=filter_origin(source,samples);
     for(SignalIndex j=0;j<samples && j<SIGNAL_FILTER_DENOISE_RADIUS;++j)
-        if(isfinite(source[j])){SignalNumber value=source[j]-origin;sum+=value;squares+=value*value;++count;}
+        if(signal_number_finite(source[j])){SignalNumber value=source[j]-origin;sum+=value;squares+=value*value;++count;}
     for(SignalIndex i=0;i<samples;++i){
 #if defined(__SYNTHESIS__)
 #pragma HLS PIPELINE II=1
 #endif
         SignalIndex left=i>SIGNAL_FILTER_DENOISE_RADIUS?i-SIGNAL_FILTER_DENOISE_RADIUS:0;
         SignalIndex right=samples-i>SIGNAL_FILTER_DENOISE_RADIUS?i+SIGNAL_FILTER_DENOISE_RADIUS+1:samples;
-        if(samples-i>SIGNAL_FILTER_DENOISE_RADIUS && isfinite(source[right-1])){
+        if(samples-i>SIGNAL_FILTER_DENOISE_RADIUS && signal_number_finite(source[right-1])){
             SignalNumber value=source[right-1]-origin;sum+=value;squares+=value*value;++count;
         }
-        if(i>SIGNAL_FILTER_DENOISE_RADIUS && isfinite(source[left-1])){
+        if(i>SIGNAL_FILTER_DENOISE_RADIUS && signal_number_finite(source[left-1])){
             SignalNumber value=source[left-1]-origin;sum-=value;squares-=value*value;--count;
         }
-        if(!isfinite(source[i]) || !count){result[i]=NAN;continue;}
+        if(!signal_number_finite(source[i]) || !count){result[i]=NAN;continue;}
         SignalNumber inverse=inverse_counts[count];
         SignalNumber mean=sum*inverse,variance=squares*inverse-mean*mean;
         if(!(variance>0))variance=0;
@@ -109,17 +109,17 @@ void signal_filter_apply(const SignalNumber *source, SignalIndex samples, unsign
     SignalNumber sum = 0;
     if (!radius) { for(SignalIndex j=0;j<samples;++j)result[j]=source[j];return; }
     SignalNumber origin=filter_origin(source,samples);
-    for(SignalIndex j=0;j<samples && j<radius;++j)if(isfinite(source[j])){sum+=source[j]-origin;++count;}
+    for(SignalIndex j=0;j<samples && j<radius;++j)if(signal_number_finite(source[j])){sum+=source[j]-origin;++count;}
     for (i = 0; i < samples; ++i) {
 #if defined(__SYNTHESIS__)
 #pragma HLS PIPELINE II=1
 #endif
         SignalIndex left = i > radius ? i - radius : 0;
         SignalIndex right = samples - i > radius ? i + radius + 1 : samples;
-        if(samples-i>radius && isfinite(source[right-1])){sum+=source[right-1]-origin;++count;}
-        if(i>radius && isfinite(source[left-1])){sum-=source[left-1]-origin;--count;}
+        if(samples-i>radius && signal_number_finite(source[right-1])){sum+=source[right-1]-origin;++count;}
+        if(i>radius && signal_number_finite(source[left-1])){sum-=source[left-1]-origin;--count;}
         SignalNumber inverse=inverse_counts[count];
-        result[i] = isfinite(source[i]) && count ?
+        result[i] = signal_number_finite(source[i]) && count ?
             source[i]+(sum-count*(source[i]-origin))*inverse : NAN;
     }
 }

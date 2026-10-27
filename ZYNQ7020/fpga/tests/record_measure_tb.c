@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 void record_measure(const uint8_t *,const SignalNumber *,SignalNumber *,uint32_t,uint32_t,uint32_t,SignalNumber,SignalNumber,SignalNumber,uint32_t,uint32_t,SignalNumber);
 static void measure(const uint8_t *codes,const SignalNumber *values,SignalNumber *result,
     uint32_t count,uint32_t stride,uint32_t format,SignalNumber gain,SignalNumber zero,SignalNumber rate)
@@ -23,6 +24,10 @@ int main(int argc,char **argv)
     (void)argv;
     uint8_t *codes=calloc(2000000,1);SignalNumber *values=calloc(1000000,sizeof(SignalNumber));
     SignalNumber *result=calloc(1000008,sizeof(*result));assert(codes && values && result);
+    measure(codes,values,result,1,2,0,NAN,128,1100000);assert(result[7]==0);
+    measure(codes,values,result,1,2,0,INFINITY,128,1100000);assert(result[7]==0);
+    record_measure(codes,values,result,1,2,1,.01f,128,0,1,0,INFINITY);assert(result[7]==0);
+    if(argc>1 && !strcmp(argv[1],"nan"))goto check_gaps;
     for(i=0;i<count;++i){codes[i*2]=85;codes[i*2+1]=195;values[i]=3.25;}
     measure(codes,values,result,count,2,0,.01,128,1100000);
     assert(result[7]==1);near(result[0],-.43,1e-6);near(result[1],-.43,1e-6);
@@ -62,7 +67,19 @@ int main(int argc,char **argv)
         for(i=0;i<count;++i)near(filtered[8+i],expected[i],.000002);
     }
     free(filtered);free(expected);
+check_gaps:
+    for(i=0;i<count;++i)values[i]=.125f;
+    values[0]=NAN;values[255]=NAN;values[256]=NAN;
+    for(unsigned gap_level=0;gap_level<4;++gap_level){
+        record_measure(codes,values,result,count,2,1,.01f,128.25f,0,1,gap_level,.025f);
+        assert(result[7]==1);
+        for(i=0;i<count;++i){
+            if(isnan(values[i]))assert(isnan(result[8+i]));
+            else near(result[8+i],.125,0);
+        }
+    }
     free(codes);free(values);free(result);
-    puts("PASS: DDR measurement replay, DC, 11 kHz/33% duty, raw/filtered, many periods, noise rejection and bounds");
+    puts(argc>1 && !strcmp(argv[1],"nan")?"PASS: physical filter, NaN gaps and tile boundaries":
+        "PASS: DDR measurement replay, DC, 11 kHz/33% duty, raw/filtered, many periods, noise rejection, NaN gaps and bounds");
     return 0;
 }
