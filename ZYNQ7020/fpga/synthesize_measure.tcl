@@ -1,16 +1,16 @@
 # vivado_hls -f synthesize_measure.tcl -tclargs /absolute/build-directory [part] [verify]
 # The 2019.1 launcher removes -tclargs but retains -f and the script in argv.
 if {$argc < 3 || $argc > 5 || [lindex $argv 0] ne "-f"} {
-    error "Provide -f script -tclargs and an external HLS build directory"
+    puts stderr "Provide -f script -tclargs and an external HLS build directory";exit 1
 }
 set here [file dirname [file normalize [info script]]]
 set output [file normalize [lindex $argv 2]]
 set part xc7z020clg400-1
 if {$argc >= 4} { set part [lindex $argv 3] }
-if {![regexp {^xc7z020clg400-[123]$} $part]} { error "Expected XC7Z020 CLG400 part" }
+if {![regexp {^xc7z020clg400-[123]$} $part]} { puts stderr "Expected XC7Z020 CLG400 part";exit 1 }
 set verify [expr {$argc == 5}]
-if {$verify && [lindex $argv 4] ne "verify"} { error "Expected verify as the last argument" }
-if {[string first $here $output] == 0} { error "Build outside the FPGA source tree" }
+if {$verify && [lindex $argv 4] ne "verify"} { puts stderr "Expected verify as the last argument";exit 1 }
+if {[string first $here $output] == 0} { puts stderr "Build outside the FPGA source tree";exit 1 }
 set common [file normalize $here/../gui/src]
 proc synthesize_measure {here output common part verify} {
 file mkdir $output
@@ -50,7 +50,8 @@ set ready [open $output/ready w];puts $ready $part;close $ready
 puts "OSCILL MEASUREMENT IP READY: $output/record_measure/solution/impl/ip"
 }
 if {[catch {synthesize_measure $here $output $common $part $verify} message options]} {
-    puts stderr [dict get $options -errorinfo]
+    puts stderr $message
+    if {[dict exists $options -errorinfo]} { puts stderr [dict get $options -errorinfo] }
     exit 1
 }
 exit 0
