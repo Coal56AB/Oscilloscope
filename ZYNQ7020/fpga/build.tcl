@@ -14,7 +14,11 @@ create_project oscill $root -part $part -force
 set_property ip_repo_paths [list $ip_repo/ip/rgb2dvi $ip_repo/if] [current_project]
 set_param general.maxThreads 8
 update_ip_catalog
-add_files [list $here/ad9288_input.v $here/axis_capture_frame.v $here/capture_window_stats.v $here/capture_trigger_probe.v $here/capture_status.v $here/capture_config.v $here/axis_capture_decimate.v]
+foreach source {ad9288_input.v axis_capture_frame.v capture_window_stats.v capture_trigger_probe.v
+    signal_wiener.v signal_mean.v signal_boxcar.v signal_edges.v signal_trigger.v
+    capture_dsp_config.v capture_status.v capture_config.v axis_capture_decimate.v} {
+    add_files $here/$source
+}
 source $here/board.tcl
 create_bd_design system
 proc cell {name vlnv properties} {
@@ -32,7 +36,7 @@ set ps [cell ps7 xilinx.com:ip:processing_system7:5.5 {}]
 configure_board $ps
 apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 \
     -config {make_external "FIXED_IO, DDR" apply_board_preset "0" Master "Disable" Slave "Disable"} $ps
-cell control xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 5 CONFIG.NUM_SI 1}
+cell control xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 6 CONFIG.NUM_SI 1}
 cell oled_gpio xilinx.com:ip:axi_gpio:2.0 {CONFIG.C_IS_DUAL 1 CONFIG.C_GPIO_WIDTH 4 \
     CONFIG.C_ALL_OUTPUTS 1 CONFIG.C_DOUT_DEFAULT 0x00000008 \
     CONFIG.C_GPIO2_WIDTH 2 CONFIG.C_ALL_INPUTS_2 1}
@@ -100,10 +104,13 @@ connect_bd_net [create_bd_port -dir O hdmi_enable] [get_bd_pins one/dout]
 connect_bd_net [create_bd_port -dir O -from 3 -to 0 oled] [get_bd_pins oled_gpio/gpio_io_o]
 connect_bd_net [create_bd_port -dir I -from 1 -to 0 pl_key] [get_bd_pins oled_gpio/gpio2_io_i]
 assign_bd_address
+set dsp_segment [get_bd_addr_segs -of_objects [get_bd_addr_spaces ps7/Data] -filter {NAME =~ *capture_dsp*}]
+if {[llength $dsp_segment] != 1} { error "Expected one capture DSP address segment" }
+set_property offset 0x41220000 $dsp_segment
 set_property offset 0x43000000 [get_bd_addr_segs ps7/Data/SEG_vdma_Reg]
 set_property offset 0x43C00000 [get_bd_addr_segs ps7/Data/SEG_timing_Reg]
 # Free the automatically assigned GPIO address before restoring the OLED ABI.
-set_property offset 0x41220000 [get_bd_addr_segs ps7/Data/SEG_capture_gpio_Reg]
+set_property offset 0x412F0000 [get_bd_addr_segs ps7/Data/SEG_capture_gpio_Reg]
 set_property offset 0x41200000 [get_bd_addr_segs ps7/Data/SEG_oled_gpio_Reg]
 set_property offset 0x41210000 [get_bd_addr_segs ps7/Data/SEG_capture_gpio_Reg]
 set_property offset 0x40400000 [get_bd_addr_segs ps7/Data/SEG_capture_dma_Reg]
@@ -117,7 +124,9 @@ generate_target all $bd
 add_files -norecurse [make_wrapper -files $bd -top]
 add_files -fileset constrs_1 $here/hdmi.xdc
 add_files -fileset constrs_1 $here/adc.xdc
+add_files -fileset constrs_1 $here/capture_dsp.xdc
 set_property USED_IN_SYNTHESIS false [get_files $here/adc.xdc]
+set_property USED_IN_SYNTHESIS false [get_files $here/capture_dsp.xdc]
 set_property top system_wrapper [current_fileset]
 launch_runs synth_1 -jobs 8
 wait_on_run synth_1
@@ -128,6 +137,11 @@ launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
 if {[get_property STATUS [get_runs impl_1]] ne "write_bitstream Complete!"} { error "Implementation failed" }
 open_run impl_1
+if {![llength [get_cells -hier -filter {NAME =~ *capture_dsp*transfer_reg*}]] ||
+    ![llength [get_cells -hier -filter {NAME =~ *capture_dsp*dsp_settings_reg*}]] ||
+    [llength [get_pins -hier -filter {NAME =~ *capture_dsp*request_meta_reg/D || NAME =~ *capture_dsp*ack_meta_reg/D}]] != 2} {
+    error "Capture DSP handshake constraints have no endpoints"
+}
 report_timing_summary -file $output/timing.rpt
 if {[get_property SLACK [get_timing_paths -delay_type max -max_paths 1]] < 0} { error "Setup timing failed" }
 if {[get_property SLACK [get_timing_paths -delay_type min -max_paths 1]] < 0} { error "Hold timing failed" }

@@ -20,7 +20,7 @@ foreach source {axis_capture_frame.v capture_window_stats.v capture_trigger_prob
 }
 set tops {axis_capture_pack_tb axis_capture_frame_tb axis_capture_bounds_tb
     capture_window_stats_tb capture_trigger_probe_tb signal_wiener_tb
-    signal_boxcar_tb signal_edges_tb signal_trigger_tb capture_dsp_config_tb capture_window_header_tb
+    signal_boxcar_tb signal_edges_tb signal_trigger_tb capture_dsp_config_tb axis_capture_dsp_tb capture_window_header_tb
     axis_capture_stream_tb ad9288_input_tb adc_stream_ip_tb axis_capture_decimate_tb
     capture_config_tb ad9288_clock_tb ad9288_settle_tb}
 foreach top $tops {

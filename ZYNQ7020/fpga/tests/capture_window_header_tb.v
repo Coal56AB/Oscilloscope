@@ -10,7 +10,7 @@ module capture_window_header_tb;
     localparam [63:0] STATS={15'd0,23'd0,13'd2176,13'd2176};
     integer phase,sent=0,received=0,cycles=0,frame,offset;
     axis_capture_frame dut(clk,resetn,32'd4096,32'd50000000,data,valid,input_ready,
-        output_data,keep,output_valid,ready,last,peaks,probe_control);
+        output_data,keep,output_valid,ready,last,peaks,probe_control,288'd0);
     always #5 clk=~clk;
     initial begin
         for(phase=0;phase<8;phase=phase+1)begin

@@ -17,7 +17,7 @@
 #include <sys/mman.h>
 
 enum { FIXTURE_BLOCK_BYTES = 2 * 1024 * 1024 };
-static uint8_t memory[4 * FIXTURE_BLOCK_BYTES];
+static uint8_t memory[8 * FIXTURE_BLOCK_BYTES];
 static atomic_uint leased, available, counter, releases, configurations;
 static atomic_int fail_poll, bad_offset, bad_info;
 static atomic_uint sample_rate = 200000000;
@@ -30,6 +30,10 @@ static atomic_int bounds_fault;
 static atomic_int hardware_window_bounds,burst_jitter;
 static atomic_int supports_probe;
 static atomic_uint probe_word;
+static atomic_int supports_dsp,dsp_fixture;
+static struct osc_capture_dsp dsp_configuration;
+static uint64_t dsp_fixture_sample=CAPTURE_NO_TRIGGER;
+static uint64_t dsp_last_sample=CAPTURE_NO_TRIGGER;
 static struct {uint64_t stats[2],sequence;uint32_t raw,probe,probe_sides;} window_cache[2];
 static uint32_t previous_bounds,previous_bytes,previous_rate;
 static uint64_t previous_sequence;
@@ -37,10 +41,33 @@ static int bounds_valid;
 static atomic_uint burst_samples,burst_width=32;
 static atomic_uint burst_period;
 static atomic_int burst_invert;
+static atomic_uint burst_channel;
 static atomic_uint_fast64_t burst_at;
 static atomic_int pause_processing,processing_entered;
 static atomic_uint processed_samples;
 static atomic_uint processed_count;
+static unsigned fixture_buffers(void){return atomic_load(&supports_dsp)?8u:4u;}
+static uint64_t mock_dsp_event(void)
+{
+    uint64_t minimum=dsp_configuration.minimum_sample,start=atomic_load(&burst_at),first=CAPTURE_NO_TRIGGER;
+    unsigned period=atomic_load(&burst_period),width=atomic_load(&burst_width);
+    unsigned edge=(dsp_configuration.control>>OSC_CAPTURE_DSP_EDGE_SHIFT)&3;
+    if(dsp_last_sample!=CAPTURE_NO_TRIGGER && minimum<dsp_last_sample+dsp_configuration.holdoff_samples+1)
+        minimum=dsp_last_sample+dsp_configuration.holdoff_samples+1;
+    for(unsigned direction=0;direction<2;++direction)if(edge==2 || edge==direction){
+        uint64_t at=start+(direction?(period?period/2:width):0);
+        if(at<minimum && period)at+=((minimum-at+period-1)/period)*period;
+        if(at>=minimum && (period?at<start+width:at<=start+width) && at<first)first=at;
+    }
+    return first;
+}
+int __real_capture_find_trigger_filtered(const CaptureBuffer *,unsigned,unsigned,double,unsigned,unsigned,double,uint64_t,uint64_t *);
+int __wrap_capture_find_trigger_filtered(const CaptureBuffer *b,unsigned ch,unsigned edge,double volts,unsigned hysteresis,
+    unsigned filter,double noise,uint64_t first,uint64_t *sample)
+{
+    assert(atomic_load(&dsp_fixture)!=2); /* Hardware mode must not scan the signal on ARM. */
+    return __real_capture_find_trigger_filtered(b,ch,edge,volts,hysteresis,filter,noise,first,sample);
+}
 static unsigned burst_code(uint64_t sample)
 {
     uint64_t at=atomic_load(&burst_at);unsigned period=atomic_load(&burst_period);
@@ -104,10 +131,10 @@ int __wrap_open(const char *path, int flags, ...) { (void)flags; assert(!strcmp(
 int __wrap_close(int fd) { assert(fd==42); atomic_store(&leased,0); return 0; }
 void *__wrap_mmap(void *addr, size_t length, int protection, int flags, int fd, long offset)
 {
-    (void)addr; assert(length==sizeof(memory)&&protection==PROT_READ&&flags==MAP_SHARED&&fd==42&&!offset);
+    (void)addr; assert(length==fixture_buffers()*FIXTURE_BLOCK_BYTES&&protection==PROT_READ&&flags==MAP_SHARED&&fd==42&&!offset);
     return memory;
 }
-int __wrap_munmap(void *addr, size_t length) { assert(addr==memory&&length==sizeof(memory)); return 0; }
+int __wrap_munmap(void *addr, size_t length) { assert(addr==memory&&length==fixture_buffers()*FIXTURE_BLOCK_BYTES); return 0; }
 int __wrap_poll(struct pollfd *p, unsigned long count, int timeout)
 {
     assert(count==1&&p->fd==42);
@@ -121,7 +148,7 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
     va_list args; void *arg;
     assert(fd==42); va_start(args,command); arg=va_arg(args,void *); va_end(args);
     if(command==OSC_CAPTURE_GET_INFO) {
-        struct osc_capture_info info={OSC_CAPTURE_ABI,OSC_CAPTURE_REGISTER_VERSION,OSC_CAPTURE_SAMPLE_FORMAT,1,4,FIXTURE_BLOCK_BYTES,sizeof(memory)};
+        struct osc_capture_info info={OSC_CAPTURE_ABI,OSC_CAPTURE_REGISTER_VERSION,OSC_CAPTURE_SAMPLE_FORMAT,1,fixture_buffers(),FIXTURE_BLOCK_BYTES,fixture_buffers()*FIXTURE_BLOCK_BYTES};
         if(atomic_load(&bad_info))info.buffers=1000;
         *(struct osc_capture_info *)arg=info;
     } else if(command==OSC_CAPTURE_CONFIGURE) {
@@ -131,6 +158,7 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
         atomic_store(&counter,0);
         bounds_valid=0;
         atomic_fetch_add(&configurations,1);
+        if(atomic_load(&dsp_fixture)==2)dsp_fixture_sample=dsp_last_sample=CAPTURE_NO_TRIGGER;
     } else if(command==OSC_CAPTURE_TEST_CLOCK) {
         const struct osc_capture_test_clock *config=arg;
         assert(!atomic_load(&leased) && config->shift<=6 && config->payload_shift==17);
@@ -143,12 +171,16 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
         const struct osc_capture_probe *probe=arg;
         assert(!atomic_load(&leased) && !(probe->control&~OSC_CAPTURE_PROBE_MASK));
         atomic_store(&probe_word,probe->control);
+    } else if(command==OSC_CAPTURE_SET_DSP){
+        if(!atomic_load(&supports_dsp)){errno=ENOTTY;return -1;}
+        dsp_configuration=*(const struct osc_capture_dsp *)arg;
+        if(atomic_load(&dsp_fixture)==2)dsp_fixture_sample=CAPTURE_NO_TRIGGER;
     } else if(command==OSC_CAPTURE_DEQUEUE) {
         struct osc_capture_block *b=arg;
         unsigned i,mask=atomic_load(&leased),sequence;
         if(!atomic_load(&available)){errno=EAGAIN;return -1;}
-        for(i=0;i<4&&(mask&(1u<<i));++i){}
-        assert(i<4); atomic_fetch_or(&leased,1u<<i); atomic_fetch_sub(&available,1);
+        for(i=0;i<fixture_buffers()&&(mask&(1u<<i));++i){}
+        assert(i<fixture_buffers()); atomic_fetch_or(&leased,1u<<i); atomic_fetch_sub(&available,1);
         sequence=atomic_fetch_add(&counter,1);
         if(sequence==2 && atomic_load(&summary_gap)){sequence+=10;atomic_fetch_add(&counter,10);}
         memset(memory+i*FIXTURE_BLOCK_BYTES,0,64);
@@ -178,12 +210,14 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
             uint64_t at=atomic_load(&burst_at);
             for(unsigned pos=0;pos<samples;++pos){
                 unsigned target=peaks?(pos/2)*8+(pos%2)*2:pos*2;
-                data[target]=(uint8_t)burst_code(b->first_sample+pos);
+                data[target+atomic_load(&burst_channel)]=(uint8_t)burst_code(b->first_sample+pos);
             }
             if(peaks)for(unsigned pos=0;pos<samples;pos+=2){
                 unsigned target=(pos/2)*8;
-                data[target+4]=data[target]<data[target+2]?data[target]:data[target+2];
-                data[target+6]=data[target]>data[target+2]?data[target]:data[target+2];
+                for(unsigned ch=0;ch<2;++ch){
+                    data[target+4+ch]=data[target+ch]<data[target+2+ch]?data[target+ch]:data[target+2+ch];
+                    data[target+6+ch]=data[target+ch]>data[target+2+ch]?data[target+ch]:data[target+2+ch];
+                }
             }
         }
         if(atomic_load(&hardware_bounds)){
@@ -233,9 +267,27 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
                 window_cache[slot].stats[1]=1700|((uint64_t)1700<<13);
             }
         }
+        if(atomic_load(&dsp_fixture) && (dsp_configuration.control&OSC_CAPTURE_DSP_ENABLE)){
+            if(atomic_load(&dsp_fixture)==2 && dsp_fixture_sample==CAPTURE_NO_TRIGGER)dsp_fixture_sample=mock_dsp_event();
+            uint32_t *header=(uint32_t *)(memory+b->index*FIXTURE_BLOCK_BYTES);
+            uint64_t event=dsp_fixture_sample;
+            if(atomic_load(&dsp_fixture)==2 && event>=b->first_sample)event=CAPTURE_NO_TRIGGER;
+            if(atomic_load(&dsp_fixture)==2 && event!=CAPTURE_NO_TRIGGER)dsp_last_sample=event;
+            header[9]=dsp_configuration.arm_id;header[10]=(uint32_t)event;
+            header[11]=(uint32_t)(event>>32);header[12]=dsp_configuration.control;
+            header[13]=0;header[14]=0x31475254;header[15]=event!=CAPTURE_NO_TRIGGER;
+            switch(atomic_load(&bounds_fault)){
+                case 1:header[14]^=1;break;
+                case 2:header[12]|=1u<<31;break;
+                case 3:header[13]=1;break;
+                case 4:header[15]=2;break;
+                case 5:header[10]=header[11]=UINT32_MAX;break;
+                case 6:header[15]=0;break;
+            }
+        }
     } else if(command==OSC_CAPTURE_RELEASE) {
         unsigned index=*(uint32_t *)arg;
-        assert(index<4&&(atomic_fetch_and(&leased,~(1u<<index))&(1u<<index)));
+        assert(index<fixture_buffers()&&(atomic_fetch_and(&leased,~(1u<<index))&(1u<<index)));
         atomic_fetch_add(&releases,1);
         if(atomic_load(&poison_release))memset(memory+index*FIXTURE_BLOCK_BYTES+64,238,256);
     } else assert(0);
@@ -730,7 +782,76 @@ static void encoded_window_test(void)
     atomic_store(&burst_samples,0);atomic_store(&packed_peaks,0);atomic_store(&burst_jitter,0);
 }
 
-static void first_presented_trigger_test(unsigned depth,double duration)
+static void encoded_dsp_test(void)
+{
+    ZynqCaptureSource source;ZynqCapturePacket packet;
+    double gain[2]={.004,.004},zero[2]={128,128};
+    struct osc_capture_dsp config={.control=OSC_CAPTURE_DSP_ENABLE,.level=140<<16,.hysteresis=2u<<16,.arm_id=7};
+    assert(zynq_capture_open(&source,"/dev/test-adc",gain,zero));
+    assert(zynq_capture_set_dsp(&source,&config) && source.dsp_supported<0);
+    zynq_capture_close(&source);
+    atomic_store(&supports_dsp,1);atomic_store(&dsp_fixture,1);dsp_fixture_sample=CAPTURE_NO_TRIGGER;
+    assert(zynq_capture_open(&source,"/dev/test-adc",gain,zero));
+    assert(zynq_capture_set_dsp(&source,&config) && source.dsp_supported==1);
+    assert(zynq_capture_configure(&source,0,5));
+    atomic_store(&available,1);assert(zynq_capture_dequeue(&source,&packet,1)==1);
+    assert(packet.metadata.sequence==0 && packet.dsp_valid && !packet.dsp_triggered && packet.dsp_arm_id==7);
+    ++config.arm_id;assert(zynq_capture_set_dsp(&source,&config));
+    assert(packet.dsp_arm_id==7); /* An atomic re-arm does not mutate a leased header. */
+    assert(zynq_capture_release_index(&source,packet.index));
+    dsp_fixture_sample=32;
+    atomic_store(&available,1);assert(zynq_capture_dequeue(&source,&packet,1)==1);
+    assert(packet.dsp_valid && packet.dsp_triggered && packet.dsp_sample==32 && packet.dsp_arm_id==8 && !packet.bounds_valid);
+    assert(zynq_capture_release_index(&source,packet.index));
+    for(int fault=1;fault<=6;++fault){
+        atomic_store(&bounds_fault,fault);atomic_store(&available,1);
+        assert(zynq_capture_dequeue(&source,&packet,1)==1 && !packet.dsp_valid);
+        assert(zynq_capture_release_index(&source,packet.index));
+    }
+    zynq_capture_close(&source);
+    atomic_store(&bounds_fault,0);atomic_store(&supports_dsp,0);atomic_store(&dsp_fixture,0);
+    memset(&dsp_configuration,0,sizeof(dsp_configuration));dsp_fixture_sample=CAPTURE_NO_TRIGGER;
+}
+static void hardware_dsp_pipeline_test(unsigned depth,double duration,unsigned channel,unsigned edge)
+{
+    CaptureRequest request={0};CaptureMetrics metrics;static DisplayFrame frame;
+    double gain[2]={.004,.004},zero[2]={128,128};
+    unsigned rate=osc_capture_rate(capture_rate_index(duration,depth,0));
+    unsigned incoming=(rate==200000000?4u:2u)<<capture_payload_shift_for_depth(rate,depth);
+    uint64_t event=70*(uint64_t)incoming+10+(edge?256:0);
+    unsigned configured=atomic_load(&configurations);
+    atomic_store(&supports_dsp,1);atomic_store(&dsp_fixture,2);
+    atomic_store(&burst_samples,incoming);atomic_store(&packed_peaks,rate!=200000000);
+    atomic_store(&burst_at,event-(edge?256:0));atomic_store(&burst_width,256);
+    atomic_store(&burst_channel,channel);
+    CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);assert(p);
+    capture_pipeline_presented(p,0);
+    request.running=1;request.duration_seconds=duration;request.record_samples=depth;
+    request.pan_fraction=.5;request.trigger_mode=1;request.trigger_channel=(int)channel;
+    request.trigger_edge=(int)edge;request.trigger_voltage=.048;request.filter_level[channel]=2;
+    request.zero_y[0]=request.zero_y[1]=200;request.pixels_per_volt[0]=request.pixels_per_volt[1]=100;
+    capture_pipeline_request(p,&request);
+    for(unsigned i=0;i<100 && atomic_load(&configurations)==configured;++i)scope_sleep_ms(5);
+    atomic_store(&available,80);
+    /* The fixture synthesizes up to 80 large payloads on the host. Allow
+       instrumentation time without imposing its throughput on capture. */
+    int found=0;
+    for(unsigned i=0;i<1000;++i){
+        if(capture_pipeline_frame(p,&frame)){found=1;break;}
+        scope_sleep_ms(5);
+    }
+    assert(found);
+    assert(frame.trigger_sample==event && atomic_load(&processed_samples)==depth);
+    for(unsigned i=0;i<200 && atomic_load(&available);++i)scope_sleep_ms(5);
+    capture_pipeline_metrics(p,&metrics);
+    assert(metrics.dsp_blocks>=70 && metrics.rejected_blocks>=60 && !metrics.dsp_missed && !metrics.source_error && !metrics.overwritten);
+    assert(dsp_configuration.level==140*65536 && dsp_configuration.hysteresis==2u*65536);
+    capture_pipeline_destroy(p);assert(!atomic_load(&leased));
+    atomic_store(&available,0);atomic_store(&supports_dsp,0);atomic_store(&dsp_fixture,0);
+    atomic_store(&burst_samples,0);atomic_store(&packed_peaks,0);atomic_store(&burst_channel,0);atomic_store(&burst_width,32);
+    memset(&dsp_configuration,0,sizeof(dsp_configuration));dsp_fixture_sample=dsp_last_sample=CAPTURE_NO_TRIGGER;
+}
+static void first_presented_trigger_test(unsigned depth,double duration,int hardware_dsp)
 {
     CaptureRequest request={0};CaptureMetrics metrics;
     static DisplayFrame frame;
@@ -740,6 +861,7 @@ static void first_presented_trigger_test(unsigned depth,double duration)
     atomic_store(&hardware_bounds,1);atomic_store(&burst_samples,samples);
     atomic_store(&packed_peaks,1);atomic_store(&burst_at,0);
     atomic_store(&burst_width,UINT32_MAX);atomic_store(&burst_period,512);
+    if(hardware_dsp){atomic_store(&supports_dsp,1);atomic_store(&dsp_fixture,2);}
     CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);assert(p);
     capture_pipeline_presented(p,0);
     request.running=1;request.duration_seconds=duration;request.record_samples=depth;
@@ -766,7 +888,10 @@ static void first_presented_trigger_test(unsigned depth,double duration)
     assert(metrics.waveforms==2 && metrics.deadtime_blocks>=8 && !metrics.overwritten && !metrics.source_error);
     capture_pipeline_presented(p,first_id);atomic_store(&available,8);
     assert(wait_frame(p,&frame));
-    expected=((span+samples-1)/samples)*samples;
+    if(hardware_dsp){
+        expected=((depth+samples-1)/samples)*samples;
+        if(expected<2u*samples)expected=2u*samples;
+    }else expected=((span+samples-1)/samples)*samples;
     assert(frame.capture_id>first_id && frame.trigger_sample>=expected-8 && frame.trigger_sample<=expected+8);
     assert(atomic_load(&processed_samples)>=span && atomic_load(&processed_samples)<=depth);
     capture_pipeline_presented(p,frame.capture_id);
@@ -775,6 +900,10 @@ static void first_presented_trigger_test(unsigned depth,double duration)
     capture_pipeline_destroy(p);assert(!atomic_load(&leased));
     atomic_store(&available,0);atomic_store(&hardware_bounds,0);atomic_store(&burst_samples,0);
     atomic_store(&packed_peaks,0);atomic_store(&burst_period,0);atomic_store(&burst_width,32);
+    if(hardware_dsp){
+        atomic_store(&supports_dsp,0);atomic_store(&dsp_fixture,0);
+        memset(&dsp_configuration,0,sizeof(dsp_configuration));dsp_fixture_sample=dsp_last_sample=CAPTURE_NO_TRIGGER;
+    }
 }
 
 int main(void)
@@ -972,8 +1101,14 @@ int main(void)
     startup_capture_test();
     encoded_packet_test();
     encoded_window_test();
-    first_presented_trigger_test(100000,.001);
-    first_presented_trigger_test(1000000,.01);
+    encoded_dsp_test();
+    for(unsigned depth_index=0;depth_index<5;++depth_index)for(unsigned channel=0;channel<2;++channel)
+        for(unsigned edge=0;edge<2;++edge)hardware_dsp_pipeline_test(capture_record_samples(depth_index),.0002,channel,edge);
+    hardware_dsp_pipeline_test(1000000,.01,0,0);
+    first_presented_trigger_test(100000,.001,0);
+    first_presented_trigger_test(1000000,.01,0);
+    first_presented_trigger_test(100000,.001,1);
+    first_presented_trigger_test(1000000,.01,1);
     for(int edge=0;edge<=2;++edge){
         continuous_bounds_test(100000,edge);
         continuous_bounds_test(500000,edge);

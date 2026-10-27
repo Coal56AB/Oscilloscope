@@ -20,7 +20,7 @@ module axis_capture_bounds_tb;
         end
     endfunction
     axis_capture_frame dut(clk,resetn,32'd64,32'd50000000,data,valid,input_ready,
-        output_data,keep,output_valid,ready,last,peaks,18'd0);
+        output_data,keep,output_valid,ready,last,peaks,18'd0,288'd0);
     always #5 clk=~clk;
     initial begin
         for(phase=0;phase<2;phase=phase+1)begin

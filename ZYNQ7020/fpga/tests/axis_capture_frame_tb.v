@@ -10,7 +10,7 @@ module axis_capture_frame_tb;
     reg [63:0] held_data, expected;
     reg held_last;
     axis_capture_frame #(.BLOCK_BYTES(128)) dut(
-        clk,resetn,32'd64,32'd200000000,data,valid,input_ready,output_data,keep,output_valid,ready,last,1'b0,18'd0);
+        clk,resetn,32'd64,32'd200000000,data,valid,input_ready,output_data,keep,output_valid,ready,last,1'b0,18'd0,288'd0);
     always #5 clk=~clk;
     initial begin repeat(3) @(negedge clk); resetn=1; end
     always @(negedge clk) if(resetn) begin

@@ -68,6 +68,15 @@ int zynq_capture_ready(ZynqCaptureSource *s)
     struct pollfd p = {s->fd, POLLIN, 0};
     return poll(&p, 1, 0) > 0 && (p.revents & POLLIN);
 }
+int zynq_capture_set_dsp(ZynqCaptureSource *s,const struct osc_capture_dsp *config)
+{
+    if(s->fd<0 || !config || (config->control&~OSC_CAPTURE_DSP_MASK) ||
+       ((config->control>>OSC_CAPTURE_DSP_EDGE_SHIFT)&3)>2 || config->hysteresis>0xffffff || config->reserved)return 0;
+    if(s->dsp_supported<0)return 1;
+    if(ioctl(s->fd,OSC_CAPTURE_SET_DSP,config)==0){s->dsp_supported=1;return 1;}
+    if(errno==ENOTTY || errno==EOPNOTSUPP){s->dsp_supported=-1;return 1;}
+    return 0;
+}
 int zynq_capture_dequeue(ZynqCaptureSource *s,ZynqCapturePacket *packet,unsigned timeout)
 {
     struct osc_capture_block block;
@@ -113,9 +122,18 @@ int zynq_capture_dequeue(ZynqCaptureSource *s,ZynqCapturePacket *packet,unsigned
     b->flags = block.flags;
     memcpy(b->volts_per_code,s->volts_per_code,sizeof(b->volts_per_code));
     memcpy(b->zero_code,s->zero_code,sizeof(b->zero_code));
-    if(block.data_offset>=64 && b->sequence){
+    if(block.data_offset>=64){
         uint32_t bounds[6];
         memcpy(bounds,(const uint8_t *)s->mapping+(size_t)block.index*s->info.block_bytes+40,sizeof(bounds));
+        if(bounds[4]==0x31475254){
+            memcpy(&packet->dsp_arm_id,(const uint8_t *)s->mapping+(size_t)block.index*s->info.block_bytes+36,sizeof(packet->dsp_arm_id));
+            packet->dsp_control=bounds[2];packet->dsp_sample=((uint64_t)bounds[1]<<32)|bounds[0];
+            packet->dsp_triggered=bounds[5]==1;
+            packet->dsp_valid=!(packet->dsp_control&~OSC_CAPTURE_DSP_MASK) &&
+                (packet->dsp_control&OSC_CAPTURE_DSP_ENABLE) &&
+                ((packet->dsp_control>>OSC_CAPTURE_DSP_EDGE_SHIFT)&3)<=2 && !bounds[3] && bounds[5]<=1 &&
+                (packet->dsp_triggered?packet->dsp_sample!=CAPTURE_NO_TRIGGER:packet->dsp_sample==CAPTURE_NO_TRIGGER);
+        }
         packet->bounds_sequence=((uint64_t)bounds[1]<<32)|bounds[0];
         packet->minimum[0]=(uint8_t)bounds[2];packet->minimum[1]=(uint8_t)(bounds[2]>>8);
         packet->maximum[0]=(uint8_t)(bounds[2]>>16);packet->maximum[1]=(uint8_t)(bounds[2]>>24);

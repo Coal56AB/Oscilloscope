@@ -34,6 +34,7 @@ typedef struct {
     uint64_t rejected_blocks; /* Quiet payloads rejected by hardware bounds. */
     uint64_t deadtime_blocks; /* Input drained while the accepted record is presented or in holdoff. */
     uint64_t probe_blocks; /* Headers with a matching hardware filter/level probe. */
+    uint64_t dsp_blocks,dsp_missed; /* Exact hardware-trigger headers; events whose raw context was lost. */
     size_t occupancy, peak_occupancy;
     int source_error;
     int waiting;

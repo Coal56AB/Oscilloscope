@@ -19,6 +19,7 @@ module capture_trigger_probe(
     reg [12:0] sums[0:3];
     reg [22:0] variances[0:3];
     reg [7:0] centers[0:3];
+    reg signed [13:0] centers_scaled[0:3];
     reg signed [39:0] low_score[0:3],high_score[0:3],noise_low_score[0:3],noise_high_score[0:3];
     reg low_raw[0:3],high_raw[0:3],low_mean[0:3],high_mean[0:3];
     reg low_c[0:3],high_c[0:3],raw_possible[0:3],noise_low_full[0:3],noise_high_full[0:3];
@@ -28,11 +29,19 @@ module capture_trigger_probe(
     wire [4:0] mantissa=control[12:8];
     wire [12:0] power_low=exponent?({8'd0,1'b1,mantissa}<<(exponent-1)):mantissa;
     wire [12:0] power_high=exponent?(({8'd0,1'b1,mantissa}+1'b1)<<(exponent-1)):{8'd0,mantissa}+1'b1;
-    wire signed [9:0] level_low=$signed({2'd0,control[7:0]})-10'sd1;
-    wire signed [9:0] level_high=$signed({2'd0,control[7:0]})+10'sd1;
+    reg signed [9:0] level_low,level_high;
+    reg signed [13:0] level_low_scaled,level_high_scaled;
+    reg [7:0] noise_code;
     integer k;
     reg [1:0] next_sides;
     reg signed [13:0] deviation,below,above;
+    always @(posedge clk)begin
+        level_low<=$signed({2'd0,control[7:0]})-10'sd1;
+        level_high<=$signed({2'd0,control[7:0]})+10'sd1;
+        level_low_scaled<=$signed({6'd0,control[7:0]})*14'sd17-14'sd17;
+        level_high_scaled<=$signed({6'd0,control[7:0]})*14'sd17+14'sd17;
+        noise_code<=control[15:8];
+    end
     always @(posedge clk)begin
         if(!resetn)begin
             av<=0;bv<=0;cv<=0;sides<=0;result_valid<=0;result_sequence<=0;result_sides<=0;
@@ -46,23 +55,24 @@ module capture_trigger_probe(
                     sums[k]<=group_sums[(control[16]*4+k)*13+:13];
                     variances[k]<=group_variances[(control[16]*4+k)*23+:23];
                     centers[k]<=group_centers[(control[16]*4+k)*8+:8];
+                    centers_scaled[k]<=$signed({6'd0,group_centers[(control[16]*4+k)*8+:8]})*14'sd17;
                 end
             end
             bv<=av;
             if(av)begin
                 first_b<=first_a;last_b<=last_a;peak_b<=peak_a;seq_b<=seq_a;
                 for(k=0;k<4;k=k+1)begin
-                    deviation=$signed({1'b0,centers[k]})*17-$signed({1'b0,sums[k]});
-                    below=($signed({1'b0,centers[k]})-level_low)*17;
-                    above=($signed({1'b0,centers[k]})-level_high)*17;
+                    deviation=centers_scaled[k]-$signed({1'b0,sums[k]});
+                    below=centers_scaled[k]-level_low_scaled;
+                    above=centers_scaled[k]-level_high_scaled;
                     noise_low_score[k]<=$signed({1'b0,noise_low})*deviation;
                     noise_high_score[k]<=$signed({1'b0,noise_high})*deviation;
                     low_score[k]<=$signed({1'b0,variances[k]})*below;
                     high_score[k]<=$signed({1'b0,variances[k]})*above;
                     low_raw[k]<=$signed({1'b0,centers[k]})<=level_low;
                     high_raw[k]<=$signed({1'b0,centers[k]})>=level_high;
-                    low_mean[k]<=$signed({1'b0,sums[k]})<=level_low*17;
-                    high_mean[k]<=$signed({1'b0,sums[k]})>=level_high*17;
+                    low_mean[k]<=$signed({1'b0,sums[k]})<=level_low_scaled;
+                    high_mean[k]<=$signed({1'b0,sums[k]})>=level_high_scaled;
                     raw_possible[k]<=variances[k]>=9*noise_low;
                     noise_low_full[k]<=noise_low>=variances[k];
                     noise_high_full[k]<=noise_high>=variances[k];
@@ -72,8 +82,8 @@ module capture_trigger_probe(
             if(bv)begin
                 first_c<=first_b;last_c<=last_b;peak_c<=peak_b;seq_c<=seq_b;
                 for(k=0;k<4;k=k+1)begin
-                    if(control[15:8]==0)begin low_c[k]<=low_raw[k];high_c[k]<=high_raw[k];end
-                    else if(control[15:8]==255)begin low_c[k]<=low_mean[k];high_c[k]<=high_mean[k];end
+                    if(noise_code==0)begin low_c[k]<=low_raw[k];high_c[k]<=high_raw[k];end
+                    else if(noise_code==255)begin low_c[k]<=low_mean[k];high_c[k]<=high_mean[k];end
                     else begin
                         low_c[k]<=(raw_possible[k] && low_raw[k]) ||
                             (noise_low_full[k]?low_mean[k]:low_score[k]<=noise_low_score[k]) ||

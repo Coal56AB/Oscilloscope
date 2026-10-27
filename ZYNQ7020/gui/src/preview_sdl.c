@@ -1013,6 +1013,8 @@ static void remote_state(FILE *response)
     fprintf(response,"\"capture_rejected\":%llu,",(unsigned long long)capture.rejected_blocks);
     fprintf(response,"\"capture_deadtime\":%llu,",(unsigned long long)capture.deadtime_blocks);
     fprintf(response,"\"capture_probe_blocks\":%llu,",(unsigned long long)capture.probe_blocks);
+    fprintf(response,"\"capture_dsp_blocks\":%llu,\"capture_dsp_missed\":%llu,",
+        (unsigned long long)capture.dsp_blocks,(unsigned long long)capture.dsp_missed);
     fprintf(response,"\"record_depth_index\":%d,\"sample_rate_hz\":%.9g,",demo.record_depth_index,demo.acquisition_rate_hz);
     fprintf(response,"\"measurement_hidden\":%d,\"measurement_x\":%d,\"measurement_y\":%d,\"measurement_width\":%d,\"measurement_height\":%d,",
         demo.screen.measurement_hidden,mx,my,mw,mh);

@@ -225,7 +225,7 @@ static void processing_worker(void *context)
 #ifdef SCOPE_ENABLE_ZYNQ
 /* One complete incoming payload plus the selected record must fit together:
    otherwise a rare edge can be overwritten before its posttrigger arrives. */
-enum { HARDWARE_HISTORY_SAMPLES = CAPTURE_MAX_SAMPLES + (4u << 17) };
+enum { HARDWARE_HISTORY_SAMPLES = CAPTURE_MAX_SAMPLES + (8u << 17) };
 static void retain_record(CaptureBuffer *b, unsigned depth, double pan,size_t minimum_pre,size_t minimum_post)
 {
     size_t count=b->bytes/2,first;
@@ -252,6 +252,8 @@ static void retain_record(CaptureBuffer *b, unsigned depth, double pan,size_t mi
 }
 typedef struct {
     ZynqCapturePacket pending[2],context;
+    ZynqCapturePacket dsp_context[5];
+    unsigned dsp_count;
     unsigned pending_count;
     int have_context,post;
 } HardwarePackets;
@@ -259,8 +261,22 @@ static int release_packets(CapturePipeline *p,HardwarePackets *q)
 {
     int ok=1;
     for(unsigned i=0;i<q->pending_count;++i)ok&=zynq_capture_release_index(&p->zynq,q->pending[i].index);
+    for(unsigned i=0;i<q->dsp_count;++i)ok&=zynq_capture_release_index(&p->zynq,q->dsp_context[i].index);
     if(q->have_context)ok&=zynq_capture_release_index(&p->zynq,q->context.index);
     memset(q,0,sizeof(*q));return ok;
+}
+static int keep_dsp_context(CapturePipeline *p,HardwarePackets *q,const ZynqCapturePacket *packet,unsigned limit)
+{
+    int ok=1;
+    if(q->dsp_count && q->dsp_context[q->dsp_count-1].metadata.sequence+1!=packet->metadata.sequence){
+        for(unsigned i=0;i<q->dsp_count;++i)ok&=zynq_capture_release_index(&p->zynq,q->dsp_context[i].index);
+        q->dsp_count=0;
+    }
+    if(q->dsp_count==limit){
+        ok&=zynq_capture_release_index(&p->zynq,q->dsp_context[0].index);
+        memmove(q->dsp_context,q->dsp_context+1,(q->dsp_count-1)*sizeof(q->dsp_context[0]));--q->dsp_count;
+    }
+    q->dsp_context[q->dsp_count++]=*packet;return ok;
 }
 static int decode_history(CapturePipeline *p,CaptureHistory *h,const ZynqCapturePacket *packet,
     const CaptureRequest *request,size_t tail,CaptureBuffer *b)
@@ -329,6 +345,35 @@ static uint32_t requested_probe(const CapturePipeline *p,const CaptureRequest *r
     if(code>255)return 0;
     return OSC_CAPTURE_PROBE_ENABLE|(ch<<16)|(code<<8)|(unsigned)level;
 }
+static struct osc_capture_dsp requested_dsp(const CapturePipeline *p,const CaptureRequest *request,unsigned rate)
+{
+    struct osc_capture_dsp config={0};
+    if(p->zynq.dsp_supported<0 || request->roll || request->debug.enabled || request->baseline_mask || request->calibration_mask)return config;
+    CaptureBuffer metadata={0};
+    memcpy(metadata.volts_per_code,p->zynq.volts_per_code,sizeof(metadata.volts_per_code));
+    memcpy(metadata.zero_code,p->zynq.zero_code,sizeof(metadata.zero_code));
+    for(unsigned ch=0;ch<2;++ch)if(request->adc_volts_per_code[ch]>0)metadata.volts_per_code[ch]=request->adc_volts_per_code[ch];
+    metadata=calibrated_buffer(&metadata,request);
+    unsigned ch=(unsigned)request->trigger_channel;
+    double gain=metadata.volts_per_code[ch],level=request->trigger_voltage/gain+metadata.zero_code[ch];
+    double noise=channel_baseline_noise(capture_baseline(request,&metadata,ch),gain)/gain;
+    if(!isfinite(level) || level<-32768 || level>32767)return config;
+    double power=noise*noise*65536;
+    config.control=OSC_CAPTURE_DSP_ENABLE|(ch<<OSC_CAPTURE_DSP_CHANNEL_SHIFT)|
+        ((unsigned)request->trigger_edge<<OSC_CAPTURE_DSP_EDGE_SHIFT)|
+        (request->filter_level[ch]<<OSC_CAPTURE_DSP_FILTER_SHIFT);
+    config.noise_power=power>=UINT32_MAX?UINT32_MAX:(uint32_t)llround(power);
+    config.level=(int32_t)llround(level*65536);config.hysteresis=2u<<16;
+    config.minimum_sample=(uint64_t)ceil(fmax(request->duration_seconds,request->overview_duration_seconds)*rate*
+        (1-request->pan_fraction))+signal_filter_padding(request->filter_level[ch],noise>0)+8;
+    config.holdoff_samples=request->holdoff_samples*rate/200000000;
+    return config;
+}
+static int same_dsp(const struct osc_capture_dsp *a,const struct osc_capture_dsp *b)
+{
+    return a->control==b->control && a->noise_power==b->noise_power && a->level==b->level &&
+        a->hysteresis==b->hysteresis && a->holdoff_samples==b->holdoff_samples;
+}
 static void hardware_worker(void *context)
 {
     CapturePipeline *p = context;
@@ -344,6 +389,10 @@ static void hardware_worker(void *context)
     unsigned single_arm = UINT32_MAX, previous_baseline_mask = 0;
     unsigned observed_arm=UINT32_MAX;
     uint32_t probe_control=UINT32_MAX;
+    struct osc_capture_dsp dsp={0};
+    uint32_t dsp_sequence=0;
+    uint64_t dsp_event=CAPTURE_NO_TRIGGER,dsp_latest_end=0;
+    int dsp_initialized=0,dsp_rearm=0;
     debug.data = p->storage[3]; debug.capacity = CAPTURE_MAX_SAMPLES * 2;
     capture_history_init(&history, p->storage[0], p->storage[0]+HARDWARE_HISTORY_SAMPLES*2, 100000);
     while (!stopped(p)) {
@@ -359,16 +408,17 @@ static void hardware_worker(void *context)
         }
         awaiting_presentation=p->presentation_sync && presentation_count==2;
         scope_mutex_unlock(&p->mutex);
-        if(observed_arm!=arm){presentation_count=0;awaiting_presentation=0;observed_arm=arm;}
+        if(observed_arm!=arm){presentation_count=0;awaiting_presentation=0;observed_arm=arm;dsp_rearm=1;}
         if (request.duration_seconds <= 0) { scope_sleep_ms(5); continue; }
         wanted_depth = request.record_samples ? request.record_samples : 100000;
         if (wanted_depth > CAPTURE_MAX_SAMPLES) wanted_depth = CAPTURE_MAX_SAMPLES;
         wanted_rate = capture_rate_index(fmax(request.duration_seconds, request.overview_duration_seconds),
                                          wanted_depth, request.roll);
         shift = capture_payload_shift_for_depth(osc_capture_rate(wanted_rate),wanted_depth);
-        uint32_t wanted_probe=requested_probe(p,&request);
+        struct osc_capture_dsp wanted_dsp=requested_dsp(p,&request,osc_capture_rate(wanted_rate));
+        uint32_t wanted_probe=wanted_dsp.control?0:requested_probe(p,&request);
         history_depth = wanted_depth + (request.roll ? 0 :
-            (osc_capture_rate(wanted_rate)==200000000?4u:2u) << shift);
+            ((osc_capture_rate(wanted_rate)==200000000?4u:2u) << shift)*(wanted_dsp.control?2u:1u));
         force = request.force_sequence != forced;
         int source_changed=memcmp(&previous_debug,&request.debug,sizeof(previous_debug)) ||
             previous_baseline_mask!=request.baseline_mask;
@@ -384,10 +434,17 @@ static void hardware_worker(void *context)
             memcpy(previous_gain, request.adc_volts_per_code, sizeof(previous_gain));
         }
         if ((request.running || force) && (wanted_rate != rate_index || wanted_depth != depth ||
-            history.capacity != history_depth || wanted_probe!=probe_control)) {
-            if (!release_packets(p,&packets) || !zynq_capture_set_probe(&p->zynq,wanted_probe) ||
+            history.capacity != history_depth || wanted_probe!=probe_control || !dsp_initialized || !same_dsp(&wanted_dsp,&dsp))) {
+            wanted_dsp.arm_id=++dsp_sequence;
+            int configured=release_packets(p,&packets) && zynq_capture_set_dsp(&p->zynq,&wanted_dsp);
+            if(p->zynq.dsp_supported<0){
+                memset(&wanted_dsp,0,sizeof(wanted_dsp));wanted_probe=requested_probe(p,&request);
+                history_depth=wanted_depth+(request.roll?0:((osc_capture_rate(wanted_rate)==200000000?4u:2u)<<shift));
+            }
+            if (!configured || !zynq_capture_set_probe(&p->zynq,wanted_probe) ||
                 !zynq_capture_configure(&p->zynq, wanted_rate, shift)) failed = 1;
             else {
+                dsp=wanted_dsp;dsp_initialized=1;dsp_rearm=0;dsp_event=CAPTURE_NO_TRIGGER;dsp_latest_end=0;
                 rate_index = wanted_rate; depth = wanted_depth;
                 probe_control=p->zynq.probe_supported<0?0:wanted_probe;
                 capture_history_init(&history, p->storage[0], p->storage[0]+HARDWARE_HISTORY_SAMPLES*2, history_depth);
@@ -397,6 +454,13 @@ static void hardware_worker(void *context)
             scope_mutex_lock(&p->mutex);
             p->source_error = failed; p->adc_sample_ns = 0;
             scope_mutex_unlock(&p->mutex);
+        }
+        if(!failed && dsp.control && dsp_rearm && !awaiting_presentation &&
+            (force || (request.running && (request.trigger_mode!=2 || single_arm!=arm)))){
+            dsp.arm_id=++dsp_sequence;dsp.minimum_sample=dsp_latest_end>next_trigger?dsp_latest_end:next_trigger;
+            if(!zynq_capture_set_dsp(&p->zynq,&dsp)){
+                failed=1;scope_mutex_lock(&p->mutex);p->source_error=1;scope_mutex_unlock(&p->mutex);
+            }else {dsp_rearm=0;dsp_event=CAPTURE_NO_TRIGGER;}
         }
         if (!failed && (force || (request.running && (request.trigger_mode != 2 || single_arm != arm)))) {
             CaptureBuffer received;
@@ -409,7 +473,20 @@ static void hardware_worker(void *context)
             } else if (result > 0) {
                 uint64_t started = scope_clock_ns();
                 preceding=newest;
-                int fast=!request.roll && !request.debug.enabled && !request.baseline_mask && !request.calibration_mask && depth<=incoming;
+                dsp_latest_end=newest.metadata.first_sample+newest.metadata.bytes/2;
+                int hardware_dsp=!!dsp.control;
+                if(hardware_dsp && !newest.dsp_valid){
+                    zynq_capture_release_index(&p->zynq,newest.index);
+                    scope_mutex_lock(&p->mutex);p->source_error=1;scope_mutex_unlock(&p->mutex);continue;
+                }
+                int current_dsp=hardware_dsp && newest.dsp_arm_id==dsp.arm_id && newest.dsp_control==dsp.control;
+                if(current_dsp){
+                    scope_mutex_lock(&p->mutex);++p->hardware_metrics.dsp_blocks;scope_mutex_unlock(&p->mutex);
+                    if(newest.dsp_triggered && !dsp_rearm)dsp_event=newest.dsp_sample;
+                }
+                unsigned dsp_context_limit=(depth+incoming-1)/incoming+1;
+                int dsp_fast=hardware_dsp && dsp_context_limit<=5;
+                int fast=!hardware_dsp && !request.roll && !request.debug.enabled && !request.baseline_mask && !request.calibration_mask && depth<=incoming;
                 int bounds=0,possible=1,current_possible=1;
                 if(packets.pending_count){
                     packet=packets.pending[0];
@@ -468,9 +545,10 @@ static void hardware_worker(void *context)
                     if(next_trigger<fresh)next_trigger=fresh;
                 }
                 int deadtime=synchronize && (busy || packet.metadata.first_sample+packet.metadata.bytes/2<=next_trigger);
-                int skip=deadtime || (fast && bounds && !possible && !packets.post && !force &&
-                    (request.trigger_mode!=0 || (revision==published_revision && started-last_display<40000000)));
-                int drain_history=deadtime && depth>incoming;
+                int auto_due=request.trigger_mode==0 && (revision!=published_revision || started-last_display>=40000000);
+                int skip=deadtime || (((fast && bounds && !possible && !packets.post) ||
+                    (dsp_fast && (dsp_event==CAPTURE_NO_TRIGGER || dsp_rearm || !current_dsp))) && !force && !auto_due);
+                int drain_history=deadtime && depth>incoming && !dsp_fast;
                 if(skip && !drain_history){
                     uint8_t data[4],peaks[4];CaptureBuffer tail;
                     size_t samples=packet.metadata.bytes/2,count=samples>=2?2:1;
@@ -479,8 +557,11 @@ static void hardware_worker(void *context)
                         scope_mutex_lock(&p->mutex);p->source_error=1;scope_mutex_unlock(&p->mutex);continue;
                     }
                     count_hardware_block(p,&packet.metadata,tail.data+tail.bytes-2,started,&expected);
-                    if(packets.have_context && !zynq_capture_release_index(&p->zynq,packets.context.index))failed=1;
-                    packets.context=packet;packets.have_context=1;
+                    if(dsp_fast){if(!keep_dsp_context(p,&packets,&packet,dsp_context_limit))failed=1;}
+                    else {
+                        if(packets.have_context && !zynq_capture_release_index(&p->zynq,packets.context.index))failed=1;
+                        packets.context=packet;packets.have_context=1;
+                    }
                     scope_mutex_lock(&p->mutex);
                     if(deadtime){++p->hardware_metrics.deadtime_blocks;packets.post=0;}
                     else ++p->hardware_metrics.rejected_blocks;
@@ -490,6 +571,13 @@ static void hardware_worker(void *context)
                     scope_mutex_unlock(&p->mutex);continue;
                 }
                 packets.post=bounds?current_possible:1;
+                for(unsigned i=0;i<packets.dsp_count;++i){
+                    CaptureBuffer preceding;
+                    if(!decode_history(p,&history,&packets.dsp_context[i],&request,0,&preceding))failed=1;
+                    else capture_history_append(&history,&preceding);
+                    if(!zynq_capture_release_index(&p->zynq,packets.dsp_context[i].index))failed=1;
+                }
+                packets.dsp_count=0;
                 if(packets.have_context){
                     CaptureBuffer preceding;
                     if(!decode_history(p,&history,&packets.context,&request,depth,&preceding))failed=1;
@@ -533,13 +621,21 @@ static void hardware_worker(void *context)
                     post = ceil(span * request.pan_fraction)+trigger_padding;
                     complete = request.roll || (candidate.bytes / 2 >= pre + post &&
                         (!force || candidate.bytes / 2 > pre));
+                    if(hardware_dsp && candidate.bytes/2<depth)complete=0;
                     if (!request.roll) {
                         if (complete) {
                             CaptureBuffer search = calibrated_buffer(&candidate,&request);
                             search.peaks=NULL;
                             uint64_t first = candidate.first_sample + (uint64_t)pre;
                             if (first < next_trigger) first = next_trigger;
-                            triggered = capture_find_trigger_filtered(&search, request.trigger_channel, request.trigger_edge,
+                            if(hardware_dsp){
+                                if(dsp_event!=CAPTURE_NO_TRIGGER && dsp_event<first){
+                                    dsp_rearm=1;dsp_event=CAPTURE_NO_TRIGGER;
+                                    scope_mutex_lock(&p->mutex);++p->hardware_metrics.dsp_missed;scope_mutex_unlock(&p->mutex);
+                                }
+                                triggered=dsp_event!=CAPTURE_NO_TRIGGER;
+                                candidate.trigger_sample=triggered?dsp_event:CAPTURE_NO_TRIGGER;
+                            }else triggered = capture_find_trigger_filtered(&search, request.trigger_channel, request.trigger_edge,
                                 request.trigger_voltage, 2, request.filter_level[request.trigger_channel],
                                 request.baseline_mask || request.calibration_mask?0:channel_baseline_noise(capture_baseline(&request,&candidate,(unsigned)request.trigger_channel),candidate.volts_per_code[request.trigger_channel]),first,&candidate.trigger_sample);
                             /* The filter needs available posttrigger samples too.
@@ -573,6 +669,7 @@ static void hardware_worker(void *context)
                     }
                     scope_mutex_unlock(&p->mutex);
                     if (present) {
+                        if(hardware_dsp && (triggered || force))dsp_rearm=1;
                         retain_record(&candidate,depth,request.pan_fraction,(size_t)pre,(size_t)post);
                         CaptureBuffer owned=p->ring.buffer[slot];
                         uint8_t *peaks=owned.data+owned.capacity;

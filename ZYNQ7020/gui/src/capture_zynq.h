@@ -11,6 +11,7 @@ typedef struct {
     uint8_t *decoded[CAPTURE_RING_MAX];
     double volts_per_code[2], zero_code[2];
     int probe_supported; /* 0 unknown, 1 supported, -1 older kernel. */
+    int dsp_supported;
 } ZynqCaptureSource;
 typedef struct {
     CaptureBuffer metadata; /* No sample storage until decode_packet. */
@@ -21,6 +22,9 @@ typedef struct {
     int window_bounds;
     int probe_valid;
     uint32_t probe_control,probe_sides;
+    int dsp_valid,dsp_triggered;
+    uint32_t dsp_control,dsp_arm_id;
+    uint64_t dsp_sample;
     uint64_t bounds_sequence;
     uint8_t minimum[2],maximum[2]; /* Previous payload's representative samples. */
     unsigned minimum_sum[2],maximum_sum[2],maximum_variance[2]; /* 17-point integer statistics. */
@@ -39,6 +43,8 @@ int zynq_capture_open(ZynqCaptureSource *source, const char *device, const doubl
 int zynq_capture_configure(ZynqCaptureSource *source, unsigned rate, unsigned shift);
 /* Optional driver extension; ENOTTY keeps legacy capture available. */
 int zynq_capture_set_probe(ZynqCaptureSource *source,uint32_t control);
+/* Atomic re-arm is allowed with leases: sample storage is not reconfigured. */
+int zynq_capture_set_dsp(ZynqCaptureSource *source,const struct osc_capture_dsp *configuration);
 int zynq_capture_test_clock(ZynqCaptureSource *source, unsigned shift, unsigned payload_shift);
 int zynq_capture_acquire(ZynqCaptureSource *source, CaptureBuffer *buffer, unsigned timeout_ms);
 /* Prefer caller-owned storage, avoiding a second block copy. If the packet

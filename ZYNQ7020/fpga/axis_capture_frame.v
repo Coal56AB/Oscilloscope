@@ -11,7 +11,8 @@ module axis_capture_frame #(
     output reg [63:0] m_axis_tdata,
     output wire [7:0] m_axis_tkeep,
     output reg m_axis_tvalid, input wire m_axis_tready,
-    output reg m_axis_tlast, input wire peak_detect,input wire [17:0] probe_control
+    output reg m_axis_tlast, input wire peak_detect,input wire [17:0] probe_control,
+    input wire [287:0] dsp_configuration
 );
     wire [31:0] payload_beats=payload_bytes >> 3;
 
@@ -61,6 +62,24 @@ module axis_capture_frame #(
     wire use_probe=use_window && probe_control[17] && probe_valid && probe_sequence==window_sequence;
     wire [63:0] header_ch0={use_probe?probe_control[14:0]:15'd0,window_ch0[48:0]};
     wire [63:0] header_ch1={use_probe?{10'd0,probe_sides,probe_control[17:15]}:15'd0,window_ch1[48:0]};
+    wire [31:0] dsp_control=dsp_configuration[31:0];
+    wire [31:0] dsp_arm_id=dsp_configuration[287:256];
+    wire dsp_valid;
+    wire [31:0] dsp_result_arm;
+    wire [63:0] dsp_sample;
+    reg [63:0] group_sample;
+    reg header_dsp,header_dsp_hit;
+    reg [31:0] header_dsp_arm,header_dsp_control;
+    reg [63:0] header_dsp_sample;
+    signal_trigger trigger_dsp(.clk(clk),.resetn(resetn && dsp_control[0]),.valid(group_valid && dsp_control[0]),
+        .pair_only(group_peak),.first_sample(group_sample),
+        .sums(dsp_control[1]?group_sums[103:52]:group_sums[51:0]),
+        .variances(dsp_control[1]?group_variances[183:92]:group_variances[91:0]),
+        .centers(dsp_control[1]?group_centers[63:32]:group_centers[31:0]),
+        .noise_power(dsp_configuration[63:32]),.filter_level(dsp_control[5:4]),.edge_select(dsp_control[3:2]),
+        .level(dsp_configuration[95:64]),.hysteresis(dsp_configuration[119:96]),.enabled(dsp_control[0]),
+        .arm_id(dsp_arm_id),.minimum_sample(dsp_configuration[191:128]),.holdoff_samples(dsp_configuration[255:192]),
+        .result_valid(dsp_valid),.result_arm_id(dsp_result_arm),.result_sample(dsp_sample));
     assign m_axis_tkeep=8'hff;
     assign s_axis_tready=header==8 && space;
     always @(posedge clk) begin
@@ -71,7 +90,10 @@ module axis_capture_frame #(
             low0<=0;low1<=0;high0<=0;high1<=0;
             bounds_beat_valid<=0;bounds_beat_first<=0;bounds_beat_last<=0;
             beat_low0_reg<=0;beat_low1_reg<=0;beat_high0_reg<=0;beat_high1_reg<=0;
+            group_sample<=8;header_dsp<=0;header_dsp_hit<=0;
+            header_dsp_arm<=0;header_dsp_control<=0;header_dsp_sample<=64'hffffffffffffffff;
         end else begin
+            if(group_valid)group_sample<=group_sample+(group_peak?2:4);
             bounds_beat_valid<=s_axis_tvalid && s_axis_tready;
             if(bounds_beat_valid)begin
                 low0<=next_low0;low1<=next_low1;high0<=next_high0;high1<=next_high1;
@@ -84,16 +106,24 @@ module axis_capture_frame #(
             if (space) begin
                 m_axis_tvalid<=0; m_axis_tlast<=0;
                 if (header<8) begin
+                    if(header==0)begin
+                        // A re-arm can occur during these eight beats. Freeze
+                        // its ID, hit and timestamp together for this header.
+                        header_dsp<=dsp_control[0];header_dsp_arm<=dsp_arm_id;header_dsp_control<=dsp_control;
+                        header_dsp_hit<=dsp_valid && dsp_result_arm==dsp_arm_id;
+                        header_dsp_sample<=dsp_valid && dsp_result_arm==dsp_arm_id?dsp_sample:64'hffffffffffffffff;
+                    end
                     m_axis_tvalid<=1;
                     case (header)
                         0: m_axis_tdata<=64'h00000004_5043534f;
                         1: m_axis_tdata<={sample_rate,payload_bytes};
                         2: m_axis_tdata<=sequence;
                         3: m_axis_tdata<=first_sample;
-                        4: m_axis_tdata<={use_window?window_raw_bounds:32'd0,peak_detect?32'd2:32'd0};
-                        5: m_axis_tdata<=use_window?header_ch0:bounds_valid?previous_sequence:64'd0;
-                        6: m_axis_tdata<=use_window?header_ch1:bounds_valid?{32'h31584d4d,previous_bounds}:64'd0;
-                        7: m_axis_tdata<=use_window?{window_sequence[31:0],use_probe?32'h33584d4d:32'h32584d4d}:
+                        4: m_axis_tdata<={header_dsp?header_dsp_arm:use_window?window_raw_bounds:32'd0,peak_detect?32'd2:32'd0};
+                        5: m_axis_tdata<=header_dsp?header_dsp_sample:use_window?header_ch0:bounds_valid?previous_sequence:64'd0;
+                        6: m_axis_tdata<=header_dsp?{32'd0,header_dsp_control}:use_window?header_ch1:bounds_valid?{32'h31584d4d,previous_bounds}:64'd0;
+                        7: m_axis_tdata<=header_dsp?{31'd0,header_dsp_hit,32'h31475254}:
+                            use_window?{window_sequence[31:0],use_probe?32'h33584d4d:32'h32584d4d}:
                             bounds_valid?{previous_rate,previous_bytes}:64'd0;
                         default: m_axis_tdata<=0;
                     endcase
