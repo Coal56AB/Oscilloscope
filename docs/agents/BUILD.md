@@ -157,7 +157,9 @@ Windows, Vivado и SDK **2019.1**:
 собирается в FSBL и отдельную Linux-службу; для обновления служебной индикации
 нужны согласованные BOOT.BIN и image.bin. Страницы и проверка — [STATUS_DISPLAY.md](STATUS_DISPLAY.md).
 
-Vivado открывается через `ZYNQ7020/oscill.xpr`; его generated-каталоги и workspace SDK `ZYNQ7020/oscill.sdk` расположены рядом. Bitstream и HDF экспортируются в `ZYNQ7020/output/hardware`. Исходники проекта остаются в `fpga/` и `standalone/`; повторная сборка через `build.ps1` генерирует проект заново. Перед Vivado выполняется HLS-синтез численного ядра измерений тем же комплектом 2019.1; IP остаётся в `output/hls-measure/`. Независимый запуск `fpga/build.tcl` требует заранее собранный IP в этом каталоге.
+Vivado 2019.1 открывает сохранённый в Git `ZYNQ7020/oscill.xpr` без предварительной сборки. Вместе с ним хранятся `oscill.srcs/sources_1/bd/system/system.bd`, wrapper и необходимые IP в `fpga/ip/`. Схема и настройки проекта служат источником конфигурации; `build.ps1` открывает их и сохраняет правки из GUI. Generated-каталоги и workspace SDK `ZYNQ7020/oscill.sdk` расположены рядом и исключены из Git. Bitstream и HDF экспортируются в `ZYNQ7020/output/hardware`.
+
+Перед аппаратной сборкой HLS заново синтезирует C-ядро; `fpga/publish_hls_ip.ps1` обновляет его открытый RTL-пакет в `fpga/ip/record_measure/` из экспортированного архива. При изменениях HLS исходники и обновлённый пакет коммитятся вместе. Промежуточный проект HLS остаётся в `output/hls-measure/`; для открытия схемы и обычной работы в Vivado он не нужен. Независимый запуск `fpga/build.tcl` использует сохранённые IP. Digilent rgb2dvi и интерфейсы взяты из `Digilent/vivado-library` revision `f4613fff005b098065fd5d619a2b88e55720a423`; исходники и MIT License находятся в `fpga/ip/digilent/`.
 
 JTAG-запуск того же теста с установленным hw_server:
 
