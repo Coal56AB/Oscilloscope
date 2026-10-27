@@ -17,8 +17,7 @@ static double number(uint32_t word)
 {
     float value;memcpy(&value,&word,sizeof(value));return value;
 }
-static int measure(void *context,const SignalTrace *trace,SignalNumber rate,
-    SignalAmplitude *amplitude,SignalTiming *timing)
+static int begin(void *context,const SignalTrace *trace,SignalNumber rate)
 {
     ZynqAnalysis *a=context;
     struct osc_analysis_measure job={0};
@@ -36,14 +35,28 @@ static int measure(void *context,const SignalTrace *trace,SignalNumber rate,
     job.samples=(uint32_t)trace->samples;job.stride=(uint32_t)trace->stride;
     job.gain_bits=bits((float)trace->gain);job.zero_bits=bits((float)trace->zero);
     job.sample_rate_bits=bits((float)rate);
-    if(ioctl(a->fd,OSC_ANALYSIS_MEASURE,&job)<0 || job.result_bits[7]!=bits(1)){
+    if(ioctl(a->fd,OSC_ANALYSIS_BEGIN,&job)<0){
         a->failed=1;return 0;
     }
-    amplitude->minimum=number(job.result_bits[0]);amplitude->maximum=number(job.result_bits[1]);
-    amplitude->mean=number(job.result_bits[2]);amplitude->rms=number(job.result_bits[3]);
-    amplitude->clipped=number(job.result_bits[6])!=0;
-    timing->frequency=number(job.result_bits[4]);timing->duty=number(job.result_bits[5]);
     return 1;
+}
+static int finish(void *context,SignalAmplitude *amplitude,SignalTiming *timing)
+{
+    ZynqAnalysis *a=context;struct osc_analysis_result result;
+    if(a->failed)return 0;
+    if(ioctl(a->fd,OSC_ANALYSIS_FINISH,&result)<0 || result.bits[7]!=bits(1)){
+        a->failed=1;return 0;
+    }
+    amplitude->minimum=number(result.bits[0]);amplitude->maximum=number(result.bits[1]);
+    amplitude->mean=number(result.bits[2]);amplitude->rms=number(result.bits[3]);
+    amplitude->clipped=number(result.bits[6])!=0;
+    timing->frequency=number(result.bits[4]);timing->duty=number(result.bits[5]);
+    return 1;
+}
+static int measure(void *context,const SignalTrace *trace,SignalNumber rate,
+    SignalAmplitude *amplitude,SignalTiming *timing)
+{
+    return begin(context,trace,rate) && finish(context,amplitude,timing);
 }
 int zynq_analysis_open(ZynqAnalysis *a,const char *device)
 {
@@ -53,11 +66,11 @@ int zynq_analysis_open(ZynqAnalysis *a,const char *device)
     if(a->fd<0)return errno==ENODEV || errno==ENOENT;
     if(ioctl(a->fd,OSC_ANALYSIS_GET_INFO,&info)<0 || info.abi_version!=OSC_ANALYSIS_ABI ||
        info.max_samples!=OSC_ANALYSIS_MAX_SAMPLES || info.reserved ||
-       (info.features&(OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY))!=
-           (OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY)){
+       (info.features&(OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY|OSC_ANALYSIS_ASYNC))!=
+           (OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY|OSC_ANALYSIS_ASYNC)){
         zynq_analysis_close(a);return 0;
     }
-    a->analyzer=(SignalAnalyzer){a,measure};
+    a->analyzer=(SignalAnalyzer){a,measure,begin,finish};
     return 1;
 }
 void zynq_analysis_close(ZynqAnalysis *a)

@@ -6,6 +6,7 @@
 #include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/jiffies.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -43,8 +44,10 @@ struct analysis {
     atomic_t busy;
     struct mutex lock;
     struct completion done;
-    bool failed;
+    unsigned long deadline;
+    bool failed,pending;
 };
+static int finish_measure(struct analysis *a,struct osc_analysis_result *result);
 static bool present(struct analysis *a)
 {
     const u32 required=OSC_CAPTURE_ANALYSIS_PRESENT|OSC_CAPTURE_ANALYSIS_AMPLITUDE_ONLY;
@@ -83,6 +86,10 @@ static int analysis_open(struct inode *inode,struct file *file)
 static int analysis_release(struct inode *inode,struct file *file)
 {
     struct analysis *a=file->private_data;
+    struct osc_analysis_result discarded;
+    mutex_lock(&a->lock);
+    if(a->pending)finish_measure(a,&discarded);
+    mutex_unlock(&a->lock);
     atomic_set(&a->busy,0);
     return 0;
 }
@@ -90,12 +97,11 @@ static bool finite_bits(u32 value)
 {
     return (value&0x7f800000)!=0x7f800000;
 }
-static int measure(struct analysis *a,struct osc_analysis_measure *job)
+static int begin_measure(struct analysis *a,const struct osc_analysis_measure *job)
 {
-    __le32 *result;
     size_t bytes;
     u32 pending;
-    unsigned i;
+    if(a->pending)return -EBUSY;
     if(job->samples>OSC_ANALYSIS_MAX_SAMPLES || job->format>1 || job->stride>2 ||
        (!job->format && !job->stride) || job->reserved[0] || job->reserved[1] ||
        !finite_bits(job->gain_bits) || !finite_bits(job->zero_bits) ||
@@ -113,8 +119,7 @@ static int measure(struct analysis *a,struct osc_analysis_measure *job)
             if(copy_from_user(a->memory,u64_to_user_ptr(job->codes_address),bytes))return -EFAULT;
         }
     }
-    result=a->memory+RESULT_OFFSET;
-    memset(result,0,sizeof(job->result_bits));
+    memset(a->memory+RESULT_OFFSET,0,sizeof(job->result_bits));
     writel(lower_32_bits(a->dma),a->registers+INPUT_CODES);
     writel(lower_32_bits(a->dma+VALUES_OFFSET),a->registers+INPUT_VALUES);
     writel(lower_32_bits(a->dma+RESULT_OFFSET),a->registers+OUTPUT_VALUES);
@@ -128,34 +133,53 @@ static int measure(struct analysis *a,struct osc_analysis_measure *job)
     if(pending)writel(pending,a->registers+IRQ_STATUS);
     reinit_completion(&a->done);
     writel(1,a->registers+IRQ_ENABLE);writel(1,a->registers+GLOBAL_IRQ);
+    a->pending=true;
+    a->deadline=jiffies+msecs_to_jiffies(5000);
     dma_wmb();
     writel(1,a->registers+CONTROL);
-    if(!wait_for_completion_timeout(&a->done,msecs_to_jiffies(5000))){
-        a->failed=true;
+    return 0;
+}
+static int finish_measure(struct analysis *a,struct osc_analysis_result *result)
+{
+    __le32 *memory=a->memory+RESULT_OFFSET;
+    unsigned long remaining;
+    unsigned i;
+    if(!a->pending)return -EAGAIN;
+    remaining=time_before(jiffies,a->deadline)?a->deadline-jiffies:1;
+    if(!wait_for_completion_timeout(&a->done,remaining)){
+        a->failed=true;a->pending=false;
         dev_err(a->misc.parent,"analysis: FPGA replay timed out\n");
         return -ETIMEDOUT;
     }
+    a->pending=false;
     dma_rmb();
-    for(i=0;i<ARRAY_SIZE(job->result_bits);++i)job->result_bits[i]=le32_to_cpup(result+i);
-    return job->result_bits[7]==0x3f800000?0:-EIO;
+    for(i=0;i<ARRAY_SIZE(result->bits);++i)result->bits[i]=le32_to_cpup(memory+i);
+    return result->bits[7]==0x3f800000?0:-EIO;
 }
 static long analysis_ioctl(struct file *file,unsigned int command,unsigned long argument)
 {
     struct analysis *a=file->private_data;
     void __user *user=(void __user *)argument;
     struct osc_analysis_measure job;
+    struct osc_analysis_result result;
     int error;
     if(command==OSC_ANALYSIS_GET_INFO){
         struct osc_analysis_info info={OSC_ANALYSIS_ABI,OSC_ANALYSIS_MAX_SAMPLES,
-            OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY,0};
+            OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY|OSC_ANALYSIS_ASYNC,0};
         return copy_to_user(user,&info,sizeof(info))?-EFAULT:0;
     }
-    if(command!=OSC_ANALYSIS_MEASURE)return -ENOTTY;
-    if(copy_from_user(&job,user,sizeof(job)))return -EFAULT;
+    if(command!=OSC_ANALYSIS_MEASURE && command!=OSC_ANALYSIS_BEGIN && command!=OSC_ANALYSIS_FINISH)return -ENOTTY;
+    if(command!=OSC_ANALYSIS_FINISH && copy_from_user(&job,user,sizeof(job)))return -EFAULT;
     if(mutex_lock_interruptible(&a->lock))return -ERESTARTSYS;
-    error=measure(a,&job);
+    error=command==OSC_ANALYSIS_FINISH?0:begin_measure(a,&job);
+    if(!error && command!=OSC_ANALYSIS_BEGIN)error=finish_measure(a,&result);
     mutex_unlock(&a->lock);
-    if(!error && copy_to_user(user,&job,sizeof(job)))error=-EFAULT;
+    if(!error && command==OSC_ANALYSIS_FINISH){
+        if(copy_to_user(user,&result,sizeof(result)))error=-EFAULT;
+    }else if(!error && command==OSC_ANALYSIS_MEASURE){
+        memcpy(job.result_bits,result.bits,sizeof(result.bits));
+        if(copy_to_user(user,&job,sizeof(job)))error=-EFAULT;
+    }
     return error;
 }
 static const struct file_operations analysis_ops={

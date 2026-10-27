@@ -160,9 +160,9 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
     if(fd==43){
         if(command==OSC_ANALYSIS_GET_INFO){
             *(struct osc_analysis_info *)arg=(struct osc_analysis_info){OSC_ANALYSIS_ABI,OSC_ANALYSIS_MAX_SAMPLES,
-                OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY,0};return 0;
+                OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY|OSC_ANALYSIS_ASYNC,0};return 0;
         }
-        assert(command==OSC_ANALYSIS_MEASURE);atomic_fetch_add(&analysis_jobs,1);errno=EIO;return -1;
+        assert(command==OSC_ANALYSIS_BEGIN);atomic_fetch_add(&analysis_jobs,1);errno=EIO;return -1;
     }
     assert(fd==42);
     if(command==OSC_CAPTURE_GET_INFO) {

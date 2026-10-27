@@ -59,7 +59,7 @@ int main(void)
     if(fd<0){perror("open analysis");return 1;}
     assert(codes && values);
     assert(ioctl(fd,OSC_ANALYSIS_GET_INFO,&info)==0 && info.abi_version==OSC_ANALYSIS_ABI &&
-        info.max_samples==1000000 && info.features==(OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY));
+        info.max_samples==1000000 && info.features==(OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY|OSC_ANALYSIS_ASYNC));
     errno=0;assert(open("/dev/oscill-analysis",O_RDWR)<0 && errno==EBUSY);
     for(unsigned i=0;i<1000000;++i){
         codes[2*i]=i%100<33?195:85;codes[2*i+1]=i%100<67?175:95;
@@ -84,6 +84,9 @@ int main(void)
         near(number(request.result_bits[3]),sqrt(.33*1.25*1.25+.67*2.5*2.5),1e-5);
         near(number(request.result_bits[4]),11000,.02);near(number(request.result_bits[5]),33,.02);
     }
+    for(unsigned i=0;i<1000000;++i)values[i]=i%100<64?1:i%100==64?-0.1724137931034483f:-1;
+    request=job(codes,values,1000000,0,1);execute(fd,&request);
+    near(number(request.result_bits[4]),11000,.01);near(number(request.result_bits[5]),64.35294117647059,.0001);
     memset(codes,128,2000000);
     request=job(codes,values,1000000,0,0);request.zero_bits=bits(128.1f);execute(fd,&request);
     near(number(request.result_bits[2]),-.001,1e-6);near(number(request.result_bits[3]),.001,1e-6);
@@ -99,7 +102,22 @@ int main(void)
     close(fd);fd=open("/dev/oscill-analysis",O_RDWR);assert(fd>=0);
     request=job(codes,values,1000,0,0);execute(fd,&request);
     near(number(request.result_bits[2]),0,0);near(number(request.result_bits[3]),0,0);
+    struct osc_analysis_result completed;
+    assert(ioctl(fd,OSC_ANALYSIS_FINISH,&completed)<0 && errno==EAGAIN);
+    request=job(codes,values,1000000,0,0);request.zero_bits=bits(128.1f);
+    double begin=seconds();assert(ioctl(fd,OSC_ANALYSIS_BEGIN,&request)==0);
+    printf("async_begin_ms=%.3f\n",(seconds()-begin)*1000);
+    memset(codes,0,2000000); /* BEGIN has already copied its input. */
+    struct timespec pause={0,100000000};nanosleep(&pause,NULL);
+    assert(ioctl(fd,OSC_ANALYSIS_BEGIN,&request)<0 && errno==EBUSY);
+    assert(ioctl(fd,OSC_ANALYSIS_MEASURE,&request)<0 && errno==EBUSY);
+    assert(ioctl(fd,OSC_ANALYSIS_FINISH,&completed)==0);
+    near(number(completed.bits[2]),-.001,1e-6);near(number(completed.bits[3]),.001,1e-6);
+    assert(ioctl(fd,OSC_ANALYSIS_FINISH,&completed)<0 && errno==EAGAIN);
+    request=job(codes,values,1000000,0,0);assert(ioctl(fd,OSC_ANALYSIS_BEGIN,&request)==0);
+    close(fd);fd=open("/dev/oscill-analysis",O_RDWR);assert(fd>=0); /* close drains its pending job. */
+    request=job(codes,values,1000,0,0);execute(fd,&request);near(number(request.result_bits[2]),-1.28,1e-5);
     close(fd);free(codes);free(values);
-    puts("PASS: FPGA replay, two channels, raw/processed, 1K..1M, small calibrated DC, ABI, bounds and reopen");
+    puts("PASS: FPGA replay, two channels, raw/processed, 1K..1M, small calibrated DC, ABI, bounds, async ownership and reopen");
     return 0;
 }

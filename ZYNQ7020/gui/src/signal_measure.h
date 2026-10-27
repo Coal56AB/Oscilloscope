@@ -23,6 +23,11 @@ typedef struct {
     void *context;
     int (*measure)(void *context,const SignalTrace *trace,SignalNumber sample_rate,
         SignalAmplitude *amplitude,SignalTiming *timing);
+    /* Optional split operation lets projection run while the numerical
+       executor works. Pair every successful begin with finish and keep
+       the trace storage valid until finish returns. */
+    int (*begin)(void *context,const SignalTrace *trace,SignalNumber sample_rate);
+    int (*finish)(void *context,SignalAmplitude *amplitude,SignalTiming *timing);
 } SignalAnalyzer;
 #define SIGNAL_TIMING_CAPACITY 4096u
 #define SIGNAL_TIMING_WORKSPACE (3u*SIGNAL_TIMING_CAPACITY)

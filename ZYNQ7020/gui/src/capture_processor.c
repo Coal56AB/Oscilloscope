@@ -456,32 +456,15 @@ static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayF
     size_t visible_first=(size_t)floor(fmax(0,fmin(first,count)));
     size_t visible_end=(size_t)ceil(fmax(0,fmin(first+samples,count)));
     double timing_low=f->minimum[ch],timing_high=f->maximum[ch];
-    if(filtered && visible_end>visible_first){
-        SignalTrace trace={NULL,filtered+visible_first,visible_end-visible_first,0,b->volts_per_code[ch],0,SIGNAL_TRACE_VALUES};
-        SignalAmplitude amplitude;SignalTiming timing;
-        if(v->analyzer){
-            if(!v->analyzer->measure(v->analyzer->context,&trace,(double)b->sample_rate_hz,&amplitude,&timing)){
-                free(workspace);return 0;
-            }
-            f->frequency_hz[ch]=timing.frequency;f->duty[ch]=timing.duty;
-        }else signal_measure_amplitude(&trace,&amplitude);
-        double low=amplitude.minimum,high=amplitude.maximum;
-        f->mean[ch]=amplitude.mean;f->rms[ch]=amplitude.rms;
-        timing_low=low;timing_high=high;
-        /* Only extrema represented by this source may extend its range.
-           Manual filtering removes native buckets with unknown peak times. */
-        if(source.envelope){
-            double envelope_low,envelope_high;
-            source.envelope(source.context,visible_first/source.envelope_samples,
-                (visible_end+source.envelope_samples-1)/source.envelope_samples,ch,
-                &envelope_low,&envelope_high);
-            if(envelope_low<low)low=envelope_low;
-            if(envelope_high>high)high=envelope_high;
+    int measure_filtered=filtered && visible_end>visible_first,pending_measure=0;
+    SignalTrace measured={NULL,filtered?filtered+visible_first:NULL,visible_end-visible_first,
+        0,b->volts_per_code[ch],0,SIGNAL_TRACE_VALUES};
+    if(measure_filtered && v->analyzer && v->analyzer->begin && v->analyzer->finish){
+        if(!v->analyzer->begin(v->analyzer->context,&measured,(double)b->sample_rate_hz)){
+            free(workspace);return 0;
         }
-        f->minimum[ch]=low;f->maximum[ch]=high;
+        pending_measure=1;
     }
-    if(!v->analyzer)measure_timing(b,ch,filtered,visible_first,visible_end,timing_low,timing_high,
-        &f->frequency_hz[ch],&f->duty[ch]);
     waveform_view_reduce(&source, first, samples, ch, v->zero_y[ch], v->pixels_per_volt[ch],
                          SCOPE_PLOT_WIDTH, f->y[ch], f->y_min[ch], f->y_max[ch]);
     waveform_view_peak_bounds(&source, first, samples, ch, v->zero_y[ch], v->pixels_per_volt[ch],
@@ -507,6 +490,32 @@ static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayF
                                           SCOPE_PLOT_WIDTH, rows, &f->connections[ch][0][0]);
         }
     }
+    if(measure_filtered){
+        SignalAmplitude amplitude;SignalTiming timing;
+        if(v->analyzer){
+            int measured_ok=pending_measure?
+                v->analyzer->finish(v->analyzer->context,&amplitude,&timing):
+                v->analyzer->measure(v->analyzer->context,&measured,(double)b->sample_rate_hz,&amplitude,&timing);
+            if(!measured_ok){free(workspace);return 0;}
+            f->frequency_hz[ch]=timing.frequency;f->duty[ch]=timing.duty;
+        }else signal_measure_amplitude(&measured,&amplitude);
+        double low=amplitude.minimum,high=amplitude.maximum;
+        f->mean[ch]=amplitude.mean;f->rms[ch]=amplitude.rms;
+        timing_low=low;timing_high=high;
+        /* Only extrema represented by this source may extend its range.
+           Manual filtering removes native buckets with unknown peak times. */
+        if(source.envelope){
+            double envelope_low,envelope_high;
+            source.envelope(source.context,visible_first/source.envelope_samples,
+                (visible_end+source.envelope_samples-1)/source.envelope_samples,ch,
+                &envelope_low,&envelope_high);
+            if(envelope_low<low)low=envelope_low;
+            if(envelope_high>high)high=envelope_high;
+        }
+        f->minimum[ch]=low;f->maximum[ch]=high;
+    }
+    if(!v->analyzer)measure_timing(b,ch,filtered,visible_first,visible_end,timing_low,timing_high,
+        &f->frequency_hz[ch],&f->duty[ch]);
     free(workspace);
     return ok;
 }
