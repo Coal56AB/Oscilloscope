@@ -8,11 +8,13 @@ typedef float SignalNumber;
 #define signal_number_abs fabsf
 #define signal_number_sqrt sqrtf
 #define signal_number_max fmaxf
+#define signal_number_min fminf
 #else
 typedef double SignalNumber;
 #define signal_number_abs fabs
 #define signal_number_sqrt sqrt
 #define signal_number_max fmax
+#define signal_number_min fmin
 #endif
 #define SIGNAL_NUMBER(value) ((SignalNumber)(value))
 #endif

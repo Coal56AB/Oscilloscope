@@ -30,7 +30,7 @@ if(UNIX AND NOT APPLE)
     install(TARGETS oscill-status RUNTIME DESTINATION bin)
 endif()
 
-add_library(waveform_view STATIC src/waveform_view.c src/signal_filter.c src/signal_measure.c src/dsp_fft.c src/channel_response.c)
+add_library(waveform_view STATIC src/waveform_view.c src/signal_filter.c src/signal_filter_trace.c src/signal_measure.c src/dsp_fft.c src/channel_response.c)
 target_include_directories(waveform_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(NOT MSVC)
     target_link_libraries(waveform_view PUBLIC m)

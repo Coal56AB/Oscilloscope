@@ -53,6 +53,44 @@ static void denoise_test(void)
     source[20]=NAN;signal_filter_denoise(source,4096,.1444,result);assert(isnan(result[20]));
 }
 
+static void tiled_filter_test(void)
+{
+    const size_t maximum=1000000;
+    uint8_t *codes=malloc(2*maximum);
+    double *values=malloc(4*maximum*sizeof(double));assert(codes && values);
+    double *expected=values+maximum,*temporary=expected+maximum,*actual=temporary+maximum;
+    unsigned random=7;
+    const size_t lengths[]={1,8,17,65,255,256,257,4097,maximum};
+    for(unsigned format=0;format<2;++format)for(unsigned channel=0;channel<2;++channel){
+        for(size_t i=0;i<maximum;++i){
+            random=random*1664525u+1013904223u;
+            codes[2*i+channel]=(uint8_t)((i%101<33?190:80)+(int)(random>>28)-8);
+            values[i]=(codes[2*i+channel]-128.25)*.013;
+        }
+        if(format){values[255]=NAN;values[256]=NAN;values[4096]=NAN;}
+        for(unsigned length=0;length<sizeof(lengths)/sizeof(lengths[0]);++length){
+            size_t n=lengths[length];
+            SignalTrace trace={codes+channel,values,n,2,.013,128.25,format};
+            for(unsigned noise=0;noise<2;++noise)for(unsigned level=0;level<4;++level){
+                double rms=noise?.035:0;
+                if(format){
+                    if(noise)signal_filter_denoise(values,n,rms,expected);
+                    else memcpy(expected,values,n*sizeof(*expected));
+                }else{
+                    if(noise)signal_filter_denoise_u8(codes+channel,n,2,rms/.013,expected);
+                    else for(size_t i=0;i<n;++i)expected[i]=codes[2*i+channel];
+                    for(size_t i=0;i<n;++i)expected[i]=(expected[i]-128.25)*.013;
+                }
+                if(level){signal_filter_apply(expected,n,level,temporary);memcpy(expected,temporary,n*sizeof(*expected));}
+                signal_filter_trace(&trace,rms,level,actual);
+                for(size_t i=0;i<n;++i)
+                    assert((isnan(actual[i]) && isnan(expected[i])) || fabs(actual[i]-expected[i])<1e-9);
+            }
+        }
+    }
+    free(values);free(codes);
+}
+
 static double plateau_error(const DisplayFrame *frame)
 {
     unsigned x, count = 0;
@@ -560,6 +598,7 @@ static void automatic_peak_voltage_test(void)
 
 int main(void)
 {
+    tiled_filter_test();
     kernel_test(); denoise_test(); adc_denoise_test();denoise_bounds_test();processor_test(); stopped_pipeline_test();dc_timebase_test();window_filter_test();growing_trigger_test();sparse_trigger_test();hidden_density_test();timing_measurement_test();automatic_peak_voltage_test();
     return 0;
 }
