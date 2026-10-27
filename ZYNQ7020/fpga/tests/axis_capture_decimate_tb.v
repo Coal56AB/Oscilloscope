@@ -9,7 +9,7 @@ module axis_capture_decimate_tb;
     reg held=0;
     integer sent,received,cycle,epoch,target,written,pos;
     integer low0,low1,high0,high1,c0,c1;
-    integer remainder0,remainder1,sum0,sum1;
+    integer remainder0,remainder1,sum0,sum1,window0,window1;
     reg [15:0] first_pair,second_pair;
     axis_capture_decimate dut(clk,resetn,divider,data,valid,take,out_data,out_valid,ready,peaks);
     always #5 clk=~clk;
@@ -20,7 +20,7 @@ module axis_capture_decimate_tb;
             case(epoch)0:divider=0;1:divider=1;2:divider=5;3:divider=100;4:divider=1;
                 5:divider=1;6:divider=2;7:divider=5;8:divider=100;endcase
             sent=0;received=0;written=0;cycle=0;pos=0;held=0;
-            remainder0=0;remainder1=0;sum0=0;sum1=0;
+            remainder0=0;remainder1=0;sum0=0;sum1=0;window0=0;window1=0;
             target=divider==0?16:16*divider;
             resetn=1;
             wait(received==16);
@@ -48,12 +48,14 @@ module axis_capture_decimate_tb;
             if(divider==0)begin expected[written]=data;written=written+1;end
             else begin
                 if(pos==0)begin low0=255;low1=255;high0=0;high1=0;end
-                if(pos==0 || pos==divider)begin
-                    c0=data[7:0]+data[23:16]+remainder0;
-                    c1=data[15:8]+data[31:24]+remainder1;
-                    remainder0=c0%2;remainder1=c1%2;
-                    if(pos==0)first_pair={8'(c1/2),8'(c0/2)};
-                    else second_pair={8'(c1/2),8'(c0/2)};
+                window0=window0+data[7:0]+data[23:16];
+                window1=window1+data[15:8]+data[31:24];
+                if(pos==divider-1 || pos==2*divider-1)begin
+                    c0=window0+remainder0;c1=window1+remainder1;
+                    remainder0=c0%(2*divider);remainder1=c1%(2*divider);
+                    if(pos==divider-1)first_pair={8'(c1/(2*divider)),8'(c0/(2*divider))};
+                    else second_pair={8'(c1/(2*divider)),8'(c0/(2*divider))};
+                    window0=0;window1=0;
                 end
                 c0=data[7:0];c1=data[15:8];
                 if(c0<low0)low0=c0;if(c0>high0)high0=c0;
