@@ -959,7 +959,9 @@ static void first_presented_trigger_test(unsigned depth,double duration,int hard
     assert(!atomic_load(&available));scope_sleep_ms(30);
     assert(!capture_pipeline_frame(p,&frame));
     for(unsigned i=0;i<100;++i){
-        capture_pipeline_metrics(p,&metrics);if(metrics.waveforms>=2)break;scope_sleep_ms(5);
+        capture_pipeline_metrics(p,&metrics);
+        if(metrics.waveforms>=2 && metrics.deadtime_blocks>=8)break;
+        scope_sleep_ms(5);
     }
     assert(metrics.waveforms==2 && metrics.deadtime_blocks>=8 && !metrics.overwritten && !metrics.source_error);
     capture_pipeline_presented(p,first_id);atomic_store(&available,8);
@@ -1118,6 +1120,11 @@ int main(void)
     atomic_store(&available,1);assert(wait_frame(pipeline,&frame));
     assert(frame.sample_rate_hz==200 && frame.view_samples==128);
     assert(frame.y[0][0]==INT16_MIN && frame.y[0][SCOPE_PLOT_WIDTH-1]!=INT16_MIN);
+    for(unsigned pan_step=0;pan_step<2;++pan_step){
+        request.pan_fraction=pan_step?1:0;capture_pipeline_request(pipeline,&request);
+        assert(wait_frame(pipeline,&frame));
+        assert(frame.view_samples==128 && frame.y[0][SCOPE_PLOT_WIDTH-1]!=INT16_MIN);
+    }
     atomic_store(&available,80);
     for(unsigned i=0;i<100&&atomic_load(&available);++i)scope_sleep_ms(5);
     assert(!atomic_load(&available));
@@ -1126,6 +1133,20 @@ int main(void)
     atomic_store(&available,1);assert(wait_frame(pipeline,&frame));
     assert(frame.view_samples==10000&&frame.trigger_sample==CAPTURE_NO_TRIGGER);
     for(unsigned x=0;x<SCOPE_PLOT_WIDTH;++x)assert(frame.y[0][x]!=INT16_MIN);
+    for(unsigned pan_step=0;pan_step<5;++pan_step){
+        request.pan_fraction=pan_step/4.0;capture_pipeline_request(pipeline,&request);
+        assert(wait_frame(pipeline,&frame));
+        for(unsigned x=0;x<SCOPE_PLOT_WIDTH;++x)assert(frame.y[0][x]!=INT16_MIN);
+    }
+    scope_sleep_ms(50);while(capture_pipeline_frame(pipeline,&frame)){}
+    atomic_fetch_add(&counter,5);atomic_store(&available,1);
+    scope_sleep_ms(80);assert(!atomic_load(&available));
+    assert(!capture_pipeline_frame(pipeline,&frame));
+    atomic_store(&available,80);assert(wait_frame(pipeline,&frame));
+    assert(frame.view_samples==10000);
+    for(unsigned x=0;x<SCOPE_PLOT_WIDTH;++x)assert(frame.y[0][x]!=INT16_MIN);
+    for(unsigned i=0;i<100&&atomic_load(&available);++i)scope_sleep_ms(5);
+    scope_sleep_ms(50);while(capture_pipeline_frame(pipeline,&frame)){}
     sequence=frame.sequence;
     request.running=0;request.duration_seconds=20;request.pan_fraction=0.3;
     capture_pipeline_request(pipeline,&request);assert(wait_frame(pipeline,&frame));

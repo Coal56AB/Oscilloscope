@@ -146,9 +146,11 @@ static int process_frame(CapturePipeline *p, const CaptureBuffer *raw,
         base_first = (double)(b->trigger_sample - b->first_sample) -
                      base_samples * (1.0 - request->pan_fraction);
     if (request->roll) base_first = (double)(b->bytes / 2) - base_samples +
-        (request->pan_fraction - 0.5) * base_samples;
+        (request->running?0:(request->pan_fraction - 0.5) * base_samples);
     view.display_first = base_first + (base_samples - view.display_samples) * 0.5 +
                          request->zoom_offset_seconds * b->sample_rate_hz;
+    if(request->roll && view.display_samples<=b->bytes/2)
+        view.display_first=fmax(0,fmin(view.display_first,b->bytes/2-view.display_samples));
     view.skip_spectrum = !request->spectrum_enabled;
     view.calibration_mask=request->calibration_mask;
     view.baseline_mask=request->baseline_mask;
@@ -413,6 +415,7 @@ static void hardware_worker(void *context)
     uint64_t expected = 0, next_trigger = 0, forced = 0, last_display = 0;
     uint64_t pending_presentation[2]={0};
     unsigned presentation_count=0;
+    size_t roll_coverage=0;
     unsigned rate_index = UINT32_MAX, depth = 0, shift, published_revision = UINT32_MAX;
     unsigned single_arm = UINT32_MAX, previous_baseline_mask = 0;
     unsigned observed_arm=UINT32_MAX;
@@ -456,7 +459,7 @@ static void hardware_worker(void *context)
                 failed=1;scope_mutex_lock(&p->mutex);p->source_error=1;scope_mutex_unlock(&p->mutex);
             }
             capture_history_init(&history, p->storage[0], p->storage[0]+HARDWARE_HISTORY_SAMPLES*2, history_depth);
-            last_display = 0; previous_debug = request.debug;
+            last_display = 0;roll_coverage=0; previous_debug = request.debug;
             presentation_count=0;awaiting_presentation=0;
             previous_baseline_mask=request.baseline_mask;
             memcpy(previous_gain, request.adc_volts_per_code, sizeof(previous_gain));
@@ -476,7 +479,7 @@ static void hardware_worker(void *context)
                 rate_index = wanted_rate; depth = wanted_depth;
                 probe_control=p->zynq.probe_supported<0?0:wanted_probe;
                 capture_history_init(&history, p->storage[0], p->storage[0]+HARDWARE_HISTORY_SAMPLES*2, history_depth);
-                expected = next_trigger = last_display = 0; failed = 0;
+                expected = next_trigger = last_display = 0;roll_coverage=0; failed = 0;
                 presentation_count=0;awaiting_presentation=0;
             }
             scope_mutex_lock(&p->mutex);
@@ -653,6 +656,14 @@ static void hardware_worker(void *context)
                     post = ceil(span * request.pan_fraction)+trigger_padding;
                     complete = request.roll || (candidate.bytes / 2 >= pre + post &&
                         (!force || candidate.bytes / 2 > pre));
+                    size_t coverage=candidate.bytes/2;
+                    if(request.roll){
+                        if(coverage>ceil(span))coverage=(size_t)ceil(span);
+                        /* A gap starts a new contiguous history. Keep the last
+                           visible sweep until the replacement covers as much
+                           time; never collapse it to a short tail. */
+                        complete=coverage>=roll_coverage;
+                    }
                     if(hardware_dsp && candidate.bytes/2<depth)complete=0;
                     if (!request.roll) {
                         if (complete) {
@@ -725,6 +736,7 @@ static void hardware_worker(void *context)
                         p->ring.buffer[slot]=candidate;p->record_source[slot]=source_revision;
                         if(!capture_ring_publish(&p->ring,slot))capture_ring_cancel(&p->ring,slot);
                         else {
+                            if(request.roll)roll_coverage=coverage;
                             published_revision=revision;
                             if(presentation_count<2)pending_presentation[presentation_count++]=candidate.accepted_ns;
                         }

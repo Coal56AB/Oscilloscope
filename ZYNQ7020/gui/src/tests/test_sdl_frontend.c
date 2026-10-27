@@ -471,6 +471,12 @@ static void test_remote_commands(void)
     assert(!remote_command("set time_index 5000",response,NULL));
     assert(!remote_command("set trigger_mode 3",response,NULL));
     assert(demo.time_index==previous);fclose(response);
+    demo.screen.zoom_enabled=0;
+    response=tmpfile();assert(response);
+    assert(remote_command("set time_position -420",response,NULL));assert(demo.time_position==-420);
+    assert(remote_command("set time_position 420",response,NULL));assert(demo.time_position==420);
+    assert(!remote_command("set time_position 421",response,NULL));assert(demo.time_position==420);
+    fclose(response);
     response=tmpfile();assert(response);assert(remote_command("csv",response,NULL));
     rewind(response);assert(fgets(header,sizeof(header),response));assert(!strcmp(header,"#oscill_wave=2\n"));fclose(response);
     dirty=plot_dirty=overlay_dirty=0;
