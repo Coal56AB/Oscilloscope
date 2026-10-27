@@ -10,9 +10,11 @@ void record_measure(const uint8_t *codes,const SignalNumber *values,SignalNumber
     uint32_t count,uint32_t stride,uint32_t filtered,SignalNumber gain,SignalNumber zero,SignalNumber sample_rate,
     uint32_t operation,uint32_t filter_level,SignalNumber noise_rms)
 {
-#pragma HLS INTERFACE m_axi port=codes offset=slave bundle=record_memory depth=2000000 max_read_burst_length=64 num_read_outstanding=16 max_write_burst_length=64 num_write_outstanding=4
-#pragma HLS INTERFACE m_axi port=values offset=slave bundle=record_memory depth=1000000 max_read_burst_length=64 num_read_outstanding=16 max_write_burst_length=64 num_write_outstanding=4
-#pragma HLS INTERFACE m_axi port=result offset=slave bundle=record_memory depth=1000008 max_read_burst_length=64 num_read_outstanding=16 max_write_burst_length=64 num_write_outstanding=4
+/* depth sizes the RTL test adapter (vectors <=1000), not the DDR record.
+   The runtime count and driver retain the full 1M-sample limit. */
+#pragma HLS INTERFACE m_axi port=codes offset=slave bundle=record_memory depth=4096 max_read_burst_length=64 num_read_outstanding=16 max_write_burst_length=64 num_write_outstanding=4
+#pragma HLS INTERFACE m_axi port=values offset=slave bundle=record_memory depth=4096 max_read_burst_length=64 num_read_outstanding=16 max_write_burst_length=64 num_write_outstanding=4
+#pragma HLS INTERFACE m_axi port=result offset=slave bundle=record_memory depth=4096 max_read_burst_length=64 num_read_outstanding=16 max_write_burst_length=64 num_write_outstanding=4
 #pragma HLS INTERFACE s_axilite port=codes bundle=control
 #pragma HLS INTERFACE s_axilite port=values bundle=control
 #pragma HLS INTERFACE s_axilite port=result bundle=control

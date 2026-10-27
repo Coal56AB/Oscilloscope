@@ -26,6 +26,8 @@ open_solution -reset solution
 set_part $part
 create_clock -period 10 -name default
 config_interface -m_axi_addr64=false
+# The core includes its operand stage; latency 3 pipelines the comparison too.
+config_core FCmp -latency 3
 set_directive_inline signal_edge_advance
 set_directive_inline signal_edge_fraction
 set_directive_inline value_at
