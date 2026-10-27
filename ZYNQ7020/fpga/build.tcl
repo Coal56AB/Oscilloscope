@@ -71,13 +71,11 @@ cell zero xilinx.com:ip:xlconstant:1.1 {CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 0}
 cell interrupts xilinx.com:ip:xlconcat:2.1 {CONFIG.NUM_PORTS 3}
 source $here/capture.tcl
 cell record_measure xilinx.com:hls:record_measure:1.0 {}
-cell analysis_memory xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 1 CONFIG.NUM_SI 3}
+cell analysis_memory xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 1 CONFIG.NUM_SI 1}
 set_property CONFIG.HAS_ANALYSIS 1 [get_bd_cells capture_status]
 set_property CONFIG.HAS_FILTER 1 [get_bd_cells capture_status]
 bus control/M06_AXI record_measure/s_axi_control
-bus record_measure/m_axi_raw_memory analysis_memory/S00_AXI
-bus record_measure/m_axi_filtered_memory analysis_memory/S01_AXI
-bus record_measure/m_axi_result_memory analysis_memory/S02_AXI
+bus record_measure/m_axi_record_memory analysis_memory/S00_AXI
 bus analysis_memory/M00_AXI ps7/S_AXI_HP1
 net ps7/FCLK_CLK0 ps7/S_AXI_HP1_ACLK record_measure/ap_clk analysis_memory/aclk
 net reset_axi/peripheral_aresetn record_measure/ap_rst_n analysis_memory/aresetn
