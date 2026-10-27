@@ -49,7 +49,9 @@ static SignalNumber filter_origin(const SignalNumber *source,SignalIndex samples
 
 void signal_filter_denoise_u8(const uint8_t *source,SignalIndex samples,SignalIndex stride,SignalNumber noise_rms,SignalNumber *result)
 {
-    unsigned sum=0,squares=0;
+    /* At most 18 byte values before the outgoing sample is removed. */
+    uint16_t sum=0;
+    unsigned squares=0;
     SignalNumber noise=noise_rms*noise_rms;
     if(!isfinite(noise) || noise<=0){for(SignalIndex i=0;i<samples;++i)result[i]=source[i*stride];return;}
     for(SignalIndex j=0;j<samples && j<SIGNAL_FILTER_DENOISE_RADIUS;++j){unsigned value=source[j*stride];sum+=value;squares+=value*value;}
@@ -61,7 +63,7 @@ void signal_filter_denoise_u8(const uint8_t *source,SignalIndex samples,SignalIn
         SignalIndex right=samples-i>SIGNAL_FILTER_DENOISE_RADIUS?i+SIGNAL_FILTER_DENOISE_RADIUS+1:samples;
         if(samples-i>SIGNAL_FILTER_DENOISE_RADIUS){unsigned value=source[(right-1)*stride];sum+=value;squares+=value*value;}
         if(i>SIGNAL_FILTER_DENOISE_RADIUS){unsigned value=source[(left-1)*stride];sum-=value;squares-=value*value;}
-        unsigned count=(unsigned)(right-left);
+        uint8_t count=(uint8_t)(right-left);
         SignalNumber inverse=inverse_counts[count];
         SignalNumber variance=(count*squares-sum*sum)*inverse*inverse;
         unsigned value=source[i*stride];
@@ -72,7 +74,7 @@ void signal_filter_denoise_u8(const uint8_t *source,SignalIndex samples,SignalIn
 
 void signal_filter_denoise(const SignalNumber *source,SignalIndex samples,SignalNumber noise_rms,SignalNumber *result)
 {
-    unsigned count=0;
+    uint8_t count=0;
     SignalNumber sum=0,squares=0,noise=noise_rms*noise_rms;
     if(!isfinite(noise) || noise<=0){for(SignalIndex i=0;i<samples;++i)result[i]=source[i];return;}
     SignalNumber origin=filter_origin(source,samples);
@@ -102,7 +104,7 @@ void signal_filter_denoise(const SignalNumber *source,SignalIndex samples,Signal
 
 void signal_filter_apply(const SignalNumber *source, SignalIndex samples, unsigned level, SignalNumber *result)
 {
-    SignalIndex i;unsigned count=0;
+    SignalIndex i;uint8_t count=0;
     unsigned radius = radii[level < 4 ? level : 3];
     SignalNumber sum = 0;
     if (!radius) { for(SignalIndex j=0;j<samples;++j)result[j]=source[j];return; }
