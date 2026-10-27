@@ -1,6 +1,9 @@
 #include "signal_measure.h"
 #include "signal_edges.h"
 #include <math.h>
+#if defined(SIGNAL_TRACE_REPLAY)
+#include "record_trace.h"
+#endif
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
 static unsigned minimum16(uint8x16_t values)
@@ -18,7 +21,29 @@ static unsigned maximum16(uint8x16_t values)
 #endif
 static SignalNumber value_at(const SignalTrace *s,size_t i)
 {
+#if defined(SIGNAL_TRACE_REPLAY)
+    return record_trace_value(s,i);
+#else
     return s->format==SIGNAL_TRACE_VALUES?s->values[i]:(s->codes[i*s->stride]-s->zero)*s->gain;
+#endif
+}
+static unsigned code_at(const SignalTrace *s,size_t i)
+{
+#if defined(SIGNAL_TRACE_REPLAY)
+    return record_trace_code(s,i);
+#else
+    return s->codes[i*s->stride];
+#endif
+}
+/* Prepare one contiguous interval before entering the arithmetic pipeline.
+   Ordinary memory needs no preparation; FPGA replay fills a bounded DDR tile. */
+static size_t prepare(const SignalTrace *s,size_t first)
+{
+#if defined(SIGNAL_TRACE_REPLAY)
+    return record_trace_prepare(s,first);
+#else
+    (void)first;return s->samples;
+#endif
 }
 static void accumulate(SignalNumber value,SignalNumber *sum,SignalNumber *correction)
 {
@@ -47,15 +72,19 @@ void signal_measure_amplitude(const SignalTrace *s,SignalAmplitude *r)
     r->clipped=0;
     if(!s->samples){r->minimum=r->maximum=r->mean=r->rms=NAN;return;}
     if(s->format==SIGNAL_TRACE_VALUES){
-        SignalNumber sum=0,squares=0,sum_error=0,square_error=0,low=s->values[0],high=low;
-        for(size_t i=0;i<s->samples;++i){
+        prepare(s,0);
+        SignalNumber sum=0,squares=0,sum_error=0,square_error=0,low=value_at(s,0),high=low;
+        size_t i=0;
+        while(i<s->samples){size_t end=prepare(s,i);
+            for(;i<end;++i){
 #if defined(__SYNTHESIS__)
 #pragma HLS PIPELINE
 #endif
-            SignalNumber x=s->values[i];
-            accumulate(x,&sum,&sum_error);accumulate(x*x,&squares,&square_error);
-            if(x<low)low=x;
-            if(x>high)high=x;
+                SignalNumber x=value_at(s,i);
+                accumulate(x,&sum,&sum_error);accumulate(x*x,&squares,&square_error);
+                if(x<low)low=x;
+                if(x>high)high=x;
+            }
         }
         r->minimum=low;r->maximum=high;r->mean=sum/s->samples;r->rms=signal_number_sqrt(squares/s->samples);
     }else{
@@ -80,13 +109,15 @@ void signal_measure_amplitude(const SignalTrace *s,SignalAmplitude *r)
             if(maximum16(maximum)>high)high=maximum16(maximum);
         }
 #endif
-        for(;i<s->samples;++i){
+        while(i<s->samples){size_t end=prepare(s,i);
+            for(;i<end;++i){
 #if defined(__SYNTHESIS__)
 #pragma HLS PIPELINE II=1
 #endif
-            unsigned v=s->codes[i*s->stride];sum+=v;squares+=v*v;
-            if(v<low)low=v;
-            if(v>high)high=v;
+                unsigned v=code_at(s,i);sum+=v;squares+=v*v;
+                if(v<low)low=v;
+                if(v>high)high=v;
+            }
         }
         /* Center the integer moments before converting to float. A calibrated
            zero near 128 must not cancel two large, rounded code powers. */
@@ -132,12 +163,15 @@ void signal_measure_timing(const SignalTrace *s,SignalNumber sample_rate,SignalN
     result->frequency=0;result->duty=NAN;
     if(count<3 || !isfinite(range) || range<4*signal_number_abs(s->gain) || range<=0 || !workspace)return;
     SignalNumber histogram_scale=255/range;
-    for(i=0;i<count;++i){
+    i=0;
+    while(i<count){size_t end=prepare(s,i);
+        for(;i<end;++i){
 #if defined(__SYNTHESIS__)
 #pragma HLS PIPELINE
 #endif
-        SignalNumber bin=(value_at(s,i)-minimum)*histogram_scale;
-        unsigned code=bin<0?0:bin>255?255:(unsigned)bin;++histogram[code];
+            SignalNumber bin=(value_at(s,i)-minimum)*histogram_scale;
+            unsigned code=bin<0?0:bin>255?255:(unsigned)bin;++histogram[code];
+        }
     }
     for(code=0;code<256;++code){
         total+=histogram[code];if(total>count/20){low=minimum+code*range/255;break;}
@@ -149,22 +183,26 @@ void signal_measure_timing(const SignalTrace *s,SignalNumber sample_rate,SignalN
     if(high-low<range*SIGNAL_NUMBER(.2)){low=minimum;high=maximum;}
     SignalNumber level=(low+high)*SIGNAL_NUMBER(.5),band=signal_number_max(2*signal_number_abs(s->gain),(high-low)*SIGNAL_NUMBER(.15));
     SignalNumber *periods=workspace,*widths=workspace+capacity,*ordered=workspace+2*capacity;
+    prepare(s,0);
     SignalEdgeDetector detector;signal_edge_init(&detector,level,band,value_at(s,0));
-    for(i=1;i<count;++i){
+    i=1;
+    while(i<count){size_t end=prepare(s,i);
+        for(;i<end;++i){
 #if defined(__SYNTHESIS__)
 #pragma HLS PIPELINE
 #endif
-        int edge=signal_edge_advance(&detector,value_at(s,i),i);
-        if(edge){
-            SignalNumber at=signal_edge_time(&detector);detector.crossing_sample=SIZE_MAX;
-            if(edge<0)last_fall=at;
-            else{
-                if(last_rise>=0 && last_fall>last_rise && last_fall<at){
-                    SignalNumber period=at-last_rise,width=last_fall-last_rise;
-                    all_span+=period;all_width+=width;all_squares+=period*period;
-                    if(n<capacity){periods[n]=ordered[n]=period;widths[n]=width;}++n;
+            int edge=signal_edge_advance(&detector,value_at(s,i),i);
+            if(edge){
+                SignalNumber at=signal_edge_time(&detector);detector.crossing_sample=SIZE_MAX;
+                if(edge<0)last_fall=at;
+                else{
+                    if(last_rise>=0 && last_fall>last_rise && last_fall<at){
+                        SignalNumber period=at-last_rise,width=last_fall-last_rise;
+                        all_span+=period;all_width+=width;all_squares+=period*period;
+                        if(n<capacity){periods[n]=ordered[n]=period;widths[n]=width;}++n;
+                    }
+                    last_rise=at;
                 }
-                last_rise=at;
             }
         }
     }

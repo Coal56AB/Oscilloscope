@@ -20,11 +20,19 @@
             xlnx,device-id = <0>;
         };
     };
-    capture@41210000 {
+    capture: capture@41210000 {
         compatible = "oscill,ad9288-capture";
         reg = <0x41210000 0x10000>, <0x41220000 0x10000>;
         dmas = <&capture_dma 1>;
         dma-names = "rx";
+    };
+    analysis@43c20000 {
+        compatible = "oscill,record-analysis";
+        reg = <0x43c20000 0x10000>;
+        interrupts = <0 31 4>;
+        clocks = <&clkc 15>;
+        clock-names = "ap_clk";
+        oscill,capture = <&capture>;
     };
     oscill_oled: oled@41200000 {
         compatible = "oscill,oled-gpio";

@@ -19,6 +19,7 @@
 #include <linux/uaccess.h>
 #include <linux/workqueue.h>
 #include <linux/oscill_capture.h>
+#include "oscill_capture_internal.h"
 
 #define BUFFERS 16
 #define BLOCK_BYTES SZ_2M
@@ -36,6 +37,14 @@ struct receiver {
     void __iomem *gpio,*dsp;
     atomic_t busy;
 };
+u32 oscill_capture_status(struct device *device)
+{
+    struct receiver *r;
+    if(!device || !of_device_is_compatible(device->of_node,"oscill,ad9288-capture"))return 0;
+    r=dev_get_drvdata(device);
+    return r?readl(r->gpio+GPIO_STATUS):0;
+}
+EXPORT_SYMBOL_GPL(oscill_capture_status);
 static int configure_dsp(struct receiver *r,const struct osc_capture_dsp *config)
 {
     u32 status;
@@ -438,6 +447,7 @@ static int capture_probe(struct platform_device *device)
         .fops = &capture_ops, .parent = &device->dev, .mode = 0600 };
     error = misc_register(&r->misc);
     if (error) dma_release_channel(r->chan);
+    else platform_set_drvdata(device,r);
     return error;
 }
 static const struct of_device_id capture_match[] = { { .compatible = "oscill,ad9288-capture" }, {} };

@@ -33,6 +33,7 @@ proc configure_board {ps} {
         CONFIG.PCW_USE_M_AXI_GP0 {1} \
         CONFIG.PCW_USE_S_AXI_HP2 {1} \
         CONFIG.PCW_USE_S_AXI_HP0 {1} \
+        CONFIG.PCW_USE_S_AXI_HP1 {1} \
         CONFIG.PCW_EN_CLK0_PORT {1} \
         CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {100} \
         CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \

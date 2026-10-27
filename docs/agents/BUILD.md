@@ -157,7 +157,7 @@ Windows, Vivado и SDK **2019.1**:
 собирается в FSBL и отдельную Linux-службу; для обновления служебной индикации
 нужны согласованные BOOT.BIN и image.bin. Страницы и проверка — [STATUS_DISPLAY.md](STATUS_DISPLAY.md).
 
-Vivado открывается через `ZYNQ7020/oscill.xpr`; его generated-каталоги и workspace SDK `ZYNQ7020/oscill.sdk` расположены рядом. Bitstream и HDF экспортируются в `ZYNQ7020/output/hardware`. Исходники проекта остаются в `fpga/` и `standalone/`; повторная сборка через `build.ps1` генерирует проект заново.
+Vivado открывается через `ZYNQ7020/oscill.xpr`; его generated-каталоги и workspace SDK `ZYNQ7020/oscill.sdk` расположены рядом. Bitstream и HDF экспортируются в `ZYNQ7020/output/hardware`. Исходники проекта остаются в `fpga/` и `standalone/`; повторная сборка через `build.ps1` генерирует проект заново. Перед Vivado выполняется HLS-синтез численного ядра измерений тем же комплектом 2019.1; IP остаётся в `output/hls-measure/`. Независимый запуск `fpga/build.tcl` требует заранее собранный IP в этом каталоге.
 
 JTAG-запуск того же теста с установленным hw_server:
 

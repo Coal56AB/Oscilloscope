@@ -7,9 +7,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $Output = [IO.Path]::GetFullPath($Output).Replace('\','/')
 $Vivado = "$XilinxRoot/Vivado/2019.1/bin/vivado.bat"
+$Hls = "$XilinxRoot/Vivado/2019.1/bin/vivado_hls.bat"
 $Xsct = "$XilinxRoot/SDK/2019.1/bin/xsct.bat"
 $Bootgen = "$XilinxRoot/SDK/2019.1/bin/bootgen.bat"
-foreach ($Tool in @($Vivado,$Xsct,$Bootgen)) {
+foreach ($Tool in @($Vivado,$Hls,$Xsct,$Bootgen)) {
     if (!(Test-Path -LiteralPath $Tool)) { throw "Tool missing: $Tool" }
 }
 New-Item -ItemType Directory -Force $Output | Out-Null
@@ -26,6 +27,12 @@ $Actual = git -C $Dependency rev-parse HEAD
 if ($LASTEXITCODE -ne 0 -or $Actual.Trim() -ne $Revision) { throw 'Digilent IP revision mismatch' }
 Push-Location $Output
 try {
+    $MeasureIp = "$Output/hls-measure/record_measure/solution/impl/ip/component.xml"
+    $MeasureReady = "$Output/hls-measure/ready"
+    if (Test-Path -LiteralPath $MeasureReady) { Remove-Item -LiteralPath $MeasureReady -Force }
+    & $Hls -f "$PSScriptRoot/fpga/synthesize_measure.tcl" -tclargs "$Output/hls-measure" $Part
+    if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $MeasureReady) -or
+        !(Test-Path -LiteralPath $MeasureIp)) { throw 'Measurement IP build failed' }
     & $Vivado -mode batch -log "$Output/logs/vivado.log" -journal "$Output/logs/vivado.jou" -source "$PSScriptRoot/fpga/build.tcl" -tclargs "$Output/hardware" $Dependency $Part
     if ($LASTEXITCODE -ne 0) { throw 'Vivado build failed' }
     $StandaloneFiles = @('linux/fsbl.elf', 'diagnostic/diagnostic.elf', 'diagnostic/diagnostic.bif')

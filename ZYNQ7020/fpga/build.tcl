@@ -8,10 +8,12 @@ set part xc7z020clg400-1
 if {$argc == 3} { set part [lindex $argv 2] }
 if {![regexp {^xc7z020clg400-[123]$} $part]} { error "Expected XC7Z020 CLG400 part" }
 if {![file exists $ip_repo/ip/rgb2dvi/component.xml]} { error "Digilent rgb2dvi missing" }
+set measure_ip [file normalize $output/../hls-measure/record_measure/solution/impl/ip]
+if {![file exists $measure_ip/component.xml]} { error "Run synthesize_measure.tcl before the hardware build" }
 file mkdir $output
 cd $output
 create_project oscill $root -part $part -force
-set_property ip_repo_paths [list $ip_repo/ip/rgb2dvi $ip_repo/if] [current_project]
+set_property ip_repo_paths [list $ip_repo/ip/rgb2dvi $ip_repo/if $measure_ip] [current_project]
 set_param general.maxThreads 8
 update_ip_catalog
 foreach source {ad9288_input.v axis_capture_frame.v capture_window_stats.v capture_trigger_probe.v
@@ -36,7 +38,7 @@ set ps [cell ps7 xilinx.com:ip:processing_system7:5.5 {}]
 configure_board $ps
 apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 \
     -config {make_external "FIXED_IO, DDR" apply_board_preset "0" Master "Disable" Slave "Disable"} $ps
-cell control xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 6 CONFIG.NUM_SI 1}
+cell control xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 7 CONFIG.NUM_SI 1}
 cell oled_gpio xilinx.com:ip:axi_gpio:2.0 {CONFIG.C_IS_DUAL 1 CONFIG.C_GPIO_WIDTH 4 \
     CONFIG.C_ALL_OUTPUTS 1 CONFIG.C_DOUT_DEFAULT 0x00000008 \
     CONFIG.C_GPIO2_WIDTH 2 CONFIG.C_ALL_INPUTS_2 1}
@@ -66,8 +68,19 @@ cell tmds digilentinc.com:ip:rgb2dvi:1.4 {CONFIG.kGenerateSerialClk false \
     CONFIG.kRstActiveHigh false CONFIG.kClkRange 1}
 cell one xilinx.com:ip:xlconstant:1.1 {CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 1}
 cell zero xilinx.com:ip:xlconstant:1.1 {CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 0}
-cell interrupts xilinx.com:ip:xlconcat:2.1 {CONFIG.NUM_PORTS 2}
+cell interrupts xilinx.com:ip:xlconcat:2.1 {CONFIG.NUM_PORTS 3}
 source $here/capture.tcl
+cell record_measure xilinx.com:hls:record_measure:1.0 {}
+cell analysis_memory xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 1 CONFIG.NUM_SI 3}
+set_property CONFIG.HAS_ANALYSIS 1 [get_bd_cells capture_status]
+bus control/M06_AXI record_measure/s_axi_control
+bus record_measure/m_axi_raw_memory analysis_memory/S00_AXI
+bus record_measure/m_axi_filtered_memory analysis_memory/S01_AXI
+bus record_measure/m_axi_result_memory analysis_memory/S02_AXI
+bus analysis_memory/M00_AXI ps7/S_AXI_HP1
+net ps7/FCLK_CLK0 ps7/S_AXI_HP1_ACLK record_measure/ap_clk analysis_memory/aclk
+net reset_axi/peripheral_aresetn record_measure/ap_rst_n analysis_memory/aresetn
+net record_measure/interrupt interrupts/In2
 bus ps7/M_AXI_GP0 control/S00_AXI
 bus control/M00_AXI vdma/S_AXI_LITE
 bus control/M01_AXI timing/ctrl
@@ -104,11 +117,14 @@ connect_bd_net [create_bd_port -dir O hdmi_enable] [get_bd_pins one/dout]
 connect_bd_net [create_bd_port -dir O -from 3 -to 0 oled] [get_bd_pins oled_gpio/gpio_io_o]
 connect_bd_net [create_bd_port -dir I -from 1 -to 0 pl_key] [get_bd_pins oled_gpio/gpio2_io_i]
 assign_bd_address
+set analysis_segment [get_bd_addr_segs -of_objects [get_bd_addr_spaces ps7/Data] -filter {NAME =~ *record_measure*}]
+if {[llength $analysis_segment] != 1} { error "Expected one record analysis address segment" }
 set dsp_segment [get_bd_addr_segs -of_objects [get_bd_addr_spaces ps7/Data] -filter {NAME =~ *capture_dsp*}]
 if {[llength $dsp_segment] != 1} { error "Expected one capture DSP address segment" }
 set_property offset 0x41220000 $dsp_segment
 set_property offset 0x43000000 [get_bd_addr_segs ps7/Data/SEG_vdma_Reg]
 set_property offset 0x43C00000 [get_bd_addr_segs ps7/Data/SEG_timing_Reg]
+set_property offset 0x43C20000 $analysis_segment
 # Free the automatically assigned GPIO address before restoring the OLED ABI.
 set_property offset 0x412F0000 [get_bd_addr_segs ps7/Data/SEG_capture_gpio_Reg]
 set_property offset 0x41200000 [get_bd_addr_segs ps7/Data/SEG_oled_gpio_Reg]
