@@ -14,10 +14,10 @@
 
 ## Как собрать прошивку
 
-Один раз выполнить [подготовку окружения](../docs/BUILD.md#подготовка-полной-сборки-zynq).
+Один раз выполнить [подготовку окружения](../docs/agents/BUILD.md#подготовка-полной-сборки-zynq).
 
 1. Закрыть Vivado/SDK с этим проектом и открыть PowerShell в корне репозитория `Oscill`.
 2. Запустить `./ZYNQ7020/linux/build.ps1` и дождаться `Ready`.
 3. Забрать `BOOT.BIN`, `image.bin`, `qspi.bin` и `fsbl.elf` для SDK Program Flash из `ZYNQ7020/output/linux/`.
 
-Запись на плату — [FLASHING.md](../docs/FLASHING.md#zynq-7020), запуск Windows-предпросмотра — [документация GUI](gui/README.md).
+Запись на плату — [FLASHING.md](../docs/agents/FLASHING.md#zynq-7020), запуск Windows-предпросмотра — [документация GUI](gui/README.md).

@@ -21,4 +21,4 @@
 2. Выполнить **Project → Rebuild all target files**.
 3. Забрать `output/oscill_controls.hex` для прошивки; `output/oscill_controls.axf` — для отладки.
 
-CubeMX 6.12.1 нужен при изменении настроек периферии. Подключение и настройки — [STM32.md](../docs/STM32.md), запись — [FLASHING.md](../docs/FLASHING.md#stm32).
+CubeMX 6.12.1 нужен при изменении настроек периферии. Подключение и настройки — [STM32.md](../docs/STM32.md), запись — [FLASHING.md](../docs/agents/FLASHING.md#stm32).

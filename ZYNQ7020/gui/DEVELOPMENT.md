@@ -32,7 +32,7 @@
 
 ## Zynq и исходные выборки
 
-Переносимые raw источники, кольцо, обработчик, UART и Linux backend описаны в [архитектуре устройства](../../docs/ARCHITECTURE.md). API и форматы — в [CAPTURE_INTERFACE.md](../../docs/CAPTURE_INTERFACE.md) и [CONTROL_PROTOCOL.md](../../docs/CONTROL_PROTOCOL.md). Обязательные данные платы и границы подтверждённых функций — в [BOARD.md](../../docs/zynq7020/BOARD.md) и [DECISIONS.md](../../docs/DECISIONS.md).
+Переносимые raw источники, кольцо, обработчик, UART и Linux backend описаны в [архитектуре устройства](../../docs/agents/ARCHITECTURE.md). API и форматы — в [CAPTURE_INTERFACE.md](../../docs/agents/CAPTURE_INTERFACE.md) и [CONTROL_PROTOCOL.md](../../docs/agents/CONTROL_PROTOCOL.md). Обязательные данные платы и границы подтверждённых функций — в [BOARD.md](../../docs/agents/zynq7020/BOARD.md) и [DECISIONS.md](../../docs/agents/DECISIONS.md).
 
 Linux frontend сохраняет рассчитанные демо/CSV min/max при отсутствии raw capture; перед отрисовкой он привязывает соответствующие массивы вместо перехода к одиночным точкам. Это же поведение проверяется через `draw_all()` на 10 ms/div, включая возврат из raw frame.
 
