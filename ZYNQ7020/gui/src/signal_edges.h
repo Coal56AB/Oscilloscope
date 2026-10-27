@@ -6,13 +6,13 @@
 
 typedef struct {
     SignalNumber level,band,previous,numerator,denominator;
-    size_t crossing_sample;
+    SignalIndex crossing_sample;
     int side;
 } SignalEdgeDetector;
 
 static inline void signal_edge_init(SignalEdgeDetector *e,SignalNumber level,SignalNumber band,SignalNumber value)
 {
-    *e=(SignalEdgeDetector){level,band,value,0,1,SIZE_MAX,value<=level-band?-1:value>=level+band?1:0};
+    *e=(SignalEdgeDetector){level,band,value,0,1,SIGNAL_INDEX_MAX,value<=level-band?-1:value>=level+band?1:0};
 }
 static inline SignalNumber signal_edge_fraction(const SignalEdgeDetector *e)
 {
@@ -24,7 +24,7 @@ static inline SignalNumber signal_edge_time(const SignalEdgeDetector *e)
 }
 /* Confirmation and timestamp are separate: ringing inside the guard cannot
    create another edge, and interpolation keeps the original level crossing. */
-static inline int signal_edge_advance(SignalEdgeDetector *e,SignalNumber value,size_t sample)
+static inline int signal_edge_advance(SignalEdgeDetector *e,SignalNumber value,SignalIndex sample)
 {
     int direction=0;
     if(!e->band){
@@ -34,7 +34,7 @@ static inline int signal_edge_advance(SignalEdgeDetector *e,SignalNumber value,s
             e->crossing_sample=sample;e->numerator=e->level-e->previous;e->denominator=value-e->previous;
         }
     }else{
-        if(e->crossing_sample==SIZE_MAX &&
+        if(e->crossing_sample==SIGNAL_INDEX_MAX &&
            ((e->side<0 && e->previous<=e->level && value>e->level) ||
             (e->side>0 && e->previous>=e->level && value<e->level))){
             e->crossing_sample=sample;
@@ -42,9 +42,9 @@ static inline int signal_edge_advance(SignalEdgeDetector *e,SignalNumber value,s
         }
         int side=value<=e->level-e->band?-1:value>=e->level+e->band?1:0;
         if(side){
-            if(e->side && side!=e->side && e->crossing_sample!=SIZE_MAX)direction=side;
+            if(e->side && side!=e->side && e->crossing_sample!=SIGNAL_INDEX_MAX)direction=side;
             e->side=side;
-            if(!direction)e->crossing_sample=SIZE_MAX;
+            if(!direction)e->crossing_sample=SIGNAL_INDEX_MAX;
         }
     }
     e->previous=value;

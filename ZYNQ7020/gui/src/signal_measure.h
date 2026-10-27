@@ -8,7 +8,7 @@ enum { SIGNAL_TRACE_BYTES=0,SIGNAL_TRACE_VALUES=1 };
 typedef struct {
     const uint8_t *codes;
     const SignalNumber *values;
-    size_t samples,stride;
+    SignalIndex samples,stride;
     SignalNumber gain,zero;
     unsigned format;
 } SignalTrace;
@@ -40,5 +40,5 @@ typedef struct {
 void signal_measure_amplitude(const SignalTrace *trace,SignalAmplitude *result);
 void signal_measure_timing(const SignalTrace *trace,SignalNumber sample_rate,SignalNumber minimum,SignalNumber maximum,
     SignalNumber workspace[SIGNAL_TIMING_WORKSPACE],SignalTiming *result);
-void signal_u8_bounds(const uint8_t *codes,size_t samples,size_t stride,unsigned *low,unsigned *high);
+void signal_u8_bounds(const uint8_t *codes,SignalIndex samples,SignalIndex stride,unsigned *low,unsigned *high);
 #endif

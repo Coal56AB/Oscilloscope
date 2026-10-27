@@ -21,7 +21,7 @@ set_top record_measure
 foreach source [list $here/record_measure.c $here/record_trace.c $common/signal_measure.c $common/signal_filter.c $common/signal_filter_trace.c] {
     add_files $source -cflags "-I$common -I$here -DSIGNAL_NUMBER_FLOAT -DSIGNAL_TRACE_REPLAY"
 }
-add_files -tb $here/tests/record_measure_tb.c -cflags "-I$common -DSIGNAL_NUMBER_FLOAT"
+add_files -tb $here/tests/record_measure_tb.c -cflags "-I$common -DSIGNAL_NUMBER_FLOAT -DSIGNAL_TRACE_REPLAY"
 open_solution -reset solution
 set_part $part
 create_clock -period 10 -name default
