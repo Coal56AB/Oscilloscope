@@ -457,8 +457,14 @@ static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayF
     size_t visible_end=(size_t)ceil(fmax(0,fmin(first+samples,count)));
     double timing_low=f->minimum[ch],timing_high=f->maximum[ch];
     if(filtered && visible_end>visible_first){
-        SignalTrace trace={NULL,filtered+visible_first,visible_end-visible_first,0,0,0,SIGNAL_TRACE_VALUES};
-        SignalAmplitude amplitude;signal_measure_amplitude(&trace,&amplitude);
+        SignalTrace trace={NULL,filtered+visible_first,visible_end-visible_first,0,b->volts_per_code[ch],0,SIGNAL_TRACE_VALUES};
+        SignalAmplitude amplitude;SignalTiming timing;
+        if(v->analyzer){
+            if(!v->analyzer->measure(v->analyzer->context,&trace,(double)b->sample_rate_hz,&amplitude,&timing)){
+                free(workspace);return 0;
+            }
+            f->frequency_hz[ch]=timing.frequency;f->duty[ch]=timing.duty;
+        }else signal_measure_amplitude(&trace,&amplitude);
         double low=amplitude.minimum,high=amplitude.maximum;
         f->mean[ch]=amplitude.mean;f->rms[ch]=amplitude.rms;
         timing_low=low;timing_high=high;
@@ -474,7 +480,7 @@ static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayF
         }
         f->minimum[ch]=low;f->maximum[ch]=high;
     }
-    measure_timing(b,ch,filtered,visible_first,visible_end,timing_low,timing_high,
+    if(!v->analyzer)measure_timing(b,ch,filtered,visible_first,visible_end,timing_low,timing_high,
         &f->frequency_hz[ch],&f->duty[ch]);
     waveform_view_reduce(&source, first, samples, ch, v->zero_y[ch], v->pixels_per_volt[ch],
                          SCOPE_PLOT_WIDTH, f->y[ch], f->y_min[ch], f->y_max[ch]);
@@ -556,8 +562,13 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         CaptureView corrected_view=*v;double *corrected=NULL;
         SignalTrace trace={b->data+2*v->start+ch,NULL,v->samples,2,
             b->volts_per_code[ch],b->zero_code[ch],SIGNAL_TRACE_BYTES};
-        SignalAmplitude amplitude;
-        signal_measure_amplitude(&trace,&amplitude);
+        SignalAmplitude amplitude;SignalTiming timing={0,NAN};
+        if(v->analyzer){
+            int raw_timing=!(v->hidden_channel_mask&(1u<<ch)) && !v->filter_level[ch] &&
+                !(v->noise_rms[ch]>0) && !v->corrected[ch] &&
+                !(v->response[ch] && v->response[ch]->count>=2);
+            if(!v->analyzer->measure(v->analyzer->context,&trace,raw_timing?(double)b->sample_rate_hz:0,&amplitude,&timing))return 0;
+        }else signal_measure_amplitude(&trace,&amplitude);
         f->minimum[ch]=amplitude.minimum;f->maximum[ch]=amplitude.maximum;
         f->mean[ch]=amplitude.mean;f->rms[ch]=amplitude.rms;
         if(b->peaks && v->samples){
@@ -568,7 +579,8 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
         }
         f->raw_mean[ch]=f->mean[ch];f->raw_rms[ch]=f->rms[ch];
         if(amplitude.clipped)f->clipped_mask|=1U<<ch;
-        f->duty[ch]=NAN;
+        f->frequency_hz[ch]=(v->hidden_channel_mask&(1u<<ch))?0:timing.frequency;
+        f->duty[ch]=(v->hidden_channel_mask&(1u<<ch))?NAN:timing.duty;
         if(v->response[ch] && v->response[ch]->count>=2){
             size_t count=b->bytes/2,k;
             corrected=malloc(count*sizeof(double));if(!corrected)return 0;
@@ -576,8 +588,12 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
             if(!channel_response_correct(corrected,count,(double)b->sample_rate_hz,v->response[ch])){free(corrected);return 0;}
             corrected_view.corrected[ch]=corrected;
             if(v->samples){
-                SignalTrace corrected_trace={NULL,corrected+v->start,v->samples,0,0,0,SIGNAL_TRACE_VALUES};
-                signal_measure_amplitude(&corrected_trace,&amplitude);
+                SignalTrace corrected_trace={NULL,corrected+v->start,v->samples,0,b->volts_per_code[ch],0,SIGNAL_TRACE_VALUES};
+                if(v->analyzer){
+                    if(!v->analyzer->measure(v->analyzer->context,&corrected_trace,0,&amplitude,&timing)){
+                        free(corrected);return 0;
+                    }
+                }else signal_measure_amplitude(&corrected_trace,&amplitude);
                 f->minimum[ch]=amplitude.minimum;f->maximum[ch]=amplitude.maximum;
                 f->mean[ch]=amplitude.mean;f->rms[ch]=amplitude.rms;
             }

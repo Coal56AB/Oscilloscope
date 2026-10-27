@@ -5,6 +5,7 @@
 #include "capture_settings.h"
 #ifdef SCOPE_ENABLE_ZYNQ
 #include "capture_zynq.h"
+#include "analysis_zynq.h"
 #endif
 #include <math.h>
 #include <stdlib.h>
@@ -32,6 +33,7 @@ struct CapturePipeline {
     int hardware;
 #ifdef SCOPE_ENABLE_ZYNQ
     ZynqCaptureSource zynq;
+    ZynqAnalysis analysis;
     CaptureMetrics hardware_metrics;
 #endif
 };
@@ -135,6 +137,9 @@ static int process_frame(CapturePipeline *p, const CaptureBuffer *raw,
     if(p->write_slot==3)return 0;
     frame=&p->frames[p->write_slot];
     memset(&view, 0, sizeof(view));
+#ifdef SCOPE_ENABLE_ZYNQ
+    if(p->hardware && p->analysis.fd>=0)view.analyzer=&p->analysis.analyzer;
+#endif
     view.display_samples = samples < 1 ? 1 : samples;
     base_first = ((double)(b->bytes / 2) - base_samples) * request->pan_fraction;
     if (b->trigger_sample != CAPTURE_NO_TRIGGER && b->trigger_sample >= b->first_sample)
@@ -184,6 +189,11 @@ static int process_frame(CapturePipeline *p, const CaptureBuffer *raw,
         scope_mutex_unlock(&p->mutex);
         return 1;
     }
+#ifdef SCOPE_ENABLE_ZYNQ
+    if(p->hardware && p->analysis.failed){
+        scope_mutex_lock(&p->mutex);p->source_error=1;p->request.running=0;scope_mutex_unlock(&p->mutex);
+    }
+#endif
     return 0;
 }
 static void processing_worker(void *context)
@@ -709,6 +719,9 @@ CapturePipeline *capture_pipeline_create_zynq(const char *device, const double g
     CapturePipeline *p = calloc(1, sizeof(*p));
     if (!p) return NULL;
     if (!zynq_capture_open(&p->zynq, device, gain, zero)) { free(p); return NULL; }
+    if(!zynq_analysis_open(&p->analysis,"/dev/oscill-analysis")){
+        zynq_capture_close(&p->zynq);free(p);return NULL;
+    }
     p->hardware = 1;
     {
         unsigned i;
@@ -734,6 +747,7 @@ CapturePipeline *capture_pipeline_create_zynq(const char *device, const double g
     return p;
 fail:
     for(unsigned i=0;i<5;++i)free(p->storage[i]);
+    zynq_analysis_close(&p->analysis);
     zynq_capture_close(&p->zynq);free(p);return NULL;
 }
 #endif
@@ -801,7 +815,7 @@ void capture_pipeline_destroy(CapturePipeline *p)
     scope_thread_join(&p->processing);
     capture_ring_destroy(&p->ring);
 #ifdef SCOPE_ENABLE_ZYNQ
-    if (p->hardware) zynq_capture_close(&p->zynq);
+    if (p->hardware) {zynq_capture_close(&p->zynq);zynq_analysis_close(&p->analysis);}
 #endif
     scope_mutex_destroy(&p->mutex);
     for (i = 0; i < CAPTURE_RING_MAX; ++i)

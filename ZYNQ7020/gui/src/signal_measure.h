@@ -17,6 +17,13 @@ typedef struct {
     unsigned clipped;
 } SignalAmplitude;
 typedef struct { SignalNumber frequency,duty; } SignalTiming;
+/* Optional synchronous executor. A zero rate requests only amplitude.
+   Inputs stay owned by the caller; zero means the calculation failed. */
+typedef struct {
+    void *context;
+    int (*measure)(void *context,const SignalTrace *trace,SignalNumber sample_rate,
+        SignalAmplitude *amplitude,SignalTiming *timing);
+} SignalAnalyzer;
 #define SIGNAL_TIMING_CAPACITY 4096u
 #define SIGNAL_TIMING_WORKSPACE (3u*SIGNAL_TIMING_CAPACITY)
 

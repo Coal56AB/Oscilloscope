@@ -7,6 +7,7 @@ int capture_trigger_bounds_possible(const CaptureBuffer *metadata,const double m
     const double maximum[2],unsigned channel,unsigned edge,double volts,unsigned hysteresis);
 #include "scope_screen.h"
 #include "channel_response.h"
+#include "signal_measure.h"
 typedef struct {
     size_t start, samples;
     double zero_y[2], pixels_per_volt[2];
@@ -23,6 +24,7 @@ typedef struct {
     const double *corrected[2];
     unsigned calibration_mask;
     unsigned baseline_mask;
+    const SignalAnalyzer *analyzer;
 } CaptureView;
 typedef struct {
     int16_t y[2][SCOPE_PLOT_WIDTH], y_min[2][SCOPE_PLOT_WIDTH], y_max[2][SCOPE_PLOT_WIDTH];

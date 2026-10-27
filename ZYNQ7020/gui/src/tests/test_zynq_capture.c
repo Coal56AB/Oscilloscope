@@ -5,6 +5,7 @@
 #include "capture_pipeline.h"
 #include "capture_selftest.h"
 #include "capture_settings.h"
+#include "analysis_uapi.h"
 #include <assert.h>
 #include <errno.h>
 #include <math.h>
@@ -20,6 +21,7 @@ enum { FIXTURE_BLOCK_BYTES = 2 * 1024 * 1024 };
 static uint8_t memory[8 * FIXTURE_BLOCK_BYTES];
 static atomic_uint leased, available, counter, releases, configurations;
 static atomic_int fail_poll, bad_offset, bad_info;
+static atomic_int analysis_present,analysis_jobs;
 static atomic_uint sample_rate = 200000000;
 static atomic_uint adc_pair = 42 | (42 << 8);
 static atomic_int poison_release;
@@ -127,8 +129,16 @@ int __wrap_capture_process(const CaptureBuffer *b,const CaptureView *v,DisplayFr
     }
     return __real_capture_process(b,v,f);
 }
-int __wrap_open(const char *path, int flags, ...) { (void)flags; assert(!strcmp(path,"/dev/test-adc")); return 42; }
-int __wrap_close(int fd) { assert(fd==42); atomic_store(&leased,0); return 0; }
+int __wrap_open(const char *path, int flags, ...)
+{
+    (void)flags;
+    if(!strcmp(path,"/dev/oscill-analysis")){
+        if(atomic_load(&analysis_present))return 43;
+        errno=ENODEV;return -1;
+    }
+    assert(!strcmp(path,"/dev/test-adc"));return 42;
+}
+int __wrap_close(int fd) { if(fd==43)return 0;assert(fd==42); atomic_store(&leased,0); return 0; }
 void *__wrap_mmap(void *addr, size_t length, int protection, int flags, int fd, long offset)
 {
     (void)addr; assert(length==fixture_buffers()*FIXTURE_BLOCK_BYTES&&protection==PROT_READ&&flags==MAP_SHARED&&fd==42&&!offset);
@@ -146,7 +156,15 @@ int __wrap_poll(struct pollfd *p, unsigned long count, int timeout)
 int __wrap_ioctl(int fd, unsigned long command, ...)
 {
     va_list args; void *arg;
-    assert(fd==42); va_start(args,command); arg=va_arg(args,void *); va_end(args);
+    va_start(args,command); arg=va_arg(args,void *); va_end(args);
+    if(fd==43){
+        if(command==OSC_ANALYSIS_GET_INFO){
+            *(struct osc_analysis_info *)arg=(struct osc_analysis_info){OSC_ANALYSIS_ABI,OSC_ANALYSIS_MAX_SAMPLES,
+                OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY,0};return 0;
+        }
+        assert(command==OSC_ANALYSIS_MEASURE);atomic_fetch_add(&analysis_jobs,1);errno=EIO;return -1;
+    }
+    assert(fd==42);
     if(command==OSC_CAPTURE_GET_INFO) {
         struct osc_capture_info info={OSC_CAPTURE_ABI,OSC_CAPTURE_REGISTER_VERSION,OSC_CAPTURE_SAMPLE_FORMAT,1,fixture_buffers(),FIXTURE_BLOCK_BYTES,fixture_buffers()*FIXTURE_BLOCK_BYTES};
         if(atomic_load(&bad_info))info.buffers=1000;
@@ -478,6 +496,22 @@ static void adc_level_test(void)
     capture_pipeline_destroy(p);assert(!atomic_load(&leased));
     atomic_store(&fail_poll,0);atomic_store(&poison_release,0);
     atomic_store(&adc_pair,42u|(42u<<8));
+}
+
+static void analysis_failure_test(void)
+{
+    double gain[2]={.004,.004},zero[2]={128,128};
+    CaptureRequest request={0};CaptureMetrics metrics={0};static DisplayFrame frame;
+    atomic_store(&analysis_present,1);atomic_store(&analysis_jobs,0);
+    CapturePipeline *p=capture_pipeline_create_zynq("/dev/test-adc",gain,zero);assert(p);
+    request.running=1;request.duration_seconds=.2e-6;request.record_samples=128;
+    request.pan_fraction=.5;request.zero_y[0]=request.zero_y[1]=200;
+    request.pixels_per_volt[0]=request.pixels_per_volt[1]=100;
+    capture_pipeline_request(p,&request);atomic_store(&available,1);
+    for(unsigned i=0;i<200;++i){capture_pipeline_metrics(p,&metrics);if(metrics.source_error)break;scope_sleep_ms(5);}
+    assert(metrics.source_error && !metrics.waveforms && atomic_load(&analysis_jobs)==1);
+    assert(!capture_pipeline_frame(p,&frame));
+    capture_pipeline_destroy(p);assert(!atomic_load(&leased));atomic_store(&analysis_present,0);
 }
 
 static void zero_correction_test(void)
@@ -1080,6 +1114,7 @@ int main(void)
     trigger_filter_support_test();
     adc_level_test();
     zero_correction_test();
+    analysis_failure_test();
     baseline_fresh_capture_test();
     processing_overlap_test();
     {
