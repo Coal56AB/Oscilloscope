@@ -99,6 +99,7 @@ build_target()
         "$PROJECT_DIR/src/signal_generator.c" \
         "$PROJECT_DIR/src/wave_file.c" "$PROJECT_DIR/src/panel_sdl.c" \
         "$PROJECT_DIR/src/waveform_view.c" \
+        "$PROJECT_DIR/src/signal_measure.c" \
         "$PROJECT_DIR/src/preview_sdl.c" \
         "$PROJECT_DIR/src/capture_adapter.c" "$PROJECT_DIR/src/capture.c" \
         "$PROJECT_DIR/src/capture_processor.c" "$PROJECT_DIR/src/capture_file.c" \

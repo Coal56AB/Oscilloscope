@@ -3,24 +3,12 @@
 #include "capture_processor.h"
 #include "waveform_view.h"
 #include "signal_filter.h"
+#include "signal_measure.h"
+#include "signal_edges.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(__ARM_NEON)
-#include <arm_neon.h>
-static unsigned minimum16(uint8x16_t values)
-{
-    uint8x8_t v = vpmin_u8(vget_low_u8(values), vget_high_u8(values));
-    v = vpmin_u8(v, v); v = vpmin_u8(v, v); v = vpmin_u8(v, v);
-    return vget_lane_u8(v, 0);
-}
-static unsigned maximum16(uint8x16_t values)
-{
-    uint8x8_t v = vpmax_u8(vget_low_u8(values), vget_high_u8(values));
-    v = vpmax_u8(v, v); v = vpmax_u8(v, v); v = vpmax_u8(v, v);
-    return vget_lane_u8(v, 0);
-}
-#endif
+
 static double sample_voltage(const CaptureBuffer *b, size_t sample, unsigned channel)
 {
     return ((double)b->data[2 * sample + channel] - b->zero_code[channel]) *
@@ -63,50 +51,13 @@ static unsigned trigger_noise_guard(const CaptureBuffer *b,unsigned ch,double le
     return guard>minimum?guard:minimum;
 }
 
-typedef struct {
-    double level,band,previous,crossing;
-    size_t crossing_sample;
-    int side;
-} EdgeDetector;
-
-static void edge_init(EdgeDetector *e,double level,double band,double value)
-{
-    *e=(EdgeDetector){level,band,value,0,SIZE_MAX,value<=level-band?-1:value>=level+band?1:0};
-}
-/* Confirmation and timestamp are separate: ringing inside the guard cannot
-   create another edge, and interpolation keeps the original level crossing. */
-static int edge_advance(EdgeDetector *e,double value,size_t sample)
-{
-    int direction=0;
-    if(!e->band){
-        direction=e->previous<=e->level && value>e->level?1:
-            e->previous>=e->level && value<e->level?-1:0;
-        if(direction){e->crossing_sample=sample;e->crossing=sample-1+(e->level-e->previous)/(value-e->previous);}
-    }else{
-        if(e->crossing_sample==SIZE_MAX &&
-           ((e->side<0 && e->previous<=e->level && value>e->level) ||
-            (e->side>0 && e->previous>=e->level && value<e->level))){
-            e->crossing_sample=sample;
-            e->crossing=sample-1+(e->level-e->previous)/(value-e->previous);
-        }
-        int side=value<=e->level-e->band?-1:value>=e->level+e->band?1:0;
-        if(side){
-            if(e->side && side!=e->side && e->crossing_sample!=SIZE_MAX)direction=side;
-            e->side=side;
-            if(!direction)e->crossing_sample=SIZE_MAX;
-        }
-    }
-    e->previous=value;
-    return direction;
-}
-
 static int find_trigger(const CaptureBuffer *b, unsigned ch, unsigned edge,
                          double volts, unsigned hysteresis_codes,
                          uint64_t first_allowed, uint64_t *sample,const double *filtered,size_t *confirmed,size_t *history_start,size_t search_start,int *pending)
 {
     size_t i, start = 1, history;
     double level;
-    EdgeDetector detector;
+    SignalEdgeDetector detector;
     if (!capture_buffer_valid(b) || ch >= 2 || edge > 2 || !isfinite(volts) || !sample ||
         b->volts_per_code[ch] <= 0) return 0;
     if (first_allowed > b->first_sample) {
@@ -122,9 +73,9 @@ static int find_trigger(const CaptureBuffer *b, unsigned ch, unsigned edge,
     while (history && trigger_code(b,ch,history,filtered) > level - hysteresis_codes &&
            trigger_code(b,ch,history,filtered) < level + hysteresis_codes) --history;
     if(history_start)*history_start=history;
-    edge_init(&detector,level,hysteresis_codes,trigger_code(b,ch,history,filtered));
+    signal_edge_init(&detector,level,hysteresis_codes,trigger_code(b,ch,history,filtered));
     for(i=history+1;i<b->bytes/2;++i){
-        int direction=edge_advance(&detector,trigger_code(b,ch,i,filtered),i);
+        int direction=signal_edge_advance(&detector,trigger_code(b,ch,i,filtered),i);
         if(direction){
             size_t crossing=detector.crossing_sample;
             detector.crossing_sample=SIZE_MAX;
@@ -165,15 +116,7 @@ static int trigger_range_possible(const CaptureBuffer *b,unsigned ch,size_t firs
     for(size_t first=first_sample;first<count;first+=TILE){
         size_t end=count-first>TILE?first+TILE:count,i=first;
         unsigned low=255,high=0;
-#if defined(__ARM_NEON)
-        uint8x16_t lo=vdupq_n_u8(255),hi=vdupq_n_u8(0);
-        for(;end-i>=16;i+=16){
-            uint8x16_t v=vld2q_u8(b->data+2*i).val[ch];
-            lo=vminq_u8(lo,v);hi=vmaxq_u8(hi,v);
-        }
-        low=minimum16(lo);high=maximum16(hi);
-#endif
-        for(;i<end;++i){unsigned v=b->data[2*i+ch];if(v<low)low=v;if(v>high)high=v;}
+        signal_u8_bounds(b->data+2*first+ch,end-first,2,&low,&high);
         /* A denoised value also depends on its neighbours. Include
            those in the raw bound, without counting them as tile outputs. */
         size_t begin=first>radius?first-radius:0,limit=count-end>radius?end+radius:count;
@@ -256,29 +199,12 @@ int capture_find_trigger_filtered(const CaptureBuffer *b,unsigned ch,unsigned ed
 static void source_range(const void *context, size_t first, size_t end, unsigned channel,
                          double *minimum, double *maximum)
 {
-    const CaptureBuffer *b = context;
-    size_t i;
-    unsigned low = b->data[2 * first + channel], high = low;
-    i = first;
-#if defined(__ARM_NEON)
-    if (end - i >= 16) {
-        uint8x16_t minimum = vdupq_n_u8(255), maximum = vdupq_n_u8(0);
-        for (; end - i >= 16; i += 16) {
-            uint8x16_t values = vld2q_u8(b->data + 2 * i).val[channel];
-            minimum = vminq_u8(minimum, values);
-            maximum = vmaxq_u8(maximum, values);
-        }
-        low = minimum16(minimum); high = maximum16(maximum);
-    }
-#endif
-    for (; i < end; ++i) {
-        unsigned value = b->data[2 * i + channel];
-        if (value < low) low = value;
-        if (value > high) high = value;
-    }
-    *minimum = (low - b->zero_code[channel]) * b->volts_per_code[channel];
-    *maximum = (high - b->zero_code[channel]) * b->volts_per_code[channel];
-    if (*minimum > *maximum) { double swap = *minimum; *minimum = *maximum; *maximum = swap; }
+    const CaptureBuffer *b=context;
+    unsigned low,high;
+    signal_u8_bounds(b->data+2*first+channel,end-first,2,&low,&high);
+    *minimum=(low-b->zero_code[channel])*b->volts_per_code[channel];
+    *maximum=(high-b->zero_code[channel])*b->volts_per_code[channel];
+    if(*minimum>*maximum){double swap=*minimum;*minimum=*maximum;*maximum=swap;}
 }
 static void source_envelope(const void *context, size_t first, size_t end, unsigned channel,
                             double *minimum, double *maximum)
@@ -448,83 +374,19 @@ static void auto_envelope(const void *context,size_t first,size_t end,unsigned c
         if(a<*low)*low=a;if(b>*high)*high=b;
     }
 }
-static int compare_periods(const void *a,const void *b)
-{
-    double x=*(const double *)a,y=*(const double *)b;
-    return x<y?-1:x>y;
-}
-
 static void measure_timing(const CaptureBuffer *b,unsigned ch,const double *values,
                             size_t first,size_t end,double minimum,double maximum,
                             double *frequency,double *duty)
 {
-    unsigned histogram[256]={0};size_t count=end-first,total=0,n=0;
-    double range,low,high,histogram_scale;
-    if(count && !values && b->peaks)source_range(b,first,end,ch,&minimum,&maximum);
-    range=maximum-minimum;low=minimum;high=maximum;
-    double last_rise=-1,last_fall=-1,all_span=0,all_width=0,all_squares=0;
-    size_t capacity=count/2<4096?count/2:4096;
-    *frequency=0;*duty=NAN;
-    if(count<3 || !isfinite(range) || range<4*fabs(b->volts_per_code[ch]) || range<=0)return;
-    histogram_scale=255/range;
-    for(size_t i=first;i<end;++i){
-        double value=values?values[i]:sample_voltage(b,i,ch);
-        double bin=(value-minimum)*histogram_scale;
-        unsigned code=bin<0?0:bin>255?255:(unsigned)bin;
-        ++histogram[code];
-    }
-    for(unsigned code=0;code<256;++code){
-        total+=histogram[code];
-        if(total>count/20){low=minimum+code*range/255;break;}
-    }
-    total=0;
-    for(unsigned code=0;code<256;++code){
-        total+=histogram[code];
-        if(total>=count-count/20){high=minimum+code*range/255;break;}
-    }
-    /* Narrow pulses can occupy less than a percentile bucket. Keep their full
-       excursion rather than treating a small duty cycle as a DC input. */
-    if(high-low<range*.2){low=minimum;high=maximum;}
-    double level=(low+high)*.5,band=fmax(2*fabs(b->volts_per_code[ch]),(high-low)*.15);
-    double *periods=malloc(capacity*3*sizeof(*periods));
-    if(!periods)return;
-    double *widths=periods+capacity,*ordered=widths+capacity;
-    EdgeDetector detector;
-    edge_init(&detector,level,band,values?values[first]:sample_voltage(b,first,ch));
-    for(size_t i=first+1;i<end;++i){
-        int edge=edge_advance(&detector,values?values[i]:sample_voltage(b,i,ch),i);
-        if(edge){
-            double at=detector.crossing;detector.crossing_sample=SIZE_MAX;
-            if(edge<0)last_fall=at;
-            else{
-                if(last_rise>=0 && last_fall>last_rise && last_fall<at){
-                    double period=at-last_rise,width=last_fall-last_rise;
-                    all_span+=period;all_width+=width;all_squares+=period*period;
-                    if(n<capacity){periods[n]=ordered[n]=period;widths[n]=width;}
-                    ++n;
-                }
-                last_rise=at;
-            }
-        }
-    }
-    if(n>capacity){
-        double mean=all_span/n,variance=all_squares/n-mean*mean;
-        if(variance<=mean*mean*.04){
-            *frequency=n*b->sample_rate_hz/all_span;*duty=100*all_width/all_span;
-        }
-    }else if(n){
-        qsort(ordered,n,sizeof(*ordered),compare_periods);
-        double median=(ordered[(n-1)/2]+ordered[n/2])*.5,span=0,positive=0;
-        size_t accepted=0;
-        for(size_t i=0;i<n;++i)if(fabs(periods[i]-median)<=median*.2){
-            span+=periods[i];positive+=widths[i];++accepted;
-        }
-        /* Irregular noise must not become a plausible numerical frequency. */
-        if(accepted && accepted>=n-n/4){
-            *frequency=accepted*b->sample_rate_hz/span;*duty=100*positive/span;
-        }
-    }
-    free(periods);
+    SignalTrace trace={b->data+2*first+ch,values?values+first:NULL,end-first,2,
+        b->volts_per_code[ch],b->zero_code[ch],values?SIGNAL_TRACE_VALUES:SIGNAL_TRACE_BYTES};
+    SignalTiming result;
+    if(trace.samples && !values && b->peaks)source_range(b,first,end,ch,&minimum,&maximum);
+    size_t capacity=trace.samples/2<SIGNAL_TIMING_CAPACITY?trace.samples/2:SIGNAL_TIMING_CAPACITY;
+    double *workspace=capacity?malloc(3*capacity*sizeof(double)):NULL;
+    signal_measure_timing(&trace,(double)b->sample_rate_hz,minimum,maximum,workspace,&result);
+    *frequency=result.frequency;*duty=result.duty;
+    free(workspace);
 }
 
 static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *f,
@@ -595,14 +457,10 @@ static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayF
     size_t visible_end=(size_t)ceil(fmax(0,fmin(first+samples,count)));
     double timing_low=f->minimum[ch],timing_high=f->maximum[ch];
     if(filtered && visible_end>visible_first){
-        double sum=0,squares=0,low=filtered[visible_first],high=low;
-        for(i=visible_first;i<visible_end;++i){
-            double value=filtered[i];
-            sum+=value;squares+=value*value;
-            if(value<low)low=value;if(value>high)high=value;
-        }
-        f->mean[ch]=sum/(visible_end-visible_first);
-        f->rms[ch]=sqrt(squares/(visible_end-visible_first));
+        SignalTrace trace={NULL,filtered+visible_first,visible_end-visible_first,0,0,0,SIGNAL_TRACE_VALUES};
+        SignalAmplitude amplitude;signal_measure_amplitude(&trace,&amplitude);
+        double low=amplitude.minimum,high=amplitude.maximum;
+        f->mean[ch]=amplitude.mean;f->rms[ch]=amplitude.rms;
         timing_low=low;timing_high=high;
         /* Only extrema represented by this source may extend its range.
            Manual filtering removes native buckets with unknown peak times. */
@@ -696,60 +554,20 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
     f->view_samples = v->samples;
     for (ch = 0; ch < 2; ++ch) {
         CaptureView corrected_view=*v;double *corrected=NULL;
-        uint64_t sum = 0, squares = 0;
-        size_t i;
-        unsigned low = 255, peak = 0;
-        double gain = b->volts_per_code[ch], zero = b->zero_code[ch];
-        i = 0;
-#if defined(__ARM_NEON)
-        /* Bound each vector accumulator so squares cannot overflow uint32.
-           Scalar tails and non-NEON builds use the same exact code sums. */
-        while (v->samples - i >= 16) {
-            size_t end = i + ((v->samples - i) & ~(size_t)15);
-            uint8x16_t minimum = vdupq_n_u8(255), maximum = vdupq_n_u8(0);
-            uint32x4_t vector_sum = vdupq_n_u32(0), vector_squares = vdupq_n_u32(0);
-            unsigned lane;
-            uint32_t sums[4], powers[4];
-            if (end - i > 65536) end = i + 65536;
-            for (; i < end; i += 16) {
-                uint8x16_t values = vld2q_u8(b->data + 2 * (v->start + i)).val[ch];
-                minimum = vminq_u8(minimum, values);
-                maximum = vmaxq_u8(maximum, values);
-                vector_sum = vpadalq_u16(vector_sum, vpaddlq_u8(values));
-                vector_squares = vpadalq_u16(vector_squares,
-                    vmull_u8(vget_low_u8(values), vget_low_u8(values)));
-                vector_squares = vpadalq_u16(vector_squares,
-                    vmull_u8(vget_high_u8(values), vget_high_u8(values)));
-            }
-            vst1q_u32(sums, vector_sum); vst1q_u32(powers, vector_squares);
-            for (lane = 0; lane < 4; ++lane) { sum += sums[lane]; squares += powers[lane]; }
-            if (minimum16(minimum) < low) low = minimum16(minimum);
-            if (maximum16(maximum) > peak) peak = maximum16(maximum);
+        SignalTrace trace={b->data+2*v->start+ch,NULL,v->samples,2,
+            b->volts_per_code[ch],b->zero_code[ch],SIGNAL_TRACE_BYTES};
+        SignalAmplitude amplitude;
+        signal_measure_amplitude(&trace,&amplitude);
+        f->minimum[ch]=amplitude.minimum;f->maximum[ch]=amplitude.maximum;
+        f->mean[ch]=amplitude.mean;f->rms[ch]=amplitude.rms;
+        if(b->peaks && v->samples){
+            double low,high;
+            source_envelope(b,v->start/2,(v->start+v->samples+1)/2,ch,&low,&high);
+            if(low<f->minimum[ch])f->minimum[ch]=low;
+            if(high>f->maximum[ch])f->maximum[ch]=high;
         }
-#endif
-        for (; i < v->samples; ++i) {
-            unsigned value = b->data[2 * (v->start + i) + ch];
-            if (value < low) low = value;
-            if (value > peak) peak = value;
-            sum += value;
-            squares += value * value;
-        }
-        f->minimum[ch] = v->samples ? ((gain >= 0 ? low : peak) - zero) * gain : NAN;
-        f->maximum[ch] = v->samples ? ((gain >= 0 ? peak : low) - zero) * gain : NAN;
-        if (b->peaks && v->samples) {
-            double envelope_low, envelope_high;
-            source_envelope(b, v->start/2, (v->start+v->samples+1)/2, ch,
-                             &envelope_low, &envelope_high);
-            if (envelope_low < f->minimum[ch]) f->minimum[ch] = envelope_low;
-            if (envelope_high > f->maximum[ch]) f->maximum[ch] = envelope_high;
-        }
-        if (v->samples) {
-            double mean = (double)sum / v->samples;
-            f->mean[ch] = (mean - zero) * gain;
-            f->rms[ch] = sqrt(fmax(0, (double)squares / v->samples - 2 * zero * mean + zero * zero)) * fabs(gain);
-        } else f->mean[ch] = f->rms[ch] = NAN;
         f->raw_mean[ch]=f->mean[ch];f->raw_rms[ch]=f->rms[ch];
-        if(low<=1 || peak>=254)f->clipped_mask|=1U<<ch;
+        if(amplitude.clipped)f->clipped_mask|=1U<<ch;
         f->duty[ch]=NAN;
         if(v->response[ch] && v->response[ch]->count>=2){
             size_t count=b->bytes/2,k;
@@ -758,9 +576,10 @@ int capture_process(const CaptureBuffer *b, const CaptureView *v, DisplayFrame *
             if(!channel_response_correct(corrected,count,(double)b->sample_rate_hz,v->response[ch])){free(corrected);return 0;}
             corrected_view.corrected[ch]=corrected;
             if(v->samples){
-                double sum=0,squares=0,lo=corrected[v->start],hi=lo;
-                for(k=v->start;k<v->start+v->samples;++k){double x=corrected[k];sum+=x;squares+=x*x;if(x<lo)lo=x;if(x>hi)hi=x;}
-                f->minimum[ch]=lo;f->maximum[ch]=hi;f->mean[ch]=sum/v->samples;f->rms[ch]=sqrt(squares/v->samples);
+                SignalTrace corrected_trace={NULL,corrected+v->start,v->samples,0,0,0,SIGNAL_TRACE_VALUES};
+                signal_measure_amplitude(&corrected_trace,&amplitude);
+                f->minimum[ch]=amplitude.minimum;f->maximum[ch]=amplitude.maximum;
+                f->mean[ch]=amplitude.mean;f->rms[ch]=amplitude.rms;
             }
         }
         if (!v->skip_spectrum && !spectrum(b, &corrected_view, ch, f->fft_size, f->fft[ch],&f->fundamental_hz[ch],&f->fundamental_amplitude[ch])){free(corrected);return 0;}
