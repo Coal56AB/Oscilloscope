@@ -431,14 +431,22 @@ static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayF
         workspace = malloc(2 * count * sizeof(*workspace));
         if (!workspace) return 0;
         double *input=workspace,*output=workspace+count,*swap;
-        if(v->noise_rms[ch]>0 && !filtered){
-            signal_filter_denoise_u8(b->data+ch,count,2,v->noise_rms[ch]/fabs(b->volts_per_code[ch]),input);
-            for(i=0;i<count;++i)input[i]=(input[i]-b->zero_code[ch])*b->volts_per_code[ch];
+        if(v->analyzer && v->analyzer->filter){
+            SignalTrace trace={b->data+ch,filtered,count,2,b->volts_per_code[ch],b->zero_code[ch],
+                filtered?SIGNAL_TRACE_VALUES:SIGNAL_TRACE_BYTES};
+            if(!v->analyzer->filter(v->analyzer->context,&trace,v->noise_rms[ch],v->filter_level[ch],input)){
+                free(workspace);return 0;
+            }
         }else{
-            for (i = 0; i < count; ++i) input[i] = filtered?filtered[i]:sample_voltage(b, i, ch);
-            if(v->noise_rms[ch]>0){signal_filter_denoise(input,count,v->noise_rms[ch],output);swap=input;input=output;output=swap;}
+            if(v->noise_rms[ch]>0 && !filtered){
+                signal_filter_denoise_u8(b->data+ch,count,2,v->noise_rms[ch]/fabs(b->volts_per_code[ch]),input);
+                for(i=0;i<count;++i)input[i]=(input[i]-b->zero_code[ch])*b->volts_per_code[ch];
+            }else{
+                for (i = 0; i < count; ++i) input[i] = filtered?filtered[i]:sample_voltage(b, i, ch);
+                if(v->noise_rms[ch]>0){signal_filter_denoise(input,count,v->noise_rms[ch],output);swap=input;input=output;output=swap;}
+            }
+            if(v->filter_level[ch]){signal_filter_apply(input,count,v->filter_level[ch],output);input=output;}
         }
-        if(v->filter_level[ch]){signal_filter_apply(input,count,v->filter_level[ch],output);input=output;}
         filtered=input;
         source.context = filtered;
         source.range = filtered_range;

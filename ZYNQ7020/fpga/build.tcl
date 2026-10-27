@@ -73,6 +73,7 @@ source $here/capture.tcl
 cell record_measure xilinx.com:hls:record_measure:1.0 {}
 cell analysis_memory xilinx.com:ip:smartconnect:1.0 {CONFIG.NUM_MI 1 CONFIG.NUM_SI 3}
 set_property CONFIG.HAS_ANALYSIS 1 [get_bd_cells capture_status]
+set_property CONFIG.HAS_FILTER 1 [get_bd_cells capture_status]
 bus control/M06_AXI record_measure/s_axi_control
 bus record_measure/m_axi_raw_memory analysis_memory/S00_AXI
 bus record_measure/m_axi_filtered_memory analysis_memory/S01_AXI

@@ -18,7 +18,7 @@ file delete -force $output/ready
 cd $output
 open_project -reset record_measure
 set_top record_measure
-foreach source [list $here/record_measure.c $here/record_trace.c $common/signal_measure.c] {
+foreach source [list $here/record_measure.c $here/record_trace.c $common/signal_measure.c $common/signal_filter.c $common/signal_filter_trace.c] {
     add_files $source -cflags "-I$common -I$here -DSIGNAL_NUMBER_FLOAT -DSIGNAL_TRACE_REPLAY"
 }
 add_files -tb $here/tests/record_measure_tb.c -cflags "-I$common -DSIGNAL_NUMBER_FLOAT"
@@ -37,6 +37,9 @@ set_directive_inline record_trace_code
 set_directive_inline record_trace_value
 set_directive_inline signal_measure_amplitude
 set_directive_inline signal_measure_timing
+foreach function {signal_filter_trace signal_filter_apply signal_filter_denoise signal_filter_denoise_u8 signal_filter_padding filter_origin denoise_value} {
+    set_directive_inline $function
+}
 foreach operation {fadd fsub fmul fdiv fcmp} {
     set_directive_allocation -type operation -limit 1 record_measure $operation
 }

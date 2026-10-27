@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Synchronous DDR replay for the numerical FPGA kernel. */
+/* Owned DDR replay for the numerical FPGA kernel. */
 #include <linux/clk.h>
 #include <linux/completion.h>
 #include <linux/dma-mapping.h>
@@ -18,7 +18,7 @@
 #include <linux/oscill_analysis.h>
 #include "oscill_capture_internal.h"
 
-#define ARENA_BYTES SZ_8M
+#define ARENA_BYTES SZ_16M
 #define VALUES_OFFSET SZ_2M
 #define RESULT_OFFSET (SZ_2M+SZ_4M)
 #define CONTROL 0x00
@@ -34,6 +34,9 @@
 #define INPUT_GAIN 0x40
 #define INPUT_ZERO 0x48
 #define INPUT_RATE 0x50
+#define INPUT_OPERATION 0x58
+#define INPUT_FILTER 0x60
+#define INPUT_NOISE 0x68
 
 struct analysis {
     struct miscdevice misc;
@@ -97,7 +100,8 @@ static bool finite_bits(u32 value)
 {
     return (value&0x7f800000)!=0x7f800000;
 }
-static int begin_measure(struct analysis *a,const struct osc_analysis_measure *job)
+static int begin_measure(struct analysis *a,const struct osc_analysis_measure *job,
+    u32 operation,u32 level,u32 noise)
 {
     size_t bytes;
     u32 pending;
@@ -129,6 +133,11 @@ static int begin_measure(struct analysis *a,const struct osc_analysis_measure *j
     writel(job->gain_bits,a->registers+INPUT_GAIN);
     writel(job->zero_bits,a->registers+INPUT_ZERO);
     writel(job->sample_rate_bits,a->registers+INPUT_RATE);
+    /* These registers exist only in the filter-capable bitstream. */
+    if(oscill_capture_status(a->capture)&OSC_CAPTURE_ANALYSIS_FILTER){
+        writel(operation,a->registers+INPUT_OPERATION);
+        writel(level,a->registers+INPUT_FILTER);writel(noise,a->registers+INPUT_NOISE);
+    }
     pending=readl(a->registers+IRQ_STATUS);
     if(pending)writel(pending,a->registers+IRQ_STATUS);
     reinit_completion(&a->done);
@@ -161,18 +170,31 @@ static long analysis_ioctl(struct file *file,unsigned int command,unsigned long 
     struct analysis *a=file->private_data;
     void __user *user=(void __user *)argument;
     struct osc_analysis_measure job;
+    struct osc_analysis_filter filter;
     struct osc_analysis_result result;
     int error;
     if(command==OSC_ANALYSIS_GET_INFO){
         struct osc_analysis_info info={OSC_ANALYSIS_ABI,OSC_ANALYSIS_MAX_SAMPLES,
             OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY|OSC_ANALYSIS_ASYNC,0};
+        if(oscill_capture_status(a->capture)&OSC_CAPTURE_ANALYSIS_FILTER)info.features|=OSC_ANALYSIS_FILTER;
         return copy_to_user(user,&info,sizeof(info))?-EFAULT:0;
     }
-    if(command!=OSC_ANALYSIS_MEASURE && command!=OSC_ANALYSIS_BEGIN && command!=OSC_ANALYSIS_FINISH)return -ENOTTY;
-    if(command!=OSC_ANALYSIS_FINISH && copy_from_user(&job,user,sizeof(job)))return -EFAULT;
+    if(command!=OSC_ANALYSIS_MEASURE && command!=OSC_ANALYSIS_BEGIN && command!=OSC_ANALYSIS_FINISH &&
+       command!=OSC_ANALYSIS_FILTER_RECORD)return -ENOTTY;
+    if(command==OSC_ANALYSIS_FILTER_RECORD){
+        if(!(oscill_capture_status(a->capture)&OSC_CAPTURE_ANALYSIS_FILTER))return -EOPNOTSUPP;
+        if(copy_from_user(&filter,user,sizeof(filter)))return -EFAULT;
+        if(filter.level>3 || !finite_bits(filter.noise_bits) || (filter.noise_bits&0x80000000) ||
+           filter.output_address>ULONG_MAX)return -EINVAL;
+        job=filter.input;
+    }else if(command!=OSC_ANALYSIS_FINISH && copy_from_user(&job,user,sizeof(job)))return -EFAULT;
     if(mutex_lock_interruptible(&a->lock))return -ERESTARTSYS;
-    error=command==OSC_ANALYSIS_FINISH?0:begin_measure(a,&job);
+    error=command==OSC_ANALYSIS_FINISH?0:begin_measure(a,&job,command==OSC_ANALYSIS_FILTER_RECORD,
+        command==OSC_ANALYSIS_FILTER_RECORD?filter.level:0,command==OSC_ANALYSIS_FILTER_RECORD?filter.noise_bits:0);
     if(!error && command!=OSC_ANALYSIS_BEGIN)error=finish_measure(a,&result);
+    if(!error && command==OSC_ANALYSIS_FILTER_RECORD &&
+       copy_to_user(u64_to_user_ptr(filter.output_address),a->memory+RESULT_OFFSET+sizeof(result),
+                    (size_t)job.samples*sizeof(u32)))error=-EFAULT;
     mutex_unlock(&a->lock);
     if(!error && command==OSC_ANALYSIS_FINISH){
         if(copy_to_user(user,&result,sizeof(result)))error=-EFAULT;

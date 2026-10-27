@@ -27,7 +27,7 @@ void signal_filter_trace(const SignalTrace *source,SignalNumber noise_rms,unsign
             memcpy(values,source->values+begin,count*sizeof(*values));
             if(noise_rms>0){
                 signal_filter_denoise(values,count,noise_rms,temporary);
-                memcpy(values,temporary,count*sizeof(*values));
+                for(size_t i=0;i<count;++i)values[i]=temporary[i];
             }
         }
         if(level)signal_filter_apply(values,count,level,temporary);

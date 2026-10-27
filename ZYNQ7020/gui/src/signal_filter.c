@@ -59,7 +59,7 @@ void signal_filter_denoise(const SignalNumber *source,size_t samples,SignalNumbe
     size_t first=0,end=0,count=0;
     SignalNumber sum=0,squares=0,noise=noise_rms*noise_rms,inverse=0;
     size_t previous_count=0;
-    if(!isfinite(noise) || noise<=0){memcpy(result,source,samples*sizeof(*result));return;}
+    if(!isfinite(noise) || noise<=0){for(size_t i=0;i<samples;++i)result[i]=source[i];return;}
     SignalNumber origin=filter_origin(source,samples);
     for(size_t i=0;i<samples;++i){
         size_t left=i>SIGNAL_FILTER_DENOISE_RADIUS?i-SIGNAL_FILTER_DENOISE_RADIUS:0;
@@ -82,7 +82,7 @@ void signal_filter_apply(const SignalNumber *source, size_t samples, unsigned le
     unsigned radius = radii[level < 4 ? level : 3];
     SignalNumber sum = 0,inverse=0;
     size_t previous_count=0;
-    if (!radius) { memcpy(result, source, samples * sizeof(*result)); return; }
+    if (!radius) { for(size_t j=0;j<samples;++j)result[j]=source[j];return; }
     SignalNumber origin=filter_origin(source,samples);
     for (i = 0; i < samples; ++i) {
         size_t left = i > radius ? i - radius : 0;

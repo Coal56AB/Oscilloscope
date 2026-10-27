@@ -17,12 +17,12 @@ static double number(uint32_t word)
 {
     float value;memcpy(&value,&word,sizeof(value));return value;
 }
-static int begin(void *context,const SignalTrace *trace,SignalNumber rate)
+static int prepare(ZynqAnalysis *a,const SignalTrace *trace,SignalNumber rate,struct osc_analysis_measure *job)
 {
-    ZynqAnalysis *a=context;
-    struct osc_analysis_measure job={0};
+    memset(job,0,sizeof(*job));
     if(a->failed)return 0;
-    if(trace->samples>OSC_ANALYSIS_MAX_SAMPLES || trace->stride>2){a->failed=1;return 0;}
+    if(trace->samples>OSC_ANALYSIS_MAX_SAMPLES || trace->stride>2 || trace->format>SIGNAL_TRACE_VALUES ||
+       (trace->format==SIGNAL_TRACE_BYTES && !trace->stride)){a->failed=1;return 0;}
     if(trace->format==SIGNAL_TRACE_VALUES){
         if(trace->samples>a->capacity){
             float *values=realloc(a->values,trace->samples*sizeof(*values));
@@ -30,11 +30,17 @@ static int begin(void *context,const SignalTrace *trace,SignalNumber rate)
             a->values=values;a->capacity=trace->samples;
         }
         for(size_t i=0;i<trace->samples;++i)a->values[i]=(float)trace->values[i];
-        job.values_address=(uintptr_t)a->values;job.format=1;
-    }else job.codes_address=(uintptr_t)trace->codes;
-    job.samples=(uint32_t)trace->samples;job.stride=(uint32_t)trace->stride;
-    job.gain_bits=bits((float)trace->gain);job.zero_bits=bits((float)trace->zero);
-    job.sample_rate_bits=bits((float)rate);
+        job->values_address=(uintptr_t)a->values;job->format=1;
+    }else job->codes_address=(uintptr_t)trace->codes;
+    job->samples=(uint32_t)trace->samples;job->stride=(uint32_t)trace->stride;
+    job->gain_bits=bits((float)trace->gain);job->zero_bits=bits((float)trace->zero);
+    job->sample_rate_bits=bits((float)rate);
+    return 1;
+}
+static int begin(void *context,const SignalTrace *trace,SignalNumber rate)
+{
+    ZynqAnalysis *a=context;struct osc_analysis_measure job;
+    if(!prepare(a,trace,rate,&job))return 0;
     if(ioctl(a->fd,OSC_ANALYSIS_BEGIN,&job)<0){
         a->failed=1;return 0;
     }
@@ -58,6 +64,20 @@ static int measure(void *context,const SignalTrace *trace,SignalNumber rate,
 {
     return begin(context,trace,rate) && finish(context,amplitude,timing);
 }
+static int filter(void *context,const SignalTrace *trace,SignalNumber noise_rms,unsigned level,SignalNumber *result)
+{
+    ZynqAnalysis *a=context;struct osc_analysis_filter job={0};
+    if(!prepare(a,trace,0,&job.input))return 0;
+    if(trace->samples>a->capacity){
+        float *values=realloc(a->values,trace->samples*sizeof(*values));
+        if(!values){a->failed=1;return 0;}
+        a->values=values;a->capacity=trace->samples;
+    }
+    job.output_address=(uintptr_t)a->values;job.level=level;job.noise_bits=bits((float)noise_rms);
+    if(ioctl(a->fd,OSC_ANALYSIS_FILTER_RECORD,&job)<0){a->failed=1;return 0;}
+    for(size_t i=0;i<trace->samples;++i)result[i]=a->values[i];
+    return 1;
+}
 int zynq_analysis_open(ZynqAnalysis *a,const char *device)
 {
     struct osc_analysis_info info;
@@ -71,6 +91,7 @@ int zynq_analysis_open(ZynqAnalysis *a,const char *device)
         zynq_analysis_close(a);return 0;
     }
     a->analyzer=(SignalAnalyzer){a,measure,begin,finish};
+    if(info.features&OSC_ANALYSIS_FILTER)a->analyzer.filter=filter;
     return 1;
 }
 void zynq_analysis_close(ZynqAnalysis *a)

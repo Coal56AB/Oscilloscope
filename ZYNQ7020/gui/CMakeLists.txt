@@ -138,11 +138,14 @@ if(BUILD_TESTING)
     target_link_libraries(scope_history_test PRIVATE scope_runtime)
     add_test(NAME scope_history COMMAND scope_history_test)
     if(SCOPE_ENABLE_ZYNQ)
-        add_library(record_measure_reference STATIC ../fpga/record_measure.c ../fpga/record_trace.c src/signal_measure.c)
+        add_library(record_measure_reference STATIC ../fpga/record_measure.c ../fpga/record_trace.c src/signal_measure.c src/signal_filter.c src/signal_filter_trace.c)
         target_include_directories(record_measure_reference PRIVATE src ../fpga)
         target_compile_definitions(record_measure_reference PRIVATE SIGNAL_NUMBER_FLOAT SIGNAL_TRACE_REPLAY
             signal_measure_amplitude=fp32_measure_amplitude signal_measure_timing=fp32_measure_timing
-            signal_u8_bounds=fp32_u8_bounds)
+            signal_u8_bounds=fp32_u8_bounds
+            signal_filter_apply=fp32_filter_apply signal_filter_denoise=fp32_filter_denoise
+            signal_filter_denoise_u8=fp32_filter_denoise_u8 signal_filter_padding=fp32_filter_padding
+            signal_filter_denoise_bounds=fp32_filter_denoise_bounds signal_filter_trace=fp32_filter_trace)
         target_link_libraries(record_measure_reference PUBLIC m)
         add_executable(scope_analysis_test src/tests/test_analysis_zynq.c)
         target_link_libraries(scope_analysis_test PRIVATE scope_runtime record_measure_reference)

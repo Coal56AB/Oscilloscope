@@ -28,6 +28,9 @@ typedef struct {
        the trace storage valid until finish returns. */
     int (*begin)(void *context,const SignalTrace *trace,SignalNumber sample_rate);
     int (*finish)(void *context,SignalAmplitude *amplitude,SignalTiming *timing);
+    /* Optional executor for centred Wiener followed by the manual filter.
+       Output is in physical units; input and output storage stay distinct. */
+    int (*filter)(void *context,const SignalTrace *trace,SignalNumber noise_rms,unsigned level,SignalNumber *result);
 } SignalAnalyzer;
 #define SIGNAL_TIMING_CAPACITY 4096u
 #define SIGNAL_TIMING_WORKSPACE (3u*SIGNAL_TIMING_CAPACITY)

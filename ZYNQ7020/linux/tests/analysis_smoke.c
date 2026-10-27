@@ -59,7 +59,8 @@ int main(void)
     if(fd<0){perror("open analysis");return 1;}
     assert(codes && values);
     assert(ioctl(fd,OSC_ANALYSIS_GET_INFO,&info)==0 && info.abi_version==OSC_ANALYSIS_ABI &&
-        info.max_samples==1000000 && info.features==(OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY|OSC_ANALYSIS_ASYNC));
+        info.max_samples==1000000 && (info.features&(OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY|OSC_ANALYSIS_ASYNC))==
+            (OSC_ANALYSIS_BYTES|OSC_ANALYSIS_VALUES|OSC_ANALYSIS_AMPLITUDE_ONLY|OSC_ANALYSIS_ASYNC));
     errno=0;assert(open("/dev/oscill-analysis",O_RDWR)<0 && errno==EBUSY);
     for(unsigned i=0;i<1000000;++i){
         codes[2*i]=i%100<33?195:85;codes[2*i+1]=i%100<67?175:95;
@@ -111,6 +112,10 @@ int main(void)
     struct timespec pause={0,100000000};nanosleep(&pause,NULL);
     assert(ioctl(fd,OSC_ANALYSIS_BEGIN,&request)<0 && errno==EBUSY);
     assert(ioctl(fd,OSC_ANALYSIS_MEASURE,&request)<0 && errno==EBUSY);
+    if(info.features&OSC_ANALYSIS_FILTER){
+        struct osc_analysis_filter blocked={0};blocked.input=request;blocked.output_address=(uintptr_t)values;
+        assert(ioctl(fd,OSC_ANALYSIS_FILTER_RECORD,&blocked)<0 && errno==EBUSY);
+    }
     assert(ioctl(fd,OSC_ANALYSIS_FINISH,&completed)==0);
     near(number(completed.bits[2]),-.001,1e-6);near(number(completed.bits[3]),.001,1e-6);
     assert(ioctl(fd,OSC_ANALYSIS_FINISH,&completed)<0 && errno==EAGAIN);
