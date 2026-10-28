@@ -670,7 +670,7 @@ int main(void)
     static uint32_t pixels[SCOPE_WIDTH * SCOPE_HEIGHT];
     static uint32_t capture_pixels[SCOPE_WIDTH * SCOPE_HEIGHT];
     int16_t synchronized_ch1[SCOPE_PLOT_WIDTH];
-    int previous;
+    int previous, x, y;
     int edge;
     int i;
 
@@ -1235,8 +1235,8 @@ int main(void)
     assert(previous < 984);
     demo_signal_ui_toggle_measurements_visible(&demo);
     assert(demo.screen.measurement_hidden && demo.measurement_count == 3);
-    scope_screen_measurement_bounds(&demo.screen, &i, &edge, NULL, NULL);
-    assert(i == 0 && edge == SCOPE_MEASURE_BOTTOM_Y - 30);
+    scope_screen_measurement_bounds(&demo.screen, &i, &edge, &x, &y);
+    assert(i == 0 && edge == 0 && x == 0 && y == 0);
     assert(demo.screen.measurement_x == 100 &&
            demo.screen.measurement_y == SCOPE_MEASURE_BOTTOM_Y - 142);
     demo_signal_ui_move_measurements(&demo, 300, 100);
@@ -1371,7 +1371,17 @@ int main(void)
     demo_signal_ui_set_split_height(&demo, 180);
     assert(demo.screen.split_height == 180);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DISPLAY);
-    assert(demo.screen.menu_count == 3);
+    assert(demo.screen.menu_count == 4);
+    assert(demo.screen.grid_brightness == 5);
+    demo_signal_ui_menu_tap(&demo, 3, 1);
+    assert(demo.screen.grid_brightness == 6 && !strcmp(demo.screen.menu_values[3], "6"));
+    assert(demo_signal_set_option(&demo, DEMO_MENU_DISPLAY, 3, 10));
+    demo_signal_ui_menu_tap(&demo, 3, 1);
+    assert(demo.screen.grid_brightness == 10);
+    assert(!demo_signal_set_option(&demo, DEMO_MENU_DISPLAY, 3, 11));
+    assert(demo_signal_set_option(&demo, DEMO_MENU_DISPLAY, 3, 0));
+    demo_signal_ui_menu_tap(&demo, 3, -1);
+    assert(demo.screen.grid_brightness == 0);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DEBUG);
     assert(demo.screen.menu_count == 6);
     assert(demo.screen.font_index == SCOPE_FONT_INTER);

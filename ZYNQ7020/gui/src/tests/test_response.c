@@ -7,9 +7,31 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 static DemoSignal demo;
 static DisplayFrame frame;
+
+/* Older documents end each configuration row before grid brightness. */
+static void legacy_settings(char *data, unsigned version)
+{
+    char legacy[SETTINGS_STORE_BYTES], *end;
+    const char *source=strchr(data,'\n')+1;
+    size_t used=(size_t)snprintf(legacy,sizeof(legacy),"OSCILL_SETUP %u %u\n",version,
+                               (unsigned)DEMO_SETTING_GRID_BRIGHTNESS);
+    const char *line_end=strchr(source,'\n')+1;
+    memcpy(legacy+used,source,(size_t)(line_end-source));used+=(size_t)(line_end-source);source=line_end;
+    for(unsigned slot=0;slot<6;++slot){
+        for(unsigned field=0;field<DEMO_SETTINGS_COUNT;++field){
+            double value=strtod(source,&end);assert(end!=source);source=end;
+            if(field<DEMO_SETTING_GRID_BRIGHTNESS)
+                used+=(size_t)snprintf(legacy+used,sizeof(legacy)-used,"%.17g%c",value,
+                                      field+1==DEMO_SETTING_GRID_BRIGHTNESS?'\n':' ');
+        }
+    }
+    if(*source=='\n')++source;
+    assert(used+strlen(source)<sizeof(legacy));strcpy(legacy+used,source);strcpy(data,legacy);
+}
 
 static double amplitude(const double *x,size_t count,double frequency,double fs)
 {
@@ -80,6 +102,10 @@ static void calibration_test(void)
     assert(settings_document_encode(&document,data,sizeof(data)));
     assert(settings_document_decode(&decoded,data));
     assert(!memcmp(&document,&decoded,sizeof(document)));
+    legacy_settings(data,5);
+    assert(settings_document_decode(&decoded,data));
+    assert(decoded.last.values[DEMO_SETTING_GRID_BRIGHTNESS]==5);
+    assert(!memcmp(document.baseline,decoded.baseline,sizeof(document.baseline)));
     {
         char *end=data+strlen(data);
         for(unsigned line=0;line<4*INPUT_RANGE_STAGE_COUNT;++line){
@@ -149,7 +175,7 @@ static void baseline_test(void)
     /* Import the preceding single-stage format without losing either result. */
     char *end=data+strlen(data);
     for(unsigned line=0;line<4*INPUT_RANGE_STAGE_COUNT;++line){if(end>data && end[-1]=='\n')--end;while(end>data && end[-1]!='\n')--end;}
-    size_t used=(size_t)(end-data);data[strlen("OSCILL_SETUP ")]='4';
+    *end=0;legacy_settings(data,4);size_t used=strlen(data);
     for(unsigned bank=0;bank<4;++bank){ChannelBaseline *old=&document.baseline[bank][1];
         used+=(size_t)snprintf(data+used,sizeof(data)-used,"%d %.17g %.17g %.17g %.17g\n",old->valid,old->zero,old->noise_rms,old->volts_per_code,old->noise_volts_per_code);}
     assert(settings_document_decode(&decoded,data) && decoded.baseline[2][1].valid==3 && decoded.baseline[2][0].valid==0);

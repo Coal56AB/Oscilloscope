@@ -458,14 +458,10 @@ void scope_screen_measurement_bounds(const ScopeScreen *screen, int *x, int *y,
     int available_bottom;
     int w, h, left, top;
     if (screen->measurement_hidden) {
-        int header_width = 11 + text_width_mode("MEASUREMENTS", 2,
-                                                screen->font_index) +
-                           12 + 64 + 5;
-        if (header_width < 230) header_width = 230;
         if (x) *x = 0;
-        if (y) *y = scope_screen_measurement_bottom(screen, 0, header_width) - 30;
-        if (width) *width = header_width;
-        if (height) *height = 30;
+        if (y) *y = 0;
+        if (width) *width = 0;
+        if (height) *height = 0;
         return;
     }
     if (count < 0) count = 0;
@@ -1135,19 +1131,24 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         }
 
     }
-    if (screen->grid_enabled) {
+    if (screen->grid_enabled && screen->grid_brightness) {
         int j;
+        int brightness = screen->grid_brightness > 10 ? 10 : screen->grid_brightness;
+        uint32_t major = RGB(7 + 63 * brightness / 5, 8 + 66 * brightness / 5,
+                             14 + 79 * brightness / 5);
+        uint32_t minor = RGB(7 + 35 * brightness / 5, 8 + 36 * brightness / 5,
+                             14 + 45 * brightness / 5);
         for (i = 1; i < 10; ++i) {
             int x = PLOT_X + i * SCOPE_PLOT_WIDTH / 10;
             for (j = 0; j < view_height; j += 8)
                 fill(x, view_top + j, 1, i == 5 ? 4 : 2,
-                     i == 5 ? RGB(70, 74, 93) : RGB(42, 44, 59));
+                     i == 5 ? major : minor);
         }
         for (i = 1; i < 8; ++i) {
             int y = view_top + i * view_height / 8;
             for (j = 0; j < SCOPE_PLOT_WIDTH; j += 8)
                 fill(PLOT_X + j, y, i == 4 ? 4 : 2, 1,
-                     i == 4 ? RGB(70, 74, 93) : RGB(42, 44, 59));
+                     i == 4 ? major : minor);
         }
     }
 
@@ -1250,8 +1251,8 @@ plot_ready:
         trigger_level_handle(view_y(py), 1, trigger_color);
     }
     active_rounding = SCOPE_WINDOW_RADIUS;
-    {
-        int count = screen->measurement_hidden ? 0 : screen->measurement_count;
+    if (!screen->measurement_hidden) {
+        int count = screen->measurement_count;
         int left, top, width, height;
         if (count > SCOPE_MEASURE_SLOTS) count = SCOPE_MEASURE_SLOTS;
         scope_screen_measurement_bounds(screen, &left, &top, &width, &height);
@@ -1267,7 +1268,7 @@ plot_ready:
                           button_width, 24, RGB(126, 143, 185));
         }
         {
-            const char *layout = screen->measurement_hidden ? "SHOW" : count == 0 ? "ADD" :
+            const char *layout = count == 0 ? "ADD" :
                                  screen->measurement_horizontal ? "COLUMN" : "ROW";
             int button_width = count > 0 && screen->measurement_horizontal ? 90 : 64;
             text(left + width - button_width - 5 +

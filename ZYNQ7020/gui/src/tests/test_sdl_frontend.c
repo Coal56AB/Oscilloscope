@@ -519,6 +519,13 @@ static void test_panel_battery(void)
 
 int main(void)
 {
+    int mx,my,mw,mh,row;
+    demo_signal_init(&demo);
+    scope_screen_measurement_bounds(&demo.screen,&mx,&my,&mw,&mh);
+    assert(touch_zone_at(mx+mw-20,my+15,&row)==TOUCH_MEASURE_LAYOUT);
+    demo_signal_ui_toggle_measurements_visible(&demo);
+    assert(touch_zone_at(mx+mw-20,my+15,&row)!=TOUCH_MEASURE_LAYOUT);
+    assert(touch_zone_at(mx+20,my+15,&row)!=TOUCH_MEASURE_DRAG);
     CaptureMetrics pending={0};pending.waiting=1;
     assert(capture_waiting(&pending,0,1,1));
     pending.triggered_ns=1000000000;pending.processing_ns=9000000000ULL;

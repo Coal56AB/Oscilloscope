@@ -198,11 +198,13 @@ static void persistence_test(void)
     demo_signal_init(&demo);assert(!settings_session_open(&session,&demo,path));
     for(unsigned slot=0;slot<5;++slot){
         demo.time_index=(int)slot+8;demo.channel_position[1]=(int)slot*10;
+        demo.screen.grid_brightness=(uint8_t)(slot*2);
         demo_signal_refresh(&demo);assert(settings_session_save(&session,&demo,slot));
     }
     assert(demo.preset_valid==31);
     demo.time_index=19;demo.channel_position[1]=-75;demo.startup_preset=0;
     demo.adc_simulation=0;
+    demo.screen.grid_brightness=7;
     channel_response_add(&demo.response[0],1000,1);channel_response_add(&demo.response[0],10000,.5);
     demo.response_enabled[0]=1;
     demo_signal_refresh(&demo);demo_settings_capture(&demo,&latest);
@@ -212,10 +214,12 @@ static void persistence_test(void)
     settings_session_close(&session,&demo);
     demo_signal_init(&demo);assert(settings_session_open(&session,&demo,path));
     assert(demo.time_index==19 && demo.channel_position[1]==-75);
+    assert(demo.screen.grid_brightness==7);
     assert(demo.response[0].count==2 && demo.response_enabled[0]);
     for(unsigned slot=0;slot<5;++slot){
         assert(settings_session_load(&session,&demo,slot));
         assert(demo.time_index==(int)slot+8 && demo.channel_position[1]==(int)slot*10);
+        assert(demo.screen.grid_brightness==slot*2);
     }
     demo.startup_preset=2;demo.time_index=23;settings_session_close(&session,&demo);
     demo_signal_init(&demo);assert(settings_session_open(&session,&demo,path));
@@ -234,7 +238,7 @@ static void preserve_unreadable_settings_test(void)
     for(unsigned variant=0;variant<4;++variant){
         size_t bytes=variant==0?0:variant==1?size/2:variant==2?size:sizeof(data);
         FILE *file;
-        if(variant==2)data[strlen("OSCILL_SETUP ")]='6';
+        if(variant==2)data[strlen("OSCILL_SETUP ")]='7';
         if(variant==3)memset(data,'x',sizeof(data));
         file=fopen(path,"wb");assert(file);
         assert(fwrite(data,1,bytes,file)==bytes);assert(!fclose(file));

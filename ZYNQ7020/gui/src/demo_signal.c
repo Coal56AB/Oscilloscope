@@ -911,7 +911,7 @@ static int menu_item_count(DemoMenu kind)
     if (kind == DEMO_MENU_CH1 || kind == DEMO_MENU_CH2) return 5;
     if (kind == DEMO_MENU_TRIGGER) return 7;
     if (kind == DEMO_MENU_CURSOR) return 1;
-    if (kind == DEMO_MENU_DISPLAY) return 3;
+    if (kind == DEMO_MENU_DISPLAY) return 4;
     if (kind == DEMO_MENU_TIME) return 3;
     if (kind == DEMO_MENU_BROWSE) return DEMO_BROWSE_PAGE;
     if (kind == DEMO_MENU_PC) return 2;
@@ -963,7 +963,8 @@ static int current_menu_value(const DemoSignal *demo)
     if (demo->menu_kind == DEMO_MENU_CURSOR)
         return demo->screen.cursor_mode;
     if (demo->menu_kind == DEMO_MENU_DISPLAY)
-        return item ? demo->screen.font_index : demo->screen.grid_enabled;
+        return item == 3 ? demo->screen.grid_brightness :
+               item == 1 ? demo->screen.font_index : demo->screen.grid_enabled;
     if (demo->menu_kind == DEMO_MENU_PC) return demo->pc_baud_index;
     if (demo->menu_kind == DEMO_MENU_SETUP) return demo->startup_preset;
     if (demo->menu_kind == DEMO_MENU_RESPONSE) return demo->response_enabled[demo->response_channel];
@@ -989,6 +990,8 @@ static int current_menu_value(const DemoSignal *demo)
 static int menu_value_count(const DemoSignal *demo)
 {
     int item = demo->screen.menu_selected;
+    if (demo->menu_kind == DEMO_MENU_DISPLAY)
+        return item == 3 ? 11 : item == 1 ? SCOPE_FONT_COUNT : 2;
     if (demo->menu_kind == DEMO_MENU_CH1 || demo->menu_kind == DEMO_MENU_CH2)
         return item == 0 || item == 1 || item == 2 ? 2 : item == 3 ? 6 : 1;
     if (demo->menu_kind == DEMO_MENU_TRIGGER)
@@ -1200,6 +1203,11 @@ static void refresh_menu(DemoSignal *demo)
         screen->menu_values[1] = font_names[screen->font_index];
         set_menu_options(screen, 1, font_names, SCOPE_FONT_COUNT, screen->font_index);
         screen->menu_labels[2]="LAYOUT";screen->menu_values[2]="OPEN";
+        screen->menu_labels[3]="GRID BRIGHTNESS";
+        snprintf(demo->grid_brightness_text, sizeof(demo->grid_brightness_text),
+                 "%u", screen->grid_brightness);
+        screen->menu_values[3]=demo->grid_brightness_text;
+        screen->menu_stepper[3]=1;
     } else if (demo->menu_kind == DEMO_MENU_TIME) {
         screen->menu_title = "TIME SETTINGS";
         for (i = 0; i < 3; ++i) screen->menu_labels[i] = time_labels[i];
@@ -1346,8 +1354,14 @@ static void refresh_menu(DemoSignal *demo)
                 (demo->edit_value == SCOPE_CURSOR_TIME ? "TIME" :
                  demo->edit_value == SCOPE_CURSOR_VOLTAGE ? "VERTICAL" : "OFF") :
                 demo->edit_value ? "CH2" : "CH1";
-        else if (demo->menu_kind == DEMO_MENU_DISPLAY)
-            screen->menu_values[i] = demo->edit_value ? "ON" : "OFF";
+        else if (demo->menu_kind == DEMO_MENU_DISPLAY) {
+            if (i == 3) {
+                snprintf(demo->grid_brightness_text, sizeof(demo->grid_brightness_text),
+                         "%d", demo->edit_value);
+                screen->menu_values[i] = demo->grid_brightness_text;
+            } else screen->menu_values[i] = i == 1 ? font_names[demo->edit_value] :
+                                                       demo->edit_value ? "ON" : "OFF";
+        }
         else if (demo->menu_kind == DEMO_MENU_TIME) {
             if (i == 0) {
                 format_time_scale(demo->edit_scale_text, sizeof(demo->edit_scale_text),
@@ -1822,6 +1836,7 @@ void demo_signal_init(DemoSignal *demo)
     demo->menu_position_x = SCOPE_MENU_X;
     demo->menu_position_y = SCOPE_MENU_Y;
     demo->screen.grid_enabled = 1;
+    demo->screen.grid_brightness = 5;
     demo->screen.font_index = SCOPE_FONT_INTER;
     demo->zoom_split_height = 94;
     demo->fft_split_height = 94;
@@ -1957,7 +1972,8 @@ static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
             demo->screen.cursor_b = value == SCOPE_CURSOR_VOLTAGE ? 305 : 720;
         }
     } else if (kind == DEMO_MENU_DISPLAY) {
-        if(item)demo->screen.font_index = (uint8_t)value;
+        if(item==3)demo->screen.grid_brightness = (uint8_t)value;
+        else if(item==1)demo->screen.font_index = (uint8_t)value;
         else demo->screen.grid_enabled = (uint8_t)value;
     } else if(kind==DEMO_MENU_LAYOUT){
         if(item==0){if(demo->screen.measurement_hidden==value)demo_signal_ui_toggle_measurements_visible(demo);}
@@ -2038,7 +2054,7 @@ int demo_signal_set_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     else if(kind==DEMO_MENU_TIME&&item==0)count=demo->screen.zoom_enabled?demo->time_index+1:TIME_SCALE_COUNT;
     else if(kind==DEMO_MENU_PROCESSING&&item<6)count=item<2?4:item==3?3:item==5?CAPTURE_DEPTH_COUNT:2;
     else if(kind==DEMO_MENU_CURSOR&&item==0)count=3;
-    else if(kind==DEMO_MENU_DISPLAY&&item<2)count=item?SCOPE_FONT_COUNT:2;
+    else if(kind==DEMO_MENU_DISPLAY&&item!=2)count=item==3?11:item?SCOPE_FONT_COUNT:2;
     else if(kind==DEMO_MENU_PC&&item==0)count=PC_BAUD_COUNT;
     else if(kind==DEMO_MENU_DEBUG&&item>0&&item<4)count=item==3?2:item==1?27:29;
     else if(kind==DEMO_MENU_GENERATOR&&item<3)count=item<2?DEMO_WAVE_COUNT:
@@ -2422,6 +2438,11 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
     } else if (demo->menu_kind == DEMO_MENU_CURSOR) {
         small_choice = index == 0 || index == 1;
     } else if (demo->menu_kind == DEMO_MENU_DISPLAY) {
+        if (index == 3) {
+            demo->edit_value = clamp(current_menu_value(demo) + (direction < 0 ? -1 : 1), 0, 10);
+            apply_edit(demo);
+            return DEMO_ACTION_NONE;
+        }
         small_choice = index == 0;
     } else if (demo->menu_kind == DEMO_MENU_FONT) {
         demo->screen.font_index = (uint8_t)index;

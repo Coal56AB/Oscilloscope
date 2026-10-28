@@ -91,6 +91,7 @@ typedef struct {
     unsigned fft_size;
     char ch_scale_text[2][20];
     char edit_scale_text[20];
+    char grid_brightness_text[16];
     char ch_input_text[2][20];
     char time_text[20];
     char zoom_text[24];

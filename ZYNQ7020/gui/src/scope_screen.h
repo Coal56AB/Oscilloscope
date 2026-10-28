@@ -161,6 +161,7 @@ typedef struct {
     uint8_t browser_delete_confirm;
     uint8_t browser_delete_choice;
     uint8_t grid_enabled;
+    uint8_t grid_brightness; /* 0..10, 5 preserves the original contrast. */
     uint8_t zoom_enabled;
     uint8_t ch1_enabled;
     uint8_t ch2_enabled;

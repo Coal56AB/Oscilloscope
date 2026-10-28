@@ -39,7 +39,8 @@
  X(MEASURE_HORIZONTAL,screen.measurement_horizontal,uint8_t,0,1) X(MEASURE_HIDDEN,screen.measurement_hidden,uint8_t,0,1) \
  X(MENU_X,menu_position_x,int,0,1024) X(MENU_Y,menu_position_y,int,0,600) \
  X(BAUD,pc_baud_index,int,0,9) X(RUN,screen.running,uint8_t,0,1) \
- X(RESPONSE1,response_enabled[0],int,0,1) X(RESPONSE2,response_enabled[1],int,0,1)
+ X(RESPONSE1,response_enabled[0],int,0,1) X(RESPONSE2,response_enabled[1],int,0,1) \
+ X(GRID_BRIGHTNESS,screen.grid_brightness,uint8_t,0,10)
 
 enum {
 #define SETTING_ID(name,member,type,low,high) DEMO_SETTING_##name,

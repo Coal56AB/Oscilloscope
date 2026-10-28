@@ -14,6 +14,33 @@ static uint32_t corners[68 * 68];
 static RoundedBox box;
 static DemoSignal demo;
 
+static void test_display_visibility(uint32_t *pixels, int stride)
+{
+    int left,top,width,height;
+    demo_signal_init(&demo);
+    scope_screen_measurement_bounds(&demo.screen,&left,&top,&width,&height);
+    scope_screen_render(pixels,stride,&demo.screen);
+    assert(pixels[(top+2)*stride+left+width/2]==0x232a46);
+    demo_signal_ui_toggle_measurements_visible(&demo);
+    scope_screen_measurement_bounds(&demo.screen,NULL,NULL,&width,&height);
+    assert(!width && !height);
+    demo.screen.ch1_enabled=demo.screen.ch2_enabled=0;
+    scope_screen_render(pixels,stride,&demo.screen);
+    assert(pixels[(top+2)*stride+left+100]==0x07080e);
+    int gx=SCOPE_PLOT_X+SCOPE_PLOT_WIDTH/10, gy=SCOPE_PLOT_Y+16;
+    assert(pixels[gy*stride+gx]==0x2a2c3b);
+    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,3,10));
+    scope_screen_render(pixels,stride,&demo.screen);
+    assert(pixels[gy*stride+gx]==0x4d5068);
+    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,3,0));
+    scope_screen_render(pixels,stride,&demo.screen);
+    assert(pixels[gy*stride+gx]==0x07080e);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_MEASURE);
+    demo_signal_ui_menu_select(&demo,SCOPE_MEASURE_HIDE_INDEX);
+    demo_signal_ui_menu_activate(&demo);
+    assert(!demo.screen.measurement_hidden && demo.measurement_count==3);
+}
+
 static void test_spectrum_projection(void)
 {
     static double re[4096],im[4096];
@@ -513,6 +540,7 @@ int main(void)
     uint32_t *pixels = malloc((SCOPE_WIDTH + 3) * SCOPE_HEIGHT * sizeof(*pixels));
     int mode, menu, x, width;
     assert(pixels);
+    test_display_visibility(pixels,SCOPE_WIDTH+3);
     test_persistence(pixels,SCOPE_WIDTH+3);
     test_trigger_wait(pixels,SCOPE_WIDTH+3);
     test_response_with_cached_plot(pixels,SCOPE_WIDTH+3);
