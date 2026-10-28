@@ -2039,7 +2039,7 @@ static void adjust_measure_position(DemoSignal *demo, int steps)
 {
     int row=demo->screen.menu_selected;
     if(menu_disabled(demo,DEMO_MENU_LAYOUT,row))return;
-    int delta=steps*(demo->screen.fine_mode?1:8);
+    int delta=steps*(demo->screen.fine_mode?1:10);
     demo_signal_ui_move_measurements(demo,row==2?delta:0,row==3?delta:0);
     demo->edit_value=current_menu_value(demo);
     update_text(demo,0);
