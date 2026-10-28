@@ -29,10 +29,10 @@ static void test_display_visibility(uint32_t *pixels, int stride)
     assert(pixels[(top+2)*stride+left+100]==0x07080e);
     int gx=SCOPE_PLOT_X+SCOPE_PLOT_WIDTH/10, gy=SCOPE_PLOT_Y+16;
     assert(pixels[gy*stride+gx]==0x2a2c3b);
-    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,3,10));
+    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,2,10));
     scope_screen_render(pixels,stride,&demo.screen);
     assert(pixels[gy*stride+gx]==0x4d5068);
-    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,3,0));
+    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,2,0));
     scope_screen_render(pixels,stride,&demo.screen);
     assert(pixels[gy*stride+gx]==0x07080e);
     demo_signal_ui_open_menu(&demo,DEMO_MENU_MEASURE);

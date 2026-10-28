@@ -44,7 +44,6 @@ static const char *probe_names[] = {"x1", "x10"};
 static const char *channel_names[] = {"CH1", "CH2"};
 static const char *on_off_names[] = {"OFF", "ON"};
 static const char *cursor_mode_names[] = {"OFF", "TIME", "VERTICAL"};
-static const char *font_names[] = {"PIXEL", "INTER"};
 static const char *mode_names[] = {"AUTO", "NORMAL", "SINGLE"};
 static const char *edge_names[] = {"RISING", "FALLING", "BOTH"};
 static const char *holdoff_names[] = {"OFF", "10 us", "50 us", "100 us"};
@@ -104,7 +103,6 @@ static const char *record_names[] = {"10 K", "50 K", "100 K", "500 K", "1 M"};
 static const char *processing_labels[] = {
     "CH1 FILTER", "CH2 FILTER", "COLORING", "PERSISTENCE", "FFT", "RECORD LENGTH"
 };
-static const char *display_labels[] = {"GRID", "FONT"};
 static const char *filter_names[] = {"OFF", "LOW", "MEDIUM", "HIGH"};
 static const char *startup_names[] = {"LAST", "1", "2", "3", "4", "5"};
 static const char *preset_names[] = {"PRESET 1", "PRESET 2", "PRESET 3", "PRESET 4", "PRESET 5"};
@@ -911,14 +909,13 @@ static int menu_item_count(DemoMenu kind)
     if (kind == DEMO_MENU_CH1 || kind == DEMO_MENU_CH2) return 5;
     if (kind == DEMO_MENU_TRIGGER) return 7;
     if (kind == DEMO_MENU_CURSOR) return 1;
-    if (kind == DEMO_MENU_DISPLAY) return 4;
+    if (kind == DEMO_MENU_DISPLAY) return 3;
     if (kind == DEMO_MENU_TIME) return 3;
     if (kind == DEMO_MENU_BROWSE) return DEMO_BROWSE_PAGE;
     if (kind == DEMO_MENU_PC) return 2;
     if (kind == DEMO_MENU_PROCESSING) return 6;
     if (kind == DEMO_MENU_DEBUG) return 6;
     if (kind == DEMO_MENU_GENERATOR) return 3;
-    if (kind == DEMO_MENU_FONT) return SCOPE_FONT_COUNT;
     if (kind == DEMO_MENU_SETUP) return 3;
     if (kind == DEMO_MENU_FILES) return 6;
     if (kind == DEMO_MENU_LAYOUT) return 7;
@@ -963,8 +960,7 @@ static int current_menu_value(const DemoSignal *demo)
     if (demo->menu_kind == DEMO_MENU_CURSOR)
         return demo->screen.cursor_mode;
     if (demo->menu_kind == DEMO_MENU_DISPLAY)
-        return item == 3 ? demo->screen.grid_brightness :
-               item == 1 ? demo->screen.font_index : demo->screen.grid_enabled;
+        return item == 2 ? demo->screen.grid_brightness : demo->screen.grid_enabled;
     if (demo->menu_kind == DEMO_MENU_PC) return demo->pc_baud_index;
     if (demo->menu_kind == DEMO_MENU_SETUP) return demo->startup_preset;
     if (demo->menu_kind == DEMO_MENU_RESPONSE) return demo->response_enabled[demo->response_channel];
@@ -991,7 +987,7 @@ static int menu_value_count(const DemoSignal *demo)
 {
     int item = demo->screen.menu_selected;
     if (demo->menu_kind == DEMO_MENU_DISPLAY)
-        return item == 3 ? 11 : item == 1 ? SCOPE_FONT_COUNT : 2;
+        return item == 2 ? 11 : 2;
     if (demo->menu_kind == DEMO_MENU_CH1 || demo->menu_kind == DEMO_MENU_CH2)
         return item == 0 || item == 1 || item == 2 ? 2 : item == 3 ? 6 : 1;
     if (demo->menu_kind == DEMO_MENU_TRIGGER)
@@ -1196,18 +1192,15 @@ static void refresh_menu(DemoSignal *demo)
         screen->menu_labels[SCOPE_MEASURE_HIDE_INDEX] = screen->measurement_hidden?"SHOW":"HIDE";
     } else if (demo->menu_kind == DEMO_MENU_DISPLAY) {
         screen->menu_title = "DISPLAY";
-        screen->menu_labels[0] = display_labels[0];
-        screen->menu_values[0] = screen->grid_enabled ? "ON" : "OFF";
-        set_menu_options(screen, 0, on_off_names, 2, screen->grid_enabled);
-        screen->menu_labels[1] = display_labels[1];
-        screen->menu_values[1] = font_names[screen->font_index];
-        set_menu_options(screen, 1, font_names, SCOPE_FONT_COUNT, screen->font_index);
-        screen->menu_labels[2]="LAYOUT";screen->menu_values[2]="OPEN";
-        screen->menu_labels[3]="GRID BRIGHTNESS";
+        screen->menu_labels[0]="LAYOUT";screen->menu_values[0]="OPEN";
+        screen->menu_labels[1] = "GRID";
+        screen->menu_values[1] = screen->grid_enabled ? "ON" : "OFF";
+        set_menu_options(screen, 1, on_off_names, 2, screen->grid_enabled);
+        screen->menu_labels[2]="GRID BRIGHTNESS";
         snprintf(demo->grid_brightness_text, sizeof(demo->grid_brightness_text),
                  "%u", screen->grid_brightness);
-        screen->menu_values[3]=demo->grid_brightness_text;
-        screen->menu_stepper[3]=1;
+        screen->menu_values[2]=demo->grid_brightness_text;
+        screen->menu_stepper[2]=1;
     } else if (demo->menu_kind == DEMO_MENU_TIME) {
         screen->menu_title = "TIME SETTINGS";
         for (i = 0; i < 3; ++i) screen->menu_labels[i] = time_labels[i];
@@ -1319,12 +1312,6 @@ static void refresh_menu(DemoSignal *demo)
             snprintf(demo->layout_value_text[i-2],sizeof(demo->layout_value_text[0]),"%d",screen->menu_editing && screen->menu_selected==i?demo->edit_value+(i==6?70:0):value);
             screen->menu_values[i]=demo->layout_value_text[i-2];screen->menu_stepper[i]=1;
         }
-    } else if (demo->menu_kind == DEMO_MENU_FONT) {
-        screen->menu_title = "DEBUG / FONT";
-        for (i = 0; i < SCOPE_FONT_COUNT; ++i) {
-            screen->menu_labels[i] = font_names[i];
-            screen->menu_values[i] = i == screen->font_index ? "ACTIVE" : "USE";
-        }
     }
     for(i=0;i<screen->menu_count;++i){
         screen->menu_disabled[i]=(uint8_t)menu_disabled(demo,demo->menu_kind,i);
@@ -1355,12 +1342,11 @@ static void refresh_menu(DemoSignal *demo)
                  demo->edit_value == SCOPE_CURSOR_VOLTAGE ? "VERTICAL" : "OFF") :
                 demo->edit_value ? "CH2" : "CH1";
         else if (demo->menu_kind == DEMO_MENU_DISPLAY) {
-            if (i == 3) {
+            if (i == 2) {
                 snprintf(demo->grid_brightness_text, sizeof(demo->grid_brightness_text),
                          "%d", demo->edit_value);
                 screen->menu_values[i] = demo->grid_brightness_text;
-            } else screen->menu_values[i] = i == 1 ? font_names[demo->edit_value] :
-                                                       demo->edit_value ? "ON" : "OFF";
+            } else screen->menu_values[i] = demo->edit_value ? "ON" : "OFF";
         }
         else if (demo->menu_kind == DEMO_MENU_TIME) {
             if (i == 0) {
@@ -1609,8 +1595,6 @@ static void open_menu(DemoSignal *demo, DemoMenu kind, DemoMenu parent)
         demo->measurement_menu_index = catalog_index(demo->measurement_selected);
         demo->measurement_selected = catalog_id(demo->measurement_menu_index);
     }
-    if (kind == DEMO_MENU_FONT)
-        demo->screen.menu_selected = demo->screen.font_index;
     update_text(demo, 0);
     height = SCOPE_MENU_ROW_Y - SCOPE_MENU_Y + demo->screen.menu_count * SCOPE_MENU_ROW_HEIGHT + 6;
     demo->menu_position_x = (SCOPE_WIDTH - SCOPE_MENU_WIDTH) / 2;
@@ -1752,7 +1736,9 @@ static void back_menu(DemoSignal *demo)
             demo->trigger_preview_voltage = demo->trigger_voltage;
         }
         demo->screen.menu_editing = 0;
-        demo_signal_notify(demo, "EDIT CANCELLED");
+        demo_signal_notify(demo, demo->menu_kind == DEMO_MENU_LAYOUT &&
+                           (demo->screen.menu_selected == 2 || demo->screen.menu_selected == 3) ?
+                           "POSITION SET" : "EDIT CANCELLED");
     } else if (demo->menu_parent == DEMO_MENU_BROWSE_TYPE) {
         open_menu(demo, DEMO_MENU_BROWSE_TYPE, DEMO_MENU_MAIN);
     } else if (demo->menu_parent == DEMO_MENU_DEBUG) {
@@ -1972,8 +1958,7 @@ static void apply_option(DemoSignal *demo, DemoMenu kind, int item, int value)
             demo->screen.cursor_b = value == SCOPE_CURSOR_VOLTAGE ? 305 : 720;
         }
     } else if (kind == DEMO_MENU_DISPLAY) {
-        if(item==3)demo->screen.grid_brightness = (uint8_t)value;
-        else if(item==1)demo->screen.font_index = (uint8_t)value;
+        if(item==2)demo->screen.grid_brightness = (uint8_t)value;
         else demo->screen.grid_enabled = (uint8_t)value;
     } else if(kind==DEMO_MENU_LAYOUT){
         if(item==0){if(demo->screen.measurement_hidden==value)demo_signal_ui_toggle_measurements_visible(demo);}
@@ -2044,6 +2029,22 @@ static void apply_edit(DemoSignal *demo)
     apply_option(demo,demo->menu_kind,demo->screen.menu_selected,demo->edit_value);
 }
 
+static int layout_measure_position(const DemoSignal *demo)
+{
+    return demo->menu_kind == DEMO_MENU_LAYOUT &&
+           (demo->screen.menu_selected == 2 || demo->screen.menu_selected == 3);
+}
+
+static void adjust_measure_position(DemoSignal *demo, int steps)
+{
+    int row=demo->screen.menu_selected;
+    if(menu_disabled(demo,DEMO_MENU_LAYOUT,row))return;
+    int delta=steps*(demo->screen.fine_mode?1:8);
+    demo_signal_ui_move_measurements(demo,row==2?delta:0,row==3?delta:0);
+    demo->edit_value=current_menu_value(demo);
+    update_text(demo,0);
+}
+
 int demo_signal_set_option(DemoSignal *demo, DemoMenu kind, int item, int value)
 {
     int count=0;
@@ -2054,7 +2055,7 @@ int demo_signal_set_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     else if(kind==DEMO_MENU_TIME&&item==0)count=demo->screen.zoom_enabled?demo->time_index+1:TIME_SCALE_COUNT;
     else if(kind==DEMO_MENU_PROCESSING&&item<6)count=item<2?4:item==3?3:item==5?CAPTURE_DEPTH_COUNT:2;
     else if(kind==DEMO_MENU_CURSOR&&item==0)count=3;
-    else if(kind==DEMO_MENU_DISPLAY&&item!=2)count=item==3?11:item?SCOPE_FONT_COUNT:2;
+    else if(kind==DEMO_MENU_DISPLAY&&item!=0)count=item==2?11:2;
     else if(kind==DEMO_MENU_PC&&item==0)count=PC_BAUD_COUNT;
     else if(kind==DEMO_MENU_DEBUG&&item>0&&item<4)count=item==3?2:item==1?27:29;
     else if(kind==DEMO_MENU_GENERATOR&&item<3)count=item<2?DEMO_WAVE_COUNT:
@@ -2179,6 +2180,10 @@ void demo_signal_ui_menu_adjust(DemoSignal *demo, int steps)
         return;
     }
     if (demo->screen.menu_editing) {
+        if (layout_measure_position(demo)) {
+            adjust_measure_position(demo,steps);
+            return;
+        }
         if (demo->menu_kind == DEMO_MENU_TRIGGER &&
             demo->screen.menu_selected == 6) {
             demo->edit_value = clamp(demo->edit_value - steps * 8,
@@ -2286,13 +2291,16 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
         update_text(demo, 0);
         if (measurement_docked) redock_measurements(demo);
     } else if (demo->screen.menu_editing) {
-        apply_edit(demo);
+        if (layout_measure_position(demo)) {
+            demo->screen.menu_editing=0;
+            update_text(demo,0);
+        } else apply_edit(demo);
     } else if (demo->menu_kind == DEMO_MENU_MAIN) {
         open_menu(demo, main_items[item + (demo->waveform_loaded && item>=1 ? 1 : 0)].target,
                   DEMO_MENU_MAIN);
     } else if (demo->menu_kind == DEMO_MENU_SETUP && item) {
         open_menu(demo,item==1?DEMO_MENU_PRESETS:DEMO_MENU_PC,DEMO_MENU_SETUP);
-    } else if(demo->menu_kind==DEMO_MENU_DISPLAY && item==2){
+    } else if(demo->menu_kind==DEMO_MENU_DISPLAY && item==0){
         open_menu(demo,DEMO_MENU_LAYOUT,DEMO_MENU_DISPLAY);
     } else if(demo->menu_kind==DEMO_MENU_FILES){
         static const DemoAction actions[]={DEMO_ACTION_SCREENSHOT,DEMO_ACTION_WAVEFORM,DEMO_ACTION_SCREEN_AND_WAVE,
@@ -2314,10 +2322,6 @@ DemoAction demo_signal_ui_menu_activate(DemoSignal *demo)
             update_text(demo, 0);
         }
 
-    } else if (demo->menu_kind == DEMO_MENU_FONT) {
-        demo->screen.font_index = (uint8_t)item;
-        demo_signal_notify(demo, "SETTING APPLIED");
-        update_text(demo, 0);
     } else if (demo->menu_kind == DEMO_MENU_BROWSE_TYPE) {
         demo->browse_filter = item;
         demo->browse_selected = 0;
@@ -2409,6 +2413,10 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
     }
 
     if(demo->menu_kind==DEMO_MENU_LAYOUT && index>=2){
+        if(layout_measure_position(demo)){
+            adjust_measure_position(demo,direction<0?-1:1);
+            return DEMO_ACTION_NONE;
+        }
         demo->edit_value=clamp(current_menu_value(demo)+(direction<0?-1:1),0,menu_value_count(demo)-1);
         apply_edit(demo);return DEMO_ACTION_NONE;
     }
@@ -2438,16 +2446,12 @@ DemoAction demo_signal_ui_menu_tap(DemoSignal *demo, int index, int direction)
     } else if (demo->menu_kind == DEMO_MENU_CURSOR) {
         small_choice = index == 0 || index == 1;
     } else if (demo->menu_kind == DEMO_MENU_DISPLAY) {
-        if (index == 3) {
+        if (index == 2) {
             demo->edit_value = clamp(current_menu_value(demo) + (direction < 0 ? -1 : 1), 0, 10);
             apply_edit(demo);
             return DEMO_ACTION_NONE;
         }
-        small_choice = index == 0;
-    } else if (demo->menu_kind == DEMO_MENU_FONT) {
-        demo->screen.font_index = (uint8_t)index;
-        update_text(demo, 0);
-        return DEMO_ACTION_NONE;
+        small_choice = index == 1;
     } else if (demo->menu_kind == DEMO_MENU_PROCESSING) {
         small_choice = 1;
     } else if (demo->menu_kind == DEMO_MENU_DEBUG && index > 0) {

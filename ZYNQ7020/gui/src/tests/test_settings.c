@@ -52,6 +52,14 @@ static void controls_test(void)
                 if(demo.edit_value==before)demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);
                 assert(demo.edit_value!=before);
                 demo_settings_capture(&demo,&current);
+                if(menus[kind]==DEMO_MENU_LAYOUT && (row==2 || row==3)){
+                    assert(memcmp(&original,&current,sizeof(original)));
+                    demo_signal_press(&demo,DEMO_BTN_MENU,0);
+                    DemoSettings after;
+                    demo_settings_capture(&demo,&after);
+                    assert(!demo.screen.menu_editing && !memcmp(&current,&after,sizeof(current)));
+                    continue;
+                }
                 assert(!memcmp(&original,&current,sizeof(original)));
                 demo_signal_press(&demo,DEMO_BTN_MENU,0);
                 assert(!demo.screen.menu_editing && demo.screen.menu_open);
@@ -82,6 +90,42 @@ static void controls_test(void)
         assert(demo_signal_press(&demo,DEMO_ENC_FUNCTION,0)==DEMO_ACTION_PRESET_SAVE);
         demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);
         assert(demo_signal_press(&demo,DEMO_ENC_FUNCTION,0)==DEMO_ACTION_PRESET_LOAD);
+    }
+}
+
+static void live_measure_position_test(void)
+{
+    demo_signal_init(&demo);
+    demo_signal_ui_toggle_measurement_layout(&demo);
+    demo_signal_ui_move_measurements(&demo,100,-100);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_LAYOUT);
+    for(int row=2;row<=3;++row){
+        demo_signal_ui_menu_select(&demo,row);
+        int start=row==2?demo.screen.measurement_x:demo.screen.measurement_y;
+        demo.screen.fine_mode=0;
+        demo_signal_ui_menu_activate(&demo);
+        demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,-1);
+        assert(demo.screen.menu_editing && demo.edit_value==start-8);
+        assert((row==2?demo.screen.measurement_x:demo.screen.measurement_y)==start-8);
+        demo_signal_ui_toggle_fine(&demo);
+        demo_signal_rotate(&demo,DEMO_ENC_FUNCTION,1);
+        assert(demo.edit_value==start-7);
+        assert((row==2?demo.screen.measurement_x:demo.screen.measurement_y)==start-7);
+        demo_signal_ui_menu_activate(&demo);
+        assert(!demo.screen.menu_editing);
+        demo_signal_ui_menu_tap(&demo,row,1);
+        assert((row==2?demo.screen.measurement_x:demo.screen.measurement_y)==start-6);
+        demo_signal_ui_toggle_fine(&demo);
+        demo_signal_ui_menu_tap(&demo,row,-1);
+        assert((row==2?demo.screen.measurement_x:demo.screen.measurement_y)==start-14);
+        demo_signal_ui_menu_activate(&demo);
+        demo_signal_ui_menu_adjust(&demo,-1000);
+        assert(demo.edit_value==(row==2?0:SCOPE_PLOT_Y));
+        demo_signal_ui_menu_adjust(&demo,1000);
+        assert(demo.edit_value==(row==2?demo.screen.measurement_x:demo.screen.measurement_y));
+        int end=demo.edit_value;
+        demo_signal_press(&demo,DEMO_BTN_MENU,0);
+        assert(!demo.screen.menu_editing && (row==2?demo.screen.measurement_x:demo.screen.measurement_y)==end);
     }
 }
 
@@ -151,6 +195,9 @@ static void document_test(void)
     assert(!demo_settings_apply(&restored,&roundtrip));
     roundtrip=captured;roundtrip.values[DEMO_SETTING_TRIGGER_VOLTAGE]=NAN;
     assert(!demo_settings_valid(&roundtrip));
+    roundtrip=captured;roundtrip.values[DEMO_SETTING_FONT]=SCOPE_FONT_PIXEL;
+    assert(demo_settings_apply(&restored,&roundtrip));
+    assert(restored.screen.font_index==SCOPE_FONT_INTER);
 }
 
 static void menu_encoder_test(void)
@@ -256,6 +303,6 @@ static void preserve_unreadable_settings_test(void)
 
 int main(void)
 {
-    controls_test();availability_test();menu_encoder_test();document_test();persistence_test();
+    controls_test();live_measure_position_test();availability_test();menu_encoder_test();document_test();persistence_test();
     preserve_unreadable_settings_test();return 0;
 }

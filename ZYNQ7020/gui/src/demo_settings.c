@@ -32,6 +32,8 @@ int demo_settings_apply(DemoSignal *demo, const DemoSettings *s)
 #define APPLY(name,member,type,low,high) demo->member = (type)s->values[DEMO_SETTING_##name];
     DEMO_SETTING_FIELDS(APPLY)
 #undef APPLY
+    /* Keep the legacy font field readable; the application uses Inter. */
+    demo->screen.font_index=SCOPE_FONT_INTER;
     demo->trigger_preview_voltage=demo->trigger_voltage;
     demo->screen.trigger_preview=0;
     demo->response_active=demo->baseline_active=0;demo->calibration_scale_target=-1;demo->screen.response_visible=0;
