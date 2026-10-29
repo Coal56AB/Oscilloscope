@@ -15,9 +15,9 @@
 
 ## Плата
 
-![Основная плата с экраном и модулем Zynq](https://raw.githubusercontent.com/Coal56AB/OscilPCB/5c4f6dd616d461db2b3ec94a01ae66af5781a7e2/docs/images/pcb-3d-top-assembled.png)
+![Основная плата с установленным экраном, вид спереди](https://raw.githubusercontent.com/Coal56AB/OscilPCB/5c4f6dd616d461db2b3ec94a01ae66af5781a7e2/docs/images/pcb-3d-top-assembled.png)
 
-*Два входных тракта с AD9288, модуль Zynq, STM32 и семидюймовый экран.*
+*3D-модель платы с установленным экраном, вид спереди: два BNC-входа и органы управления под экраном.*
 
 ## Состав проекта
 
@@ -26,4 +26,4 @@
 - [`TERMINAL/`](TERMINAL/README.md) — ПК-приложение для USB–UART, управления осциллографом и просмотра SD.
 - [`PCB/`](PCB/) — схемы, печатная плата и файлы изготовления.
 
-Описание интерфейса — в [README GUI](ZYNQ7020/gui/README.md), устройство платы — в [README PCB](https://github.com/Coal56AB/OscilPCB/blob/5c4f6dd616d461db2b3ec94a01ae66af5781a7e2/README.md), сборка — в [документации разработчика](docs/BUILD.md).
+Описание интерфейса — в [README GUI](ZYNQ7020/gui/README.md), устройство платы — в [README PCB](https://github.com/Coal56AB/OscilPCB/blob/eee4854651807f123bbf42ff2ac2b7066b95e3b1/README.md), сборка — в [документации разработчика](docs/BUILD.md).
