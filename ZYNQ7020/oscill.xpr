@@ -3,7 +3,7 @@
 <!--                                                         -->
 <!-- Copyright 1986-2019 Xilinx, Inc. All Rights Reserved.   -->
 
-<Project Version="7" Minor="40" Path="oscill.xpr">
+<Project Version="7" Minor="40" Path="D:/hobby/Oscill/ZYNQ7020/oscill.xpr">
   <DefaultLaunch Dir="$PRUNDIR"/>
   <Configuration>
     <Option Name="Id" Val="4f6b2f68719e4c53bb1455b86ac8ba68"/>
@@ -159,65 +159,23 @@
           <Attr Name="UsedIn" Val="implementation"/>
           <Attr Name="UsedIn" Val="simulation"/>
         </FileInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_reset_adc_0/system_reset_adc_0.xci">
-          <Proxy FileSetName="system_reset_adc_0"/>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_oled_gpio_0/system_oled_gpio_0.xci">
+          <Proxy FileSetName="system_oled_gpio_0"/>
         </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_cdc_0/system_capture_cdc_0.xci">
-          <Proxy FileSetName="system_capture_cdc_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_record_measure_0/system_record_measure_0.xci">
-          <Proxy FileSetName="system_record_measure_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_reset_pixel_0/system_reset_pixel_0.xci">
-          <Proxy FileSetName="system_reset_pixel_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_status_0/system_capture_status_0.xci">
-          <Proxy FileSetName="system_capture_status_0"/>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_reset_axi_0/system_reset_axi_0.xci">
+          <Proxy FileSetName="system_reset_axi_0"/>
         </CompFileExtendedInfo>
         <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_ps7_0/system_ps7_0.xci">
           <Proxy FileSetName="system_ps7_0"/>
         </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_decimate_0/system_capture_decimate_0.xci">
-          <Proxy FileSetName="system_capture_decimate_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_adc_clock_0/system_adc_clock_0.xci">
-          <Proxy FileSetName="system_adc_clock_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_gpio_0/system_capture_gpio_0.xci">
-          <Proxy FileSetName="system_capture_gpio_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_pixel_clock_0/system_pixel_clock_0.xci">
-          <Proxy FileSetName="system_pixel_clock_0"/>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_control_0/system_control_0.xci">
+          <Proxy FileSetName="system_control_0"/>
         </CompFileExtendedInfo>
         <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_memory_0/system_memory_0.xci">
           <Proxy FileSetName="system_memory_0"/>
         </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_adc_0/system_adc_0.xci">
-          <Proxy FileSetName="system_adc_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_memory_0/system_capture_memory_0.xci">
-          <Proxy FileSetName="system_capture_memory_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_analysis_memory_0/system_analysis_memory_0.xci">
-          <Proxy FileSetName="system_analysis_memory_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_dma_0/system_capture_dma_0.xci">
-          <Proxy FileSetName="system_capture_dma_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_timing_0/system_timing_0.xci">
-          <Proxy FileSetName="system_timing_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_tmds_0/system_tmds_0.xci">
-          <Proxy FileSetName="system_tmds_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_control_0/system_control_0.xci">
-          <Proxy FileSetName="system_control_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_dsp_0/system_capture_dsp_0.xci">
-          <Proxy FileSetName="system_capture_dsp_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_fifo_0/system_capture_fifo_0.xci">
-          <Proxy FileSetName="system_capture_fifo_0"/>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_reset_pixel_0/system_reset_pixel_0.xci">
+          <Proxy FileSetName="system_reset_pixel_0"/>
         </CompFileExtendedInfo>
         <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_frame_0/system_capture_frame_0.xci">
           <Proxy FileSetName="system_capture_frame_0"/>
@@ -225,26 +183,68 @@
         <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_width_0/system_capture_width_0.xci">
           <Proxy FileSetName="system_capture_width_0"/>
         </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_video_cdc_0/system_video_cdc_0.xci">
-          <Proxy FileSetName="system_video_cdc_0"/>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_fifo_0/system_capture_fifo_0.xci">
+          <Proxy FileSetName="system_capture_fifo_0"/>
         </CompFileExtendedInfo>
         <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_config_0/system_capture_config_0.xci">
           <Proxy FileSetName="system_capture_config_0"/>
         </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_vdma_0/system_vdma_0.xci">
-          <Proxy FileSetName="system_vdma_0"/>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_dma_0/system_capture_dma_0.xci">
+          <Proxy FileSetName="system_capture_dma_0"/>
         </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_oled_gpio_0/system_oled_gpio_0.xci">
-          <Proxy FileSetName="system_oled_gpio_0"/>
-        </CompFileExtendedInfo>
-        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_reset_axi_0/system_reset_axi_0.xci">
-          <Proxy FileSetName="system_reset_axi_0"/>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_record_measure_0/system_record_measure_0.xci">
+          <Proxy FileSetName="system_record_measure_0"/>
         </CompFileExtendedInfo>
         <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_pixels_0/system_pixels_0.xci">
           <Proxy FileSetName="system_pixels_0"/>
         </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_adc_clock_0/system_adc_clock_0.xci">
+          <Proxy FileSetName="system_adc_clock_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_status_0/system_capture_status_0.xci">
+          <Proxy FileSetName="system_capture_status_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_vdma_0/system_vdma_0.xci">
+          <Proxy FileSetName="system_vdma_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_reset_adc_0/system_reset_adc_0.xci">
+          <Proxy FileSetName="system_reset_adc_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_analysis_memory_0/system_analysis_memory_0.xci">
+          <Proxy FileSetName="system_analysis_memory_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_dsp_0/system_capture_dsp_0.xci">
+          <Proxy FileSetName="system_capture_dsp_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_cdc_0/system_capture_cdc_0.xci">
+          <Proxy FileSetName="system_capture_cdc_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_pixel_clock_0/system_pixel_clock_0.xci">
+          <Proxy FileSetName="system_pixel_clock_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_timing_0/system_timing_0.xci">
+          <Proxy FileSetName="system_timing_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_memory_0/system_capture_memory_0.xci">
+          <Proxy FileSetName="system_capture_memory_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_gpio_0/system_capture_gpio_0.xci">
+          <Proxy FileSetName="system_capture_gpio_0"/>
+        </CompFileExtendedInfo>
         <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_video_0/system_video_0.xci">
           <Proxy FileSetName="system_video_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_tmds_0/system_tmds_0.xci">
+          <Proxy FileSetName="system_tmds_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_capture_decimate_0/system_capture_decimate_0.xci">
+          <Proxy FileSetName="system_capture_decimate_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_video_cdc_0/system_video_cdc_0.xci">
+          <Proxy FileSetName="system_video_cdc_0"/>
+        </CompFileExtendedInfo>
+        <CompFileExtendedInfo CompFileName="system.bd" FileRelPathName="ip/system_adc_0/system_adc_0.xci">
+          <Proxy FileSetName="system_adc_0"/>
         </CompFileExtendedInfo>
       </File>
       <File Path="$PSRCDIR/sources_1/bd/system/hdl/system_wrapper.v">
@@ -496,7 +496,9 @@
   <Runs Version="1" Minor="10">
     <Run Id="synth_1" Type="Ft3:Synth" SrcSet="sources_1" Part="xc7z020clg400-1" ConstrsSet="constrs_1" Description="Vivado Synthesis Defaults" AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" State="current" Dir="$PRUNDIR/synth_1" IncludeInArchive="true">
       <Strategy Version="1" Minor="2">
-        <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2019"/>
+        <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2019">
+          <Desc>Vivado Synthesis Defaults</Desc>
+        </StratHandle>
         <Step Id="synth_design"/>
       </Strategy>
       <GeneratedRun Dir="$PRUNDIR" File="gen_run.xml"/>
@@ -1006,7 +1008,9 @@
     </Run>
     <Run Id="impl_1" Type="Ft2:EntireDesign" Part="xc7z020clg400-1" ConstrsSet="constrs_1" Description="Default settings for Implementation." AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" State="current" Dir="$PRUNDIR/impl_1" SynthRun="synth_1" IncludeInArchive="true" GenFullBitstream="true">
       <Strategy Version="1" Minor="2">
-        <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2019"/>
+        <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2019">
+          <Desc>Default settings for Implementation.</Desc>
+        </StratHandle>
         <Step Id="init_design"/>
         <Step Id="opt_design"/>
         <Step Id="power_opt_design"/>
@@ -1044,9 +1048,9 @@
         <ReportConfig DisplayName="IO - Place Design" Name="impl_1_place_report_io_0" Spec="report_io" RunStep="place_design" ReportFile="system_wrapper_io_placed.rpt" Version="1" Minor="0" IsDisabled="true">
           <ReportConfigOption Name="dummy_option" Type="string"/>
         </ReportConfig>
-        <ReportConfig DisplayName="Utilization - Place Design" Name="impl_1_place_report_utilization_0" Spec="report_utilization" RunStep="place_design" Version="1" Minor="0" IsDisabled="true">
+        <ReportConfig DisplayName="Utilization - Place Design" Name="impl_1_place_report_utilization_0" Spec="report_utilization" RunStep="place_design" ReportFile="system_wrapper_utilization_placed.rpt" Version="1" Minor="0">
           <ReportConfigOption Name="dummy_option" Type="string"/>
-          <ReportConfigOutputOption Name="pb" Type="string" Value=""/>
+          <ReportConfigOutputOption Name="pb" Type="string" Value="system_wrapper_utilization_placed.pb"/>
         </ReportConfig>
         <ReportConfig DisplayName="Control Sets - Place Design" Name="impl_1_place_report_control_sets_0" Spec="report_control_sets" RunStep="place_design" ReportFile="system_wrapper_control_sets_placed.rpt" Version="1" Minor="0" IsDisabled="true">
           <ReportConfigOption Name="verbose" Type="" Value="true"/>
