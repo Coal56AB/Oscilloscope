@@ -11,27 +11,40 @@ if {![regexp {^xc7z020clg400-[123]$} $part]} { error "Expected XC7Z020 CLG400 pa
 if {[get_property PART [current_project]] ne $part} {
     set_property PART $part [current_project]
 }
-set_param general.maxThreads 8
+set_param general.maxThreads 4
 update_ip_catalog
+set bd [get_files system.bd]
+open_bd_design $bd
+# A fresh checkout keeps the BD source, not generated XCI files. Register its
+# IP instances before looking up the HLS core to refresh it.
+generate_target all $bd
 set measure [get_ips -all -filter {IPDEF == "xilinx.com:hls:record_measure:1.0"}]
 if {[llength $measure] != 1} { error "Expected one record_measure IP" }
 upgrade_ip $measure
-set bd [get_files system.bd]
-open_bd_design $bd
 validate_bd_design
 save_bd_design
 generate_target all $bd
 make_wrapper -files $bd -top
 update_compile_order -fileset sources_1
 # Resource and timing reports are requested interactively, not written by builds.
-foreach report [get_report_configs] { set_property IS_ENABLED false $report }
+foreach report [get_report_configs] {
+    # Vivado adds its built-in synthesis log after the first launch. It has no
+    # report command and disabling it makes the 2019.1 project writer fail.
+    if {[regexp {_(synthesis_report|implementation_log|report_webtalk)_} $report]} { continue }
+    if {[get_property IS_ENABLED $report]} { set_property IS_ENABLED false $report }
+}
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+foreach ip_run [get_runs -filter {IS_SYNTHESIS == 1}] {
+    if {$ip_run ne "synth_1" && ![string match {*Complete*} [get_property STATUS $ip_run]]} {
+        reset_run $ip_run
+    }
+}
 reset_run synth_1
-launch_runs synth_1 -jobs 8
+launch_runs synth_1 -jobs 2
 wait_on_run synth_1
 if {[get_property STATUS [get_runs synth_1]] ne "synth_design Complete!"} { error "Synthesis failed" }
-launch_runs impl_1 -to_step write_bitstream -jobs 8
+launch_runs impl_1 -to_step write_bitstream -jobs 2
 wait_on_run impl_1
 if {[get_property STATUS [get_runs impl_1]] ne "write_bitstream Complete!"} { error "Implementation failed" }
 open_run impl_1

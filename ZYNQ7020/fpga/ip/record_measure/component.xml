@@ -3543,8 +3543,8 @@
       </xilinx:taxonomies>
       <xilinx:displayName>Record_measure</xilinx:displayName>
       <xilinx:definitionSource>HLS</xilinx:definitionSource>
-      <xilinx:coreRevision>462787355</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-10-27T07:03:51Z</xilinx:coreCreationDateTime>
+      <xilinx:coreRevision>462817608</xilinx:coreRevision>
+      <xilinx:coreCreationDateTime>2026-10-30T10:00:12Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2019.1</xilinx:xilinxVersion>
