@@ -8,7 +8,7 @@
 size_t settings_document_encode(const SettingsDocument *d,char *data,size_t capacity)
 {
     size_t used;unsigned slot,i;int n;
-    n=snprintf(data,capacity,"OSCILL_SETUP 6 %u\n%d %u\n",(unsigned)DEMO_SETTINGS_COUNT,d->startup,d->valid);
+    n=snprintf(data,capacity,"OSCILL_SETUP 7 %u\n%d %u\n",(unsigned)DEMO_SETTINGS_COUNT,d->startup,d->valid);
     if(n<0 || (size_t)n>=capacity)return 0;used=(size_t)n;
     for(slot=0;slot<6;++slot){
         const DemoSettings *s=slot?&d->preset[slot-1]:&d->last;
@@ -42,7 +42,8 @@ int settings_document_decode(SettingsDocument *d,const char *data)
     char *end;double number;
     if(sscanf(data,"OSCILL_SETUP %u %u%n",&version,&count,&consumed)!=2 ||
        !((version==1 && count==65) || ((version>=2 && version<=5) && count==DEMO_SETTING_GRID_BRIGHTNESS) ||
-         (version==6 && count==DEMO_SETTINGS_COUNT)))return 0;
+         (version==6 && count==DEMO_SETTING_XY_MODE) ||
+         (version==7 && count==DEMO_SETTINGS_COUNT)))return 0;
     data+=consumed;
     number=strtod(data,&end);if(end==data || !isfinite(number) || number!=floor(number) || number<0 || number>5)return 0;
     candidate.startup=(int)number;data=end;

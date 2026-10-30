@@ -152,6 +152,7 @@ static int process_frame(CapturePipeline *p, const CaptureBuffer *raw,
     if(request->roll && view.display_samples<=b->bytes/2)
         view.display_first=fmax(0,fmin(view.display_first,b->bytes/2-view.display_samples));
     view.skip_spectrum = !request->spectrum_enabled;
+    view.xy_enabled = request->xy_enabled;
     view.calibration_mask=request->calibration_mask;
     view.baseline_mask=request->baseline_mask;
     if(!request->baseline_mask && !request->calibration_mask)for(unsigned ch=0;ch<2;++ch)
@@ -891,6 +892,7 @@ void capture_pipeline_request(CapturePipeline *p, const CaptureRequest *r)
         memcmp(p->request.baseline,r->baseline,sizeof(r->baseline)) ||
         memcmp(p->request.range_stage,r->range_stage,sizeof(r->range_stage)) ||
         p->request.spectrum_enabled != r->spectrum_enabled ||
+        p->request.xy_enabled != r->xy_enabled ||
         p->request.density_enabled != r->density_enabled ||
         p->request.density_rows != r->density_rows ||
         p->request.hidden_channel_mask != r->hidden_channel_mask ||

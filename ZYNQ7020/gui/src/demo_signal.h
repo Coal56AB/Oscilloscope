@@ -29,6 +29,10 @@ typedef enum {
     DEMO_MENU_FILES, DEMO_MENU_LAYOUT, DEMO_MENU_CALIBRATION, DEMO_MENU_ZERO, DEMO_MENU_NOISE
 } DemoMenu;
 
+enum { DEMO_DISPLAY_MODE, DEMO_DISPLAY_LAYOUT, DEMO_DISPLAY_GRID, DEMO_DISPLAY_BRIGHTNESS };
+enum { DEMO_CHANNEL_FILTER=4, DEMO_CHANNEL_CALIBRATE };
+enum { DEMO_PROCESS_COLORING, DEMO_PROCESS_PERSISTENCE, DEMO_PROCESS_FFT, DEMO_PROCESS_RECORD };
+
 typedef enum {
     DEMO_WAVE_SQUARE=SIGNAL_WAVE_SQUARE, DEMO_WAVE_SINE=SIGNAL_WAVE_SINE,
     DEMO_WAVE_TRIANGLE=SIGNAL_WAVE_TRIANGLE, DEMO_WAVE_SAW=SIGNAL_WAVE_SAW,
@@ -74,6 +78,7 @@ typedef struct {
     int16_t ch1[SCOPE_PLOT_WIDTH];
     int16_t ch2[SCOPE_PLOT_WIDTH];
     int16_t saved_ch1[SCOPE_PLOT_WIDTH];
+    int16_t xy[2][WAVEFORM_XY_POINTS];
     int16_t saved_ch2[SCOPE_PLOT_WIDTH];
     int16_t minimum[2][SCOPE_PLOT_WIDTH];
     int16_t maximum[2][SCOPE_PLOT_WIDTH];
@@ -150,6 +155,7 @@ typedef struct {
     unsigned preset_valid;
     ChannelResponse response[4]; /* Real CH1/CH2, then independent simulation curves. */
     ChannelBaseline baseline[4][INPUT_RANGE_STAGE_COUNT];
+    int baseline_disabled[4]; /* ZERO/NOISE application mask; measured data stays intact. */
     ChannelBaseline baseline_work[INPUT_RANGE_STAGE_COUNT];
     int baseline_active,baseline_frames;
     int baseline_stage,baseline_original_scale,calibration_scale_target,calibration_scale_channel;
@@ -203,6 +209,7 @@ void demo_signal_response_observe(DemoSignal *demo,uint64_t sequence,double freq
 void demo_signal_baseline_observe(DemoSignal *demo,uint64_t sequence,size_t samples,double mean,double rms,double gain);
 ChannelBaseline *demo_signal_baseline(DemoSignal *demo,unsigned channel);
 void demo_signal_baseline_cancel(DemoSignal *demo);
+ChannelBaseline demo_signal_applied_baseline(const DemoSignal *demo,unsigned channel,unsigned stage);
 double demo_signal_adc_gain(const DemoSignal *demo,unsigned channel);
 ChannelResponse *demo_signal_response_curve(DemoSignal *demo,unsigned channel);
 int demo_signal_response_enable(DemoSignal *demo,unsigned channel,int enabled);

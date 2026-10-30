@@ -132,7 +132,7 @@ static void live_measure_position_test(void)
 static void availability_test(void)
 {
     demo_signal_init(&demo);
-    demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);demo_signal_ui_menu_select(&demo,4);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);demo_signal_ui_menu_select(&demo,DEMO_CHANNEL_CALIBRATE);
     demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);assert(demo.menu_kind==DEMO_MENU_CALIBRATION);
     demo_signal_ui_menu_select(&demo,2);demo_signal_press(&demo,DEMO_ENC_FUNCTION,0);
     assert(demo.menu_kind==DEMO_MENU_RESPONSE);
@@ -229,7 +229,7 @@ static void menu_encoder_test(void)
     assert(demo.screen.menu_editing);demo_signal_rotate(&demo,DEMO_ENC_CH1,1);
     assert(demo.scale_index[0]==scale);demo_signal_press(&demo,DEMO_ENC_CH1,0);
     assert(!demo.screen.menu_editing && demo.scale_index[0]!=scale);
-    demo_signal_ui_menu_select(&demo,4);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    demo_signal_ui_menu_select(&demo,DEMO_CHANNEL_CALIBRATE);demo_signal_press(&demo,DEMO_ENC_CH1,0);
     assert(demo.menu_kind==DEMO_MENU_CALIBRATION && demo_signal_menu_encoder(&demo,DEMO_ENC_CH1));
     assert(!demo_signal_menu_encoder(&demo,DEMO_ENC_CH2));
     demo_signal_press(&demo,DEMO_ENC_CH1,1);assert(demo.menu_kind==DEMO_MENU_CH1);
@@ -285,7 +285,7 @@ static void preserve_unreadable_settings_test(void)
     for(unsigned variant=0;variant<4;++variant){
         size_t bytes=variant==0?0:variant==1?size/2:variant==2?size:sizeof(data);
         FILE *file;
-        if(variant==2)data[strlen("OSCILL_SETUP ")]='7';
+        if(variant==2)data[strlen("OSCILL_SETUP ")]='9';
         if(variant==3)memset(data,'x',sizeof(data));
         file=fopen(path,"wb");assert(file);
         assert(fwrite(data,1,bytes,file)==bytes);assert(!fclose(file));

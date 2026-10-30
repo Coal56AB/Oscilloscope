@@ -40,7 +40,11 @@
  X(MENU_X,menu_position_x,int,0,1024) X(MENU_Y,menu_position_y,int,0,600) \
  X(BAUD,pc_baud_index,int,0,9) X(RUN,screen.running,uint8_t,0,1) \
  X(RESPONSE1,response_enabled[0],int,0,1) X(RESPONSE2,response_enabled[1],int,0,1) \
- X(GRID_BRIGHTNESS,screen.grid_brightness,uint8_t,0,10)
+ X(GRID_BRIGHTNESS,screen.grid_brightness,uint8_t,0,10) \
+ X(XY_MODE,screen.xy_mode,uint8_t,0,1) \
+ X(XY_X,screen.xy_position[0],int,-480,480) X(XY_Y,screen.xy_position[1],int,-220,220) \
+ X(CAL_DISABLED_0,baseline_disabled[0],int,0,3) X(CAL_DISABLED_1,baseline_disabled[1],int,0,3) \
+ X(CAL_DISABLED_2,baseline_disabled[2],int,0,3) X(CAL_DISABLED_3,baseline_disabled[3],int,0,3)
 
 enum {
 #define SETTING_ID(name,member,type,low,high) DEMO_SETTING_##name,

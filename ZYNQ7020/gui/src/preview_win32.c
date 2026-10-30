@@ -617,6 +617,7 @@ static TouchZone touch_zone_at(int x, int y, int *row)
                         demo.screen.measurement_horizontal ? 95 : 69) ?
                        TOUCH_MEASURE_LAYOUT : TOUCH_MEASURE_DRAG;
         }
+        if(demo.screen.xy_mode)return TOUCH_PLOT_CH1;
         if ((demo.screen.zoom_enabled || demo.screen.fft_enabled) &&
             abs(y - (SCOPE_PLOT_Y + demo.screen.split_height)) <= 15)
             return TOUCH_SPLIT;
@@ -898,6 +899,12 @@ static void touch_move(int x, int y)
             invalidate_windows();
             return;
         case TOUCH_PLOT_CH1: case TOUCH_PLOT_CH2:
+            if(demo.screen.xy_mode){
+                int dx=fine_touch_delta(x-touch.last_x,&touch.fine_x_remainder);
+                int dy=fine_touch_delta(y-touch.last_y,&touch.fine_y_remainder);
+                demo_signal_move_channel(&demo,0,dx);demo_signal_move_channel(&demo,1,dy);
+                touch.last_x=x;touch.last_y=y;invalidate_windows();return;
+            }
             if (!touch.axis) {
                 int dx = abs(x - touch.x), dy = abs(y - touch.y);
                 if (dx + dy < 7) return;

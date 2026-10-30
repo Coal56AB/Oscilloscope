@@ -166,7 +166,7 @@ static void test_baseline_uses_raw_statistics(void)
     static DisplayFrame f;
     demo_signal_init(&demo);demo_signal_begin_external(&demo);
     demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);
-    demo_signal_ui_menu_select(&demo,4);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    demo_signal_ui_menu_select(&demo,DEMO_CHANNEL_CALIBRATE);demo_signal_press(&demo,DEMO_ENC_CH1,0);
     demo_signal_ui_menu_select(&demo,1);demo_signal_press(&demo,DEMO_ENC_CH1,0);
     demo_signal_press(&demo,DEMO_ENC_CH1,0);
     assert(demo.baseline_active==CHANNEL_NOISE_VALID);
@@ -198,8 +198,8 @@ static void test_external_trigger_marker(void)
     assert(demo.screen.trigger_marker_x==400&&demo.screen.zoom_window_start==200&&demo.screen.zoom_window_end==700);
     demo.fft_enabled=0;capture_request_from_demo(&demo,&r);assert(!r.spectrum_enabled);
     demo.fft_enabled=1;capture_request_from_demo(&demo,&r);assert(r.spectrum_enabled);
-    assert(demo_signal_set_option(&demo,DEMO_MENU_PROCESSING,0,2));
-    assert(demo_signal_set_option(&demo,DEMO_MENU_PROCESSING,1,3));
+    assert(demo_signal_set_option(&demo,DEMO_MENU_CH1,DEMO_CHANNEL_FILTER,2));
+    assert(demo_signal_set_option(&demo,DEMO_MENU_CH2,DEMO_CHANNEL_FILTER,3));
     capture_request_from_demo(&demo,&r);
     assert(r.filter_level[0]==2 && r.filter_level[1]==3);
     demo.persistence_index=2;
@@ -431,7 +431,7 @@ static void test_fft_fine_touch(void)
         int x=300,y,initial,delta,coarse;
         demo_signal_init(&demo);
         demo_signal_ui_open_menu(&demo,DEMO_MENU_PROCESSING);
-        demo_signal_ui_menu_choose(&demo,4,1);
+        demo_signal_ui_menu_choose(&demo,DEMO_PROCESS_FFT,1);
         demo_signal_ui_dismiss_menu(&demo);
         demo_signal_ui_cycle_cursor_mode(&demo);
         y=scope_screen_spectrum_top(&demo.screen)+85;
@@ -455,6 +455,30 @@ static void test_fft_fine_touch(void)
         assert((mode==SCOPE_CURSOR_TIME?demo.screen.fft_cursor_x:demo.screen.fft_cursor_level)==initial);
         lcd_touch_end(y+3);
     }
+}
+
+static void test_xy_touch(void)
+{
+    demo_signal_init(&demo);demo.screen.measurement_hidden=1;
+    assert(remote_set("xy_mode",1));
+    lcd_touch_begin(500,280);assert(touch.zone==TOUCH_PLOT_CH1);
+    touch_move(540,300);lcd_touch_end(300);
+    assert(demo.screen.xy_position[0]==40 && demo.screen.xy_position[1]==20);
+    int yt=demo.channel_position[0];assert(remote_set("ch1_position",60));
+    assert(demo.screen.xy_position[0]==60 && demo.channel_position[0]==yt);
+    assert(remote_set("ch1_filter",3) && demo.filter_level[0]==3 && !demo.intensity_coloring);
+    assert(!remote_set("fft",1));assert(remote_set("xy_mode",0));
+    assert(!demo.screen.xy_mode && demo.channel_position[0]==yt);
+    ChannelBaseline baseline={3,.1,.02,.02,.02};
+    demo.baseline[2][input_range_stage((unsigned)demo.scale_index[0])]=baseline;
+    FILE *reply=tmpfile();assert(reply);
+    assert(remote_command("calibrate 1 reset_zero",reply,NULL));
+    assert(remote_command("calibrate 1 reset_zero",reply,NULL));
+    assert(demo.baseline_disabled[2]==CHANNEL_ZERO_VALID);
+    assert(remote_set("ch1_zero_apply",1) && !demo.baseline_disabled[2]);
+    assert(remote_set("ch1_noise_apply",0) && demo.baseline_disabled[2]==CHANNEL_NOISE_VALID);
+    assert(!memcmp(&baseline,&demo.baseline[2][input_range_stage((unsigned)demo.scale_index[0])],sizeof(baseline)));
+    fclose(reply);
 }
 
 static void test_remote_commands(void)
@@ -535,6 +559,7 @@ int main(void)
     assert(!capture_waiting(&pending,1000000000,0,1));
     assert(!capture_waiting(&pending,1000000000,1,0));
     test_restored_settings();
+    test_xy_touch();
     test_response_capture();
     test_delayed_panel_release();
     test_panel_battery();

@@ -46,11 +46,12 @@ static int split_height(const ScopeScreen *screen)
 
 int scope_screen_waveform_top(const ScopeScreen *screen)
 {
-    return PLOT_Y+(screen->zoom_enabled?split_height(screen):0);
+    return PLOT_Y+(!screen->xy_mode && screen->zoom_enabled?split_height(screen):0);
 }
 
 int scope_screen_waveform_height(const ScopeScreen *screen)
 {
+    if(screen->xy_mode)return SCOPE_PLOT_HEIGHT;
     if(screen->zoom_enabled)return SCOPE_PLOT_HEIGHT-split_height(screen);
     return screen->fft_enabled?split_height(screen)-9:SCOPE_PLOT_HEIGHT;
 }
@@ -518,6 +519,7 @@ static void bottom_value(int x, const char *value, uint32_t color)
 
 static void cursor_card_value(int x, const ScopeScreen *screen, uint32_t muted)
 {
+    if(screen->xy_mode){bottom_value(x,"--",muted);return;}
     uint32_t color = RGB(182, 150, 241);
     bottom_value(x,
                  screen->cursor_mode == SCOPE_CURSOR_TIME ? "TIME" :
@@ -998,8 +1000,40 @@ static void fft_cursor(const ScopeScreen *screen)
     }
 }
 
+static void xy_plot(const ScopeScreen *screen)
+{
+    const uint32_t color=RGB(112,223,163);
+    if(screen->ch1_enabled && screen->ch2_enabled && screen->xy_samples[0] && screen->xy_samples[1]){
+        unsigned count=screen->xy_count>WAVEFORM_XY_POINTS?WAVEFORM_XY_POINTS:screen->xy_count;
+        double ratio=(SCOPE_PLOT_WIDTH/10.0)/(SCOPE_PLOT_HEIGHT/8.0);
+        for(unsigned i=0;i<count;++i){
+            int a=screen->xy_samples[0][i],b=screen->xy_samples[1][i];
+            if(a==WAVEFORM_NO_SAMPLE || b==WAVEFORM_NO_SAMPLE)continue;
+            int x=(int)lround(SCOPE_PLOT_WIDTH/2.0+screen->xy_position[0]+(screen->channel_zero_y[0]-a)*ratio);
+            int y=SCOPE_PLOT_HEIGHT/2+screen->xy_position[1]+b-screen->channel_zero_y[1];
+            /* Do not clamp offscreen samples into false rails or connect
+               points separated by decimation or missing data. */
+            if(x>0 && x<SCOPE_PLOT_WIDTH-1 && y>0 && y<SCOPE_PLOT_HEIGHT-1)
+                fill(PLOT_X+x,PLOT_Y+y,2,2,color);
+        }
+    }
+    text(PLOT_X+12,PLOT_Y+12,"XY",2,color);
+    text(PLOT_X+60,PLOT_Y+12,"X: CH1",2,RGB(255,196,77));
+    text(PLOT_X+180,PLOT_Y+12,"Y: CH2",2,RGB(82,210,235));
+    if(!screen->ch1_enabled || !screen->ch2_enabled)
+        text(PLOT_X+300,PLOT_Y+12,"ENABLE CH1 AND CH2",2,RGB(229,240,242));
+}
+
 void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen)
 {
+    ScopeScreen xy_screen;
+    if(screen && screen->xy_mode){
+        xy_screen=*screen;
+        xy_screen.zoom_enabled=xy_screen.fft_enabled=0;
+        xy_screen.cursor_mode=SCOPE_CURSOR_OFF;
+        xy_screen.cursor_measurement_count=xy_screen.cursor_measurement_rows=0;
+        screen=&xy_screen;
+    }
     const uint32_t yellow = RGB(255, 196, 77);
     const uint32_t cyan = RGB(82, 210, 235);
     const uint32_t green = RGB(112, 223, 163);
@@ -1152,6 +1186,11 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
         }
     }
 
+    if(screen->xy_mode){
+        xy_plot(screen);
+        if(screen->plot_only)return;
+        goto plot_ready;
+    }
     if (!screen->rolling) {
         int marker = screen->trigger_marker_x;
         int row;
@@ -1184,6 +1223,10 @@ void scope_screen_render(uint32_t *pixels, int stride, const ScopeScreen *screen
     }
     if(screen->plot_only)return;
 plot_ready:
+    if(screen->xy_mode){
+        frame_rect(PLOT_X,PLOT_Y,SCOPE_PLOT_WIDTH,SCOPE_PLOT_HEIGHT,RGB(86,89,118));
+        goto measurements_ready;
+    }
     ty = screen->trigger_y;
     if (ty < 8) ty = 8;
     if (ty > SCOPE_PLOT_HEIGHT - 9) ty = SCOPE_PLOT_HEIGHT - 9;
@@ -1250,6 +1293,7 @@ plot_ready:
         if (py > SCOPE_PLOT_HEIGHT - 9) py = SCOPE_PLOT_HEIGHT - 9;
         trigger_level_handle(view_y(py), 1, trigger_color);
     }
+measurements_ready:
     active_rounding = SCOPE_WINDOW_RADIUS;
     if (!screen->measurement_hidden) {
         int count = screen->measurement_count;
@@ -1376,7 +1420,7 @@ bottom_cards:
         if (screen->ch1_enabled) text(377, 543, screen->ch1_input, 2, white);
         bottom_value(318, screen->ch1_enabled ? screen->ch1_scale : "OFF",
                      screen->ch1_enabled ? yellow : muted);
-        mode_icon(430, screen->ch_position_mode[0], 0,
+        mode_icon(430, screen->ch_position_mode[0], screen->xy_mode,
                   screen->ch1_enabled ? yellow : muted);
         label_chip(484, 54, "CH2", screen->ch2_enabled ? cyan : RGB(79, 85, 96));
         if (screen->ch2_enabled) text(555, 543, screen->ch2_input, 2, white);
@@ -1415,7 +1459,7 @@ bottom_cards:
         if (screen->ch1_enabled) text(77, 543, screen->ch1_input, 2, white);
         bottom_value(18, screen->ch1_enabled ? screen->ch1_scale : "OFF",
                      screen->ch1_enabled ? yellow : muted);
-        mode_icon(152, screen->ch_position_mode[0], 0,
+        mode_icon(152, screen->ch_position_mode[0], screen->xy_mode,
                   screen->ch1_enabled ? yellow : muted);
         label_chip(206, 54, "CH2", screen->ch2_enabled ? cyan : RGB(79, 85, 96));
         if (screen->ch2_enabled) text(277, 543, screen->ch2_input, 2, white);

@@ -569,6 +569,7 @@ static TouchZone touch_zone_at(int x, int y, int *row)
         if(x>=mx&&x<mx+mw&&y>=my&&y<my+mh)
             return y<my+30&&x>=mx+mw-(!demo.screen.measurement_hidden&&demo.screen.measurement_count>0&&
                    demo.screen.measurement_horizontal?95:69)?TOUCH_MEASURE_LAYOUT:TOUCH_MEASURE_DRAG;
+        if(demo.screen.xy_mode)return TOUCH_PLOT_CH1;
         if((demo.screen.zoom_enabled||demo.screen.fft_enabled)&&
            abs(y-(SCOPE_PLOT_Y+demo.screen.split_height))<=15)return TOUCH_SPLIT;
         if(demo.screen.zoom_enabled&&y<SCOPE_PLOT_Y+demo.screen.split_height-26)return TOUCH_ZOOM_OVERVIEW;
@@ -736,6 +737,12 @@ static void touch_move(int x, int y)
             else demo_signal_ui_set_split_height(&demo,y-SCOPE_PLOT_Y);
             touch.last_y=y;invalidate();return;
         case TOUCH_PLOT_CH1: case TOUCH_PLOT_CH2:
+            if(demo.screen.xy_mode){
+                int dx=fine_touch_delta(x-touch.last_x,&touch.fine_x_remainder);
+                int dy=fine_touch_delta(y-touch.last_y,&touch.fine_y_remainder);
+                demo_signal_move_channel(&demo,0,dx);demo_signal_move_channel(&demo,1,dy);
+                touch.last_x=x;touch.last_y=y;invalidate();return;
+            }
             if(!touch.axis){int dx=abs(x-touch.x),dy=abs(y-touch.y);if(dx+dy<7)return;touch.axis=dy>=dx?1:2;}
             if(touch.axis==1){int d=fine_touch_delta(touch_plot_y(y)-touch_plot_y(touch.last_y),&touch.fine_y_remainder);
                 if(d)demo_signal_move_channel(&demo,touch.zone==TOUCH_PLOT_CH2,d);}else pan_time_by_touch(x-touch.last_x);
@@ -1015,7 +1022,8 @@ static void remote_state(FILE *response)
     fprintf(response,"\"capture_probe_blocks\":%llu,",(unsigned long long)capture.probe_blocks);
     fprintf(response,"\"capture_dsp_blocks\":%llu,\"capture_dsp_missed\":%llu,",
         (unsigned long long)capture.dsp_blocks,(unsigned long long)capture.dsp_missed);
-    fprintf(response,"\"record_depth_index\":%d,\"sample_rate_hz\":%.9g,",demo.record_depth_index,demo.acquisition_rate_hz);
+    fprintf(response,"\"record_depth_index\":%d,\"sample_rate_hz\":%.9g,\"xy_mode\":%d,\"xy_points\":%u,\"xy_x\":%d,\"xy_y\":%d,",
+        demo.record_depth_index,demo.acquisition_rate_hz,demo.screen.xy_mode,demo.screen.xy_count,demo.screen.xy_position[0],demo.screen.xy_position[1]);
     fprintf(response,"\"measurement_hidden\":%d,\"measurement_x\":%d,\"measurement_y\":%d,\"measurement_width\":%d,\"measurement_height\":%d,",
         demo.screen.measurement_hidden,mx,my,mw,mh);
     fprintf(response,"\"panel_scale_valid\":%u,\"ch1_panel_scale_mv\":%d,\"ch2_panel_scale_mv\":%d,",
@@ -1028,6 +1036,8 @@ static void remote_state(FILE *response)
             if(demo.baseline[bank][stage].valid&CHANNEL_NOISE_VALID)noise_ranges|=1U<<stage;
         }
         fprintf(response,"\"ch%d_zero_ranges\":%u,\"ch%d_noise_ranges\":%u,",channel+1,zero_ranges,channel+1,noise_ranges);
+        fprintf(response,"\"ch%d_zero_apply\":%d,\"ch%d_noise_apply\":%d,",channel+1,
+            !(demo.baseline_disabled[bank]&CHANNEL_ZERO_VALID),channel+1,!(demo.baseline_disabled[bank]&CHANNEL_NOISE_VALID));
         fprintf(response,"\"ch%d_zero_known\":%d,\"ch%d_noise_known\":%d,\"ch%d_zero\":%.9g,\"ch%d_noise_rms\":%.9g,",
             channel+1,!!(b->valid&CHANNEL_ZERO_VALID),channel+1,!!(b->valid&CHANNEL_NOISE_VALID),channel+1,b->zero,channel+1,b->noise_rms);}
     fprintf(response,"\"startup_preset\":%d,\"preset_valid\":%u,",demo.startup_preset,demo.preset_valid);
@@ -1058,13 +1068,14 @@ static int remote_set(const char *key,double number)
         {"ch1_coupling",DEMO_MENU_CH1,1},{"ch2_coupling",DEMO_MENU_CH2,1},
         {"ch1_probe_ten",DEMO_MENU_CH1,2},{"ch2_probe_ten",DEMO_MENU_CH2,2},
         {"ch1_scale_index",DEMO_MENU_CH1,3},{"ch2_scale_index",DEMO_MENU_CH2,3},
-        {"ch1_filter",DEMO_MENU_PROCESSING,0},{"ch2_filter",DEMO_MENU_PROCESSING,1},
-        {"record_depth_index",DEMO_MENU_PROCESSING,5},{"time_index",DEMO_MENU_TIME,0},{"trigger_mode",DEMO_MENU_TRIGGER,0},
+        {"ch1_filter",DEMO_MENU_CH1,DEMO_CHANNEL_FILTER},{"ch2_filter",DEMO_MENU_CH2,DEMO_CHANNEL_FILTER},
+        {"record_depth_index",DEMO_MENU_PROCESSING,DEMO_PROCESS_RECORD},{"time_index",DEMO_MENU_TIME,0},{"trigger_mode",DEMO_MENU_TRIGGER,0},
         {"startup_preset",DEMO_MENU_SETUP,0},
+        {"xy_mode",DEMO_MENU_DISPLAY,DEMO_DISPLAY_MODE},
         {"generator_frequency_index",DEMO_MENU_GENERATOR,2},{"ch1_wave",DEMO_MENU_GENERATOR,0},
         {"ch2_wave",DEMO_MENU_GENERATOR,1},{"simulation",DEMO_MENU_DEBUG,3},
-        {"fft",DEMO_MENU_PROCESSING,4},{"persistence",DEMO_MENU_PROCESSING,3},
-        {"intensity_coloring",DEMO_MENU_PROCESSING,2},
+        {"fft",DEMO_MENU_PROCESSING,DEMO_PROCESS_FFT},{"persistence",DEMO_MENU_PROCESSING,DEMO_PROCESS_PERSISTENCE},
+        {"intensity_coloring",DEMO_MENU_PROCESSING,DEMO_PROCESS_COLORING},
         {"trigger_source",DEMO_MENU_TRIGGER,1},{"trigger_edge",DEMO_MENU_TRIGGER,2},
         {"trigger_holdoff",DEMO_MENU_TRIGGER,3}
     };
@@ -1075,7 +1086,15 @@ static int remote_set(const char *key,double number)
     for(i=0;i<sizeof(options)/sizeof(options[0]);++i)if(!strcmp(key,options[i].key))
         return demo_signal_set_option(&demo,options[i].kind,options[i].item,value);
     if((!strcmp(key,"ch1_position")||!strcmp(key,"ch2_position"))&&value>=-180&&value<=180){
-        int channel=key[2]=='2';demo_signal_move_channel(&demo,channel,value-demo.channel_position[channel]);return 1;}
+        int channel=key[2]=='2';demo_signal_move_channel(&demo,channel,
+            value-(demo.screen.xy_mode?demo.screen.xy_position[channel]:demo.channel_position[channel]));return 1;}
+    if((!strcmp(key,"ch1_zero_apply") || !strcmp(key,"ch2_zero_apply") ||
+        !strcmp(key,"ch1_noise_apply") || !strcmp(key,"ch2_noise_apply")) && value>=0 && value<=1){
+        int channel=key[2]=='2',noise=strstr(key,"noise")!=NULL;
+        int previous=demo.response_channel;demo.response_channel=channel;
+        int ok=demo_signal_set_option(&demo,noise?DEMO_MENU_NOISE:DEMO_MENU_ZERO,1,value);
+        demo.response_channel=previous;demo_signal_refresh(&demo);return ok;
+    }
     if(!strcmp(key,"time_position")&&value>=-420&&value<=420&&!demo.screen.zoom_enabled){
         demo_signal_ui_pan_time(&demo,demo.time_position-value);return 1;}
     if((!strcmp(key,"ch1_response")||!strcmp(key,"ch2_response")) && value>=0 && value<=1){
@@ -1109,13 +1128,17 @@ static int remote_command(const char *command, FILE *response, void *context)
     if(sscanf(command,"calibrate %u %31s%n",&channel,operation,&n)==2 && command[n]=='\0' && channel>=1 && channel<=2){
         if(!strcmp(operation,"start") || !strcmp(operation,"show") || !strcmp(operation,"zero") || !strcmp(operation,"noise") || !strcmp(operation,"reset_zero") || !strcmp(operation,"reset_noise") || !strcmp(operation,"menu")){
             demo_signal_ui_open_menu(&demo,channel==1?DEMO_MENU_CH1:DEMO_MENU_CH2);
-            demo_signal_ui_menu_select(&demo,4);act(demo_signal_ui_menu_activate(&demo));
+            demo_signal_ui_menu_select(&demo,DEMO_CHANNEL_CALIBRATE);act(demo_signal_ui_menu_activate(&demo));
             if(demo.menu_kind!=DEMO_MENU_CALIBRATION)return 0;
             if(strcmp(operation,"menu")){
                 int zero=!strcmp(operation,"zero") || !strcmp(operation,"reset_zero");
                 int noise=!strcmp(operation,"noise") || !strcmp(operation,"reset_noise");
                 demo_signal_ui_menu_select(&demo,zero?0:noise?1:2);act(demo_signal_ui_menu_activate(&demo));
-                if(zero || noise){demo_signal_ui_menu_select(&demo,!strncmp(operation,"reset_",6)?1:0);act(demo_signal_ui_menu_activate(&demo));}
+                if(zero || noise){
+                    if(!strncmp(operation,"reset_",6))
+                        demo_signal_set_option(&demo,zero?DEMO_MENU_ZERO:DEMO_MENU_NOISE,1,0);
+                    else {demo_signal_ui_menu_select(&demo,0);act(demo_signal_ui_menu_activate(&demo));}
+                }
                 else if(!strcmp(operation,"start"))act(demo_signal_ui_menu_activate(&demo));
                 else demo_signal_ui_dismiss_menu(&demo);
             }

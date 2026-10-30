@@ -16,17 +16,18 @@ static DisplayFrame frame;
 static void legacy_settings(char *data, unsigned version)
 {
     char legacy[SETTINGS_STORE_BYTES], *end;
+    unsigned fields=version==6?DEMO_SETTING_XY_MODE:DEMO_SETTING_GRID_BRIGHTNESS;
     const char *source=strchr(data,'\n')+1;
     size_t used=(size_t)snprintf(legacy,sizeof(legacy),"OSCILL_SETUP %u %u\n",version,
-                               (unsigned)DEMO_SETTING_GRID_BRIGHTNESS);
+                               fields);
     const char *line_end=strchr(source,'\n')+1;
     memcpy(legacy+used,source,(size_t)(line_end-source));used+=(size_t)(line_end-source);source=line_end;
     for(unsigned slot=0;slot<6;++slot){
         for(unsigned field=0;field<DEMO_SETTINGS_COUNT;++field){
             double value=strtod(source,&end);assert(end!=source);source=end;
-            if(field<DEMO_SETTING_GRID_BRIGHTNESS)
+            if(field<fields)
                 used+=(size_t)snprintf(legacy+used,sizeof(legacy)-used,"%.17g%c",value,
-                                      field+1==DEMO_SETTING_GRID_BRIGHTNESS?'\n':' ');
+                                      field+1==fields?'\n':' ');
         }
     }
     if(*source=='\n')++source;
@@ -83,7 +84,7 @@ static void calibration_test(void)
 {
     SettingsDocument document={0},decoded={0};char data[SETTINGS_STORE_BYTES];
     demo_signal_init(&demo);demo.adc_simulation=0;demo_signal_ui_open_menu(&demo,DEMO_MENU_CH2);
-    demo_signal_ui_menu_select(&demo,4);demo_signal_ui_menu_activate(&demo);
+    demo_signal_ui_menu_select(&demo,DEMO_CHANNEL_CALIBRATE);demo_signal_ui_menu_activate(&demo);
     assert(demo.menu_kind==DEMO_MENU_CALIBRATION && demo.screen.menu_count==3);
     demo_signal_ui_menu_select(&demo,2);demo_signal_ui_menu_activate(&demo);
     assert(demo.menu_kind==DEMO_MENU_RESPONSE && demo.screen.response_visible && demo.response_channel==1);
@@ -106,13 +107,19 @@ static void calibration_test(void)
     assert(settings_document_decode(&decoded,data));
     assert(decoded.last.values[DEMO_SETTING_GRID_BRIGHTNESS]==5);
     assert(!memcmp(document.baseline,decoded.baseline,sizeof(document.baseline)));
+    assert(settings_document_encode(&document,data,sizeof(data)));
+    legacy_settings(data,6);
+    assert(settings_document_decode(&decoded,data));
+    assert(!decoded.last.values[DEMO_SETTING_XY_MODE] && !decoded.last.values[DEMO_SETTING_CAL_DISABLED_2]);
+    assert(!memcmp(document.baseline,decoded.baseline,sizeof(document.baseline)));
+    assert(settings_document_encode(&document,data,sizeof(data)));
     {
         char *end=data+strlen(data);
         for(unsigned line=0;line<4*INPUT_RANGE_STAGE_COUNT;++line){
             if(end>data && end[-1]=='\n')--end;
             while(end>data && end[-1]!='\n')--end;
         }
-        *end=0;data[strlen("OSCILL_SETUP ")]='2';
+        *end=0;legacy_settings(data,2);
         assert(settings_document_decode(&decoded,data));
         assert(!memcmp(document.response,decoded.response,sizeof(document.response)));
         for(unsigned bank=0;bank<4;++bank)for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage)assert(!decoded.baseline[bank][stage].valid);
@@ -143,7 +150,7 @@ static void baseline_test(void)
     b.noise_rms=-.1;assert(!channel_baseline_valid(&b));
     demo_signal_init(&demo);demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);
     int original=demo.scale_index[0];
-    demo_signal_ui_menu_select(&demo,4);demo_signal_press(&demo,DEMO_ENC_CH1,0);
+    demo_signal_ui_menu_select(&demo,DEMO_CHANNEL_CALIBRATE);demo_signal_press(&demo,DEMO_ENC_CH1,0);
     assert(demo.menu_kind==DEMO_MENU_CALIBRATION && demo.screen.menu_count==3);
     uint64_t sequence=1;
     for(unsigned mode=0;mode<2;++mode){
@@ -180,16 +187,27 @@ static void baseline_test(void)
         used+=(size_t)snprintf(data+used,sizeof(data)-used,"%d %.17g %.17g %.17g %.17g\n",old->valid,old->zero,old->noise_rms,old->volts_per_code,old->noise_volts_per_code);}
     assert(settings_document_decode(&decoded,data) && decoded.baseline[2][1].valid==3 && decoded.baseline[2][0].valid==0);
     channel_response_add(&demo.response[2],1000,1);channel_response_add(&demo.response[2],10000,.5);
+    ChannelBaseline saved_baseline[INPUT_RANGE_STAGE_COUNT];
+    memcpy(saved_baseline,demo.baseline[2],sizeof(saved_baseline));
     for(unsigned mode=0;mode<2;++mode){
         demo_signal_ui_menu_select(&demo,(int)mode);demo_signal_press(&demo,DEMO_ENC_CH1,0);
         demo_signal_ui_menu_select(&demo,1);demo_signal_press(&demo,DEMO_ENC_CH1,0);
-        for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage)assert(!(demo.baseline[2][stage].valid&(mode?CHANNEL_NOISE_VALID:CHANNEL_ZERO_VALID)));
-        assert(demo.response[2].count==2 && demo.screen.menu_disabled[1]);demo_signal_ui_menu_back(&demo);
+        int flag=mode?CHANNEL_NOISE_VALID:CHANNEL_ZERO_VALID;
+        for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage){
+            assert(demo.baseline[2][stage].valid==3);
+            b=demo_signal_applied_baseline(&demo,0,stage);assert(!(b.valid&flag));
+        }
+        assert(!memcmp(saved_baseline,demo.baseline[2],sizeof(saved_baseline)));
+        assert(demo.response[2].count==2 && !demo.screen.menu_disabled[1]);
+        demo_signal_press(&demo,DEMO_ENC_CH1,0);
+        for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage){b=demo_signal_applied_baseline(&demo,0,stage);assert(b.valid&flag);}
+        assert(!memcmp(saved_baseline,demo.baseline[2],sizeof(saved_baseline)));
+        demo_signal_ui_menu_back(&demo);
     }
     demo_signal_ui_menu_select(&demo,0);demo_signal_press(&demo,DEMO_ENC_CH1,0);demo_signal_press(&demo,DEMO_ENC_CH1,0);
     demo.now_ms+=100;demo_signal_baseline_observe(&demo,sequence++,100,.4,.5,.02);
     demo_signal_ui_menu_back(&demo);assert(!demo.baseline_active && demo.scale_index[0]==original);
-    for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage)assert(!demo.baseline[2][stage].valid);
+    assert(!memcmp(saved_baseline,demo.baseline[2],sizeof(saved_baseline)));
 
 }
 
@@ -202,7 +220,7 @@ static void calibration_ack_test(void)
 {
     DemoSettings saved;demo_signal_init(&demo);demo_signal_bind_scale_control(&demo,record_panel,NULL);
     int original=demo.scale_index[0];
-    demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);demo_signal_ui_menu_select(&demo,4);demo_signal_ui_menu_activate(&demo);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);demo_signal_ui_menu_select(&demo,DEMO_CHANNEL_CALIBRATE);demo_signal_ui_menu_activate(&demo);
     demo_signal_ui_menu_activate(&demo);demo_signal_ui_menu_activate(&demo);
     assert(demo.calibration_scale_target==0 && last_panel_mv==100 && demo.scale_index[0]==original);
     demo.now_ms=100;demo_signal_baseline_observe(&demo,1,100,.1,.2,.02);assert(!demo.baseline_frames);

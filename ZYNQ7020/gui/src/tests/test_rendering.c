@@ -29,10 +29,10 @@ static void test_display_visibility(uint32_t *pixels, int stride)
     assert(pixels[(top+2)*stride+left+100]==0x07080e);
     int gx=SCOPE_PLOT_X+SCOPE_PLOT_WIDTH/10, gy=SCOPE_PLOT_Y+16;
     assert(pixels[gy*stride+gx]==0x2a2c3b);
-    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,2,10));
+    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,DEMO_DISPLAY_BRIGHTNESS,10));
     scope_screen_render(pixels,stride,&demo.screen);
     assert(pixels[gy*stride+gx]==0x4d5068);
-    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,2,0));
+    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,DEMO_DISPLAY_BRIGHTNESS,0));
     scope_screen_render(pixels,stride,&demo.screen);
     assert(pixels[gy*stride+gx]==0x07080e);
     demo_signal_ui_open_menu(&demo,DEMO_MENU_MEASURE);
@@ -86,7 +86,7 @@ static void test_cursor_table_and_fft_overlay(uint32_t *pixels, int stride)
 
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_menu_choose(&demo, DEMO_PROCESS_FFT, 1);
     demo_signal_ui_dismiss_menu(&demo);
     memset(demo.fft_ch1, 0, sizeof(demo.fft_ch1));
     demo.screen.ch2_enabled = 0;
@@ -302,7 +302,7 @@ static void test_fft_cursor_label(uint32_t *pixels, int stride)
     int side, x, y;
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_menu_choose(&demo, DEMO_PROCESS_FFT, 1);
     demo_signal_ui_dismiss_menu(&demo);
     demo_signal_ui_cycle_cursor_mode(&demo);
     for (side = 0; side < 2; ++side) {
@@ -444,7 +444,7 @@ static void test_buttons_and_overlay(uint32_t *pixels, int stride)
 
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_menu_choose(&demo, DEMO_PROCESS_FFT, 1);
     demo_signal_ui_dismiss_menu(&demo);
     assert(strcmp(demo.screen.fft_frequency_labels[0], "0") == 0);
     assert(strcmp(demo.screen.fft_frequency_labels[1], "1.18k") == 0);

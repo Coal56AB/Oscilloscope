@@ -202,10 +202,10 @@ static void test_stopped_time_view(void)
     assert(valid>=511 && valid<=514 && !demo.screen.history_count);
     memcpy(compressed,demo.ch1,sizeof(compressed));
     assert(strtod(demo.measurement_value_text[0],NULL)<10.0);
-    assert(demo_signal_set_option(&demo,DEMO_MENU_PROCESSING,0,3));
+    assert(demo_signal_set_option(&demo,DEMO_MENU_CH1,DEMO_CHANNEL_FILTER,3));
     assert(demo.ch1[0]==WAVEFORM_NO_SAMPLE && demo.ch1[512]!=WAVEFORM_NO_SAMPLE);
     assert(strtod(demo.measurement_value_text[0],NULL)<10.0);
-    assert(demo_signal_set_option(&demo,DEMO_MENU_PROCESSING,0,0));
+    assert(demo_signal_set_option(&demo,DEMO_MENU_CH1,DEMO_CHANNEL_FILTER,0));
     assert(!memcmp(compressed,demo.ch1,sizeof(compressed)));
     demo_signal_ui_toggle_zoom(&demo); /* Detail still uses the physical time scale. */
     assert(!memcmp(original,demo.ch1,sizeof(original)));
@@ -487,7 +487,7 @@ static void test_generator_megahertz_and_fft(void)
     }
     demo_signal_ui_dismiss_menu(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_menu_choose(&demo, DEMO_PROCESS_FFT, 1);
     demo_signal_ui_dismiss_menu(&demo);
     assert(strstr(demo.screen.fft_sampling_info, "ALIAS") != NULL);
     demo_signal_zoom_time(&demo, 2); /* 20 us/div: Fs 5.12 MHz. */
@@ -521,7 +521,7 @@ static void test_fft_cursor(void)
     demo_signal_ui_move_fft_cursor(&demo, 512);
     assert(!demo.screen.fft_cursor_visible);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_menu_choose(&demo, DEMO_PROCESS_FFT, 1);
     demo_signal_ui_dismiss_menu(&demo);
     assert(!demo.screen.fft_cursor_visible);
     demo_signal_ui_move_fft_cursor(&demo, 600);
@@ -589,7 +589,7 @@ static void test_fft_encoder_cycle(void)
     int mode, a, b;
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_menu_choose(&demo, DEMO_PROCESS_FFT, 1);
     demo_signal_ui_dismiss_menu(&demo);
     for (mode = SCOPE_CURSOR_TIME; mode <= SCOPE_CURSOR_VOLTAGE; ++mode) {
         demo_signal_ui_cycle_cursor_mode(&demo);
@@ -622,7 +622,7 @@ static void test_fft_encoder_cycle(void)
     }
     demo_signal_ui_move_fft_cursor(&demo, 128);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    demo_signal_ui_menu_choose(&demo, 4, 0);
+    demo_signal_ui_menu_choose(&demo, DEMO_PROCESS_FFT, 0);
     demo_signal_ui_dismiss_menu(&demo);
     assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_A);
     assert(!demo.screen.fft_cursor_visible);
@@ -632,7 +632,7 @@ static void test_fft_encoder_cycle(void)
     assert(demo.screen.cursor_selected == SCOPE_CURSOR_SELECT_A);
     /* Enabling FFT after cursors also shows its cursor immediately. */
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    demo_signal_ui_menu_choose(&demo, 4, 1);
+    demo_signal_ui_menu_choose(&demo, DEMO_PROCESS_FFT, 1);
     demo_signal_ui_dismiss_menu(&demo);
     assert(demo.screen.fft_cursor_visible);
 }
@@ -908,7 +908,7 @@ int main(void)
     demo_signal_rotate(&demo, DEMO_ENC_CH2, 1);
     assert(demo.channel_position[1] == -8);
     demo_signal_ui_open_menu(&demo,DEMO_MENU_CH2);demo_signal_ui_menu_select(&demo,2);
-    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -2);
+    demo_signal_rotate(&demo, DEMO_ENC_FUNCTION, -3);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.menu_kind==DEMO_MENU_CALIBRATION && demo.screen.menu_count==3 && demo.response_channel==1 && demo.channel_position[1]==-8);
     demo_signal_ui_menu_back(&demo);
@@ -1034,8 +1034,8 @@ int main(void)
     assert(demo.time_position == 0);
     assert(demo.screen.menu_count == 3 && !strcmp(demo.screen.menu_labels[2], "SAMPLE RATE"));
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    assert(demo.screen.menu_count == 6 && !strcmp(demo.screen.menu_labels[5], "RECORD LENGTH"));
-    demo_signal_ui_menu_select(&demo, 5);
+    assert(demo.screen.menu_count == 4 && !strcmp(demo.screen.menu_labels[DEMO_PROCESS_RECORD], "RECORD LENGTH"));
+    demo_signal_ui_menu_select(&demo, DEMO_PROCESS_RECORD);
     previous = demo.record_depth_index;
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.record_depth_index == (previous + 1) % CAPTURE_DEPTH_COUNT);
@@ -1061,7 +1061,7 @@ int main(void)
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_CH1);
     assert(strcmp(demo.screen.menu_labels[0], "CHANNEL") == 0);
-    assert(strcmp(demo.screen.menu_labels[4], "CALIBRATE") == 0);
+    assert(strcmp(demo.screen.menu_labels[DEMO_CHANNEL_CALIBRATE], "CALIBRATE") == 0);
     demo_signal_ui_menu_tap(&demo, 1, 0);
     assert(demo.coupling[0] == 1 && !demo.screen.menu_editing);
     demo_signal_ui_menu_tap(&demo, 2, 0);
@@ -1110,17 +1110,18 @@ int main(void)
 
     demo_signal_init(&demo);
     memcpy(synchronized_ch1, demo.ch1, sizeof(synchronized_ch1));
-    demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
+    demo_signal_ui_open_menu(&demo, DEMO_MENU_CH1);
     assert(demo.screen.menu_count == 6);
-    assert(strcmp(demo.screen.menu_labels[0], "CH1 FILTER") == 0);
-    assert(demo.screen.menu_option_count[0] == 4);
-    demo_signal_ui_menu_choose(&demo, 0, 1);
+    assert(strcmp(demo.screen.menu_labels[DEMO_CHANNEL_FILTER], "FILTER") == 0);
+    assert(demo.screen.menu_option_count[DEMO_CHANNEL_FILTER] == 4);
+    demo_signal_ui_menu_choose(&demo, DEMO_CHANNEL_FILTER, 1);
     assert(demo.filter_level[0] == 1 && !demo.screen.menu_editing);
     assert(memcmp(synchronized_ch1, demo.ch1, sizeof(synchronized_ch1)) != 0);
-    demo_signal_ui_menu_choose(&demo, 2, 1);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_PROCESSING);
+    demo_signal_ui_menu_choose(&demo, DEMO_PROCESS_COLORING, 1);
     assert(demo.screen.intensity_coloring);
-    demo_signal_ui_menu_tap(&demo, 3, 0);
-    demo_signal_ui_menu_tap(&demo, 3, 0);
+    demo_signal_ui_menu_tap(&demo, DEMO_PROCESS_PERSISTENCE, 0);
+    demo_signal_ui_menu_tap(&demo, DEMO_PROCESS_PERSISTENCE, 0);
     assert(demo.persistence_index == 2);
     for (i = 0; i < 9; ++i) demo_signal_advance(&demo);
     assert(demo.screen.history_count == 8);
@@ -1355,7 +1356,7 @@ int main(void)
 
     demo_signal_init(&demo);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_PROCESSING);
-    demo_signal_ui_menu_select(&demo, 4);
+    demo_signal_ui_menu_select(&demo, DEMO_PROCESS_FFT);
     demo_signal_press(&demo, DEMO_ENC_FUNCTION, 0);
     assert(demo.screen.fft_enabled && !demo.screen.menu_editing);
     {
@@ -1371,19 +1372,20 @@ int main(void)
     demo_signal_ui_set_split_height(&demo, 180);
     assert(demo.screen.split_height == 180);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DISPLAY);
-    assert(demo.screen.menu_count == 3);
-    assert(!strcmp(demo.screen.menu_labels[0], "LAYOUT"));
-    assert(!strcmp(demo.screen.menu_labels[1], "GRID"));
-    assert(!strcmp(demo.screen.menu_labels[2], "GRID BRIGHTNESS"));
+    assert(demo.screen.menu_count == 4);
+    assert(!strcmp(demo.screen.menu_labels[DEMO_DISPLAY_MODE], "MODE"));
+    assert(!strcmp(demo.screen.menu_labels[DEMO_DISPLAY_LAYOUT], "LAYOUT"));
+    assert(!strcmp(demo.screen.menu_labels[DEMO_DISPLAY_GRID], "GRID"));
+    assert(!strcmp(demo.screen.menu_labels[DEMO_DISPLAY_BRIGHTNESS], "GRID BRIGHTNESS"));
     assert(demo.screen.grid_brightness == 5);
-    demo_signal_ui_menu_tap(&demo, 2, 1);
-    assert(demo.screen.grid_brightness == 6 && !strcmp(demo.screen.menu_values[2], "6"));
-    assert(demo_signal_set_option(&demo, DEMO_MENU_DISPLAY, 2, 10));
-    demo_signal_ui_menu_tap(&demo, 2, 1);
+    demo_signal_ui_menu_tap(&demo, DEMO_DISPLAY_BRIGHTNESS, 1);
+    assert(demo.screen.grid_brightness == 6 && !strcmp(demo.screen.menu_values[DEMO_DISPLAY_BRIGHTNESS], "6"));
+    assert(demo_signal_set_option(&demo, DEMO_MENU_DISPLAY, DEMO_DISPLAY_BRIGHTNESS, 10));
+    demo_signal_ui_menu_tap(&demo, DEMO_DISPLAY_BRIGHTNESS, 1);
     assert(demo.screen.grid_brightness == 10);
-    assert(!demo_signal_set_option(&demo, DEMO_MENU_DISPLAY, 2, 11));
-    assert(demo_signal_set_option(&demo, DEMO_MENU_DISPLAY, 2, 0));
-    demo_signal_ui_menu_tap(&demo, 2, -1);
+    assert(!demo_signal_set_option(&demo, DEMO_MENU_DISPLAY, DEMO_DISPLAY_BRIGHTNESS, 11));
+    assert(demo_signal_set_option(&demo, DEMO_MENU_DISPLAY, DEMO_DISPLAY_BRIGHTNESS, 0));
+    demo_signal_ui_menu_tap(&demo, DEMO_DISPLAY_BRIGHTNESS, -1);
     assert(demo.screen.grid_brightness == 0);
     demo_signal_ui_open_menu(&demo, DEMO_MENU_DEBUG);
     assert(demo.screen.menu_count == 6);

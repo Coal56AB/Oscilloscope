@@ -12,13 +12,14 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     memset(r, 0, sizeof(*r));
     r->duration_seconds = wave.time_us_per_div * 10e-6;
     r->overview_duration_seconds = demo_signal_time_scale_us(d->time_index) * 10e-6;
-    if (d->screen.zoom_enabled)
+    if (d->screen.zoom_enabled && !d->screen.xy_mode)
         r->zoom_offset_seconds = d->zoom_offset * r->overview_duration_seconds / SCOPE_PLOT_WIDTH;
     r->running = d->screen.running;
     r->record_samples = capture_record_samples(d->record_depth_index);
     r->roll = r->overview_duration_seconds > 1.0 && d->trigger_mode_index == 0;
-    r->spectrum_enabled = d->fft_enabled;
-    r->density_enabled = 1;
+    r->spectrum_enabled = d->fft_enabled && !d->screen.xy_mode;
+    r->xy_enabled = d->screen.xy_mode;
+    r->density_enabled = !d->screen.xy_mode;
     r->density_rows = (unsigned)scope_screen_waveform_height(&d->screen);
     r->hidden_channel_mask = (d->screen.ch1_enabled?0u:1u) | (d->screen.ch2_enabled?0u:2u);
     r->debug.enabled = d->adc_simulation;
@@ -65,7 +66,8 @@ void capture_request_from_demo(const DemoSignal *d, CaptureRequest *r)
     if (r->pan_fraction > 1)
         r->pan_fraction = 1;
     for (ch = 0; ch < 2; ++ch) {
-        memcpy(r->baseline[ch],d->baseline[ch+(d->adc_simulation?2:0)],sizeof(r->baseline[ch]));
+        for(unsigned stage=0;stage<INPUT_RANGE_STAGE_COUNT;++stage)
+            r->baseline[ch][stage]=demo_signal_applied_baseline(d,ch,stage);
         r->range_stage[ch]=input_range_stage((unsigned)d->scale_index[ch]);
         r->response_enabled[ch]=d->response_enabled[ch] && !d->response_active && !d->baseline_active;
         if(r->response_enabled[ch])r->response[ch]=d->response[ch+(d->adc_simulation?2:0)];
@@ -87,7 +89,8 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
     }
     if(d->response_active){
         unsigned channel=(unsigned)d->response_channel;
-        ChannelBaseline *baseline=demo_signal_baseline(d,channel);
+        ChannelBaseline applied=demo_signal_applied_baseline(d,channel,input_range_stage((unsigned)d->scale_index[channel]));
+        ChannelBaseline *baseline=&applied;
         if((baseline->valid&CHANNEL_NOISE_VALID) && f->volts_per_code[channel]>0 &&
            fabs(f->volts_per_code[channel]-baseline->noise_volts_per_code)>f->volts_per_code[channel]*1e-6){
             d->response_active=0;demo_signal_notify(d,"RANGE CHANGED / REPEAT NOISE");demo_signal_refresh(d);
@@ -102,6 +105,8 @@ void capture_display_apply(DemoSignal *d, const DisplayFrame *f)
             demo_signal_response_observe(d,f->sequence,f->fundamental_hz[channel],amplitude);
     }
     d->screen.peak_detect=(uint8_t)f->peak_detect;
+    d->screen.xy_count=f->xy_count;
+    memcpy(d->xy,f->xy,sizeof(d->xy));
     d->screen.density_rows=f->density_rows;
     d->screen.density_samples=f->display_samples;
     for(i=0;i<2;++i){

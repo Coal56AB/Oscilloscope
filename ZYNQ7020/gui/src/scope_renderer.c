@@ -55,6 +55,7 @@ static void snapshot_screen(RenderSlot *slot,const ScopeScreen *screen,
     ScopeScreen *s=&slot->screen;*s=*screen;
 #define MOVE(field) s->field=relocate(s->field,regions,offsets,count,slot->snapshot)
     MOVE(plot_pixels);MOVE(response_curve);MOVE(ch1_samples);MOVE(ch2_samples);
+    MOVE(xy_samples[0]);MOVE(xy_samples[1]);
     MOVE(ch1_min_samples);MOVE(ch1_max_samples);MOVE(ch2_min_samples);MOVE(ch2_max_samples);
     MOVE(capture_ch1_samples);MOVE(capture_ch2_samples);
     MOVE(history_ch1_samples);MOVE(history_ch2_samples);
@@ -232,6 +233,7 @@ static uint64_t submit_layers(ScopeRenderer *r,const ScopeScreen *screen,
     /* Before the first plot completes, draw an empty plot rather than making
        the controls wait for channel rendering during startup. */
     if(!ui.plot_pixels){ui.ch1_samples=ui.ch2_samples=NULL;
+        ui.xy_count=0;
         ui.ch1_min_samples=ui.ch1_max_samples=ui.ch2_min_samples=ui.ch2_max_samples=NULL;
         ui.history_count=0;ui.peak_detect=0;
         for(unsigned i=0;i<2;++i){ui.density_levels[i]=NULL;ui.connections[i]=NULL;ui.density_source[i].samples=0;}}

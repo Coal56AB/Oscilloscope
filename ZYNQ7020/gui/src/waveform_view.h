@@ -5,6 +5,7 @@
 
 /* Pixel-space gap outside the recorded interval; never a voltage/sample value. */
 #define WAVEFORM_NO_SAMPLE INT16_MIN
+#define WAVEFORM_XY_POINTS 8192
 
 typedef struct {
     const void *context;
@@ -21,6 +22,13 @@ typedef struct {
                      double *minimum, double *maximum);
     size_t envelope_samples;
 } WaveformSource;
+
+/* Select actual sample times uniformly in the recorded overlap. Calling this
+   for both channels with the same interval preserves paired samples; envelope
+   extrema never supply XY coordinates. Missing values retain their slot. */
+size_t waveform_xy_project(const WaveformSource *source, double first, double samples,
+                           unsigned channel, double zero, double scale,
+                           size_t capacity, int16_t *points);
 
 /* Preserve the original sample line and bounds; never interpolate peak times. */
 void waveform_view_reduce(const WaveformSource *source, double first, double samples,

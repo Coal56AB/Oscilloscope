@@ -4,6 +4,26 @@
 #include <string.h>
 #include <stdlib.h>
 
+size_t waveform_xy_project(const WaveformSource *source, double first, double samples,
+                           unsigned channel, double zero, double scale,
+                           size_t capacity, int16_t *points)
+{
+    size_t begin,end,count,i;
+    if(!source || !source->value || !points || !capacity || !isfinite(first) ||
+       !isfinite(samples) || samples<=0 || !isfinite(zero) || !isfinite(scale))return 0;
+    begin=(size_t)ceil(fmax(0,fmin(first,source->samples)));
+    end=(size_t)ceil(fmax(0,fmin(first+samples,source->samples)));
+    if(end<=begin)return 0;
+    count=end-begin;if(count>capacity)count=capacity;
+    for(i=0;i<count;++i){
+        size_t sample=begin+(count>1?(size_t)((uint64_t)i*(end-begin-1)/(count-1)):0);
+        double value=source->value(source->context,sample,channel);
+        double position=zero-scale*value;
+        points[i]=isfinite(position)?(int16_t)lround(fmax(INT16_MIN+1,fmin(INT16_MAX,position))):WAVEFORM_NO_SAMPLE;
+    }
+    return count;
+}
+
 unsigned waveform_density_level(unsigned count, unsigned peak)
 {
     if (!count || !peak) return 0;

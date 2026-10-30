@@ -14,6 +14,7 @@ typedef struct {
     uint64_t holdoff_samples, force_sequence;
     double overview_duration_seconds, zoom_offset_seconds;
     int spectrum_enabled;
+    int xy_enabled;
     unsigned record_samples;
     int roll;
     int density_enabled;

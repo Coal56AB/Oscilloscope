@@ -462,6 +462,14 @@ static int render_channel(const CaptureBuffer *b, const CaptureView *v, DisplayF
         }
     }
     size_t visible_first=(size_t)floor(fmax(0,fmin(first,count)));
+    if(v->xy_enabled && !v->hidden_channel_mask){
+        WaveformSource paired=source;
+        if(!paired.value)paired.value=source_value;
+        unsigned points=(unsigned)waveform_xy_project(&paired,first,samples,ch,
+            v->zero_y[ch],v->pixels_per_volt[ch],WAVEFORM_XY_POINTS,f->xy[ch]);
+        if(!ch)f->xy_count=points;
+        else if(points<f->xy_count)f->xy_count=points;
+    }
     size_t visible_end=(size_t)ceil(fmax(0,fmin(first+samples,count)));
     double timing_low=f->minimum[ch],timing_high=f->maximum[ch];
     int measure_filtered=filtered && visible_end>visible_first,pending_measure=0;

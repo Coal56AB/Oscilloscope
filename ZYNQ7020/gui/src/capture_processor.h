@@ -15,6 +15,7 @@ typedef struct {
        Zero span keeps the strict start/samples API used by existing callers. */
     double display_first, display_samples;
     int skip_spectrum;
+    int xy_enabled;
     int density_enabled;
     unsigned density_rows;
     unsigned hidden_channel_mask; /* Skip invisible projections/timing; amplitude statistics and FFT remain available. */
@@ -28,6 +29,8 @@ typedef struct {
 } CaptureView;
 typedef struct {
     int16_t y[2][SCOPE_PLOT_WIDTH], y_min[2][SCOPE_PLOT_WIDTH], y_max[2][SCOPE_PLOT_WIDTH];
+    int16_t xy[2][WAVEFORM_XY_POINTS];
+    unsigned xy_count;
     int16_t peak_min[2][SCOPE_PLOT_WIDTH], peak_max[2][SCOPE_PLOT_WIDTH];
     uint8_t peak_strength[2][SCOPE_PLOT_WIDTH];
     int16_t overview[2][SCOPE_PLOT_WIDTH];

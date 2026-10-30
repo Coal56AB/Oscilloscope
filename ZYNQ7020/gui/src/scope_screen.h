@@ -60,6 +60,10 @@ typedef struct {
     int response_visible,response_channel,response_active,response_enabled;
     const int16_t *ch1_samples; /* SCOPE_PLOT_WIDTH entries, or NULL */
     const int16_t *ch2_samples; /* SCOPE_PLOT_WIDTH entries, or NULL */
+    const int16_t *xy_samples[2]; /* Paired source times, in channel Y coordinates. */
+    unsigned xy_count;
+    uint8_t xy_mode;
+    int xy_position[2]; /* X/Y screen pixels, separate from the YT positions. */
     const int16_t *ch1_min_samples, *ch1_max_samples; /* Optional min/max envelope */
     const int16_t *ch2_min_samples, *ch2_max_samples;
     const int16_t *capture_ch1_samples; /* Full capture while zoomed */
