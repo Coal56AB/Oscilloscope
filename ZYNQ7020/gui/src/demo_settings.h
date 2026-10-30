@@ -10,7 +10,7 @@
  X(CH1_SCALE,scale_index[0],int,0,5) X(CH2_SCALE,scale_index[1],int,0,5) \
  X(CH1_POSITION,channel_position[0],int,-180,180) X(CH2_POSITION,channel_position[1],int,-180,180) \
  X(CH1_AC,coupling[0],int,0,1) X(CH2_AC,coupling[1],int,0,1) \
- X(CH1_PROBE,probe_ten[0],int,0,1) X(CH2_PROBE,probe_ten[1],int,0,1) \
+ X(CH1_PROBE,probe_ten[0],int,0,2) X(CH2_PROBE,probe_ten[1],int,0,2) \
  X(CH1_FILTER,filter_level[0],int,0,3) X(CH2_FILTER,filter_level[1],int,0,3) \
  X(CH1_POSITION_MODE,position_mode[0],int,0,1) X(CH2_POSITION_MODE,position_mode[1],int,0,1) \
  X(TIME_POSITION_MODE,position_mode[2],int,0,1) X(TIME,time_index,int,0,26) \

@@ -124,7 +124,7 @@ class ScopeTab(QWidget):
             self.add_check(form, "Включён", prefix + "enabled")
             self.add_combo(form, "В/дел", prefix + "scale_index", [])
             self.add_combo(form, "Связь", prefix + "coupling", ["DC", "AC"])
-            self.add_combo(form, "Щуп", prefix + "probe_ten", ["×1", "×10"])
+            self.add_combo(form, "Щуп", prefix + "probe_ten", ["×1", "×10", "×100"])
             self.fields[prefix + "probe_ten"][0].currentIndexChanged.connect(lambda value, channel=channel: self.update_scales(channel))
             self.add_number(form, "Смещение, дел", prefix + "position", -3, 3, factor=60)
             self.add_combo(form, "Фильтр", prefix + "filter", ["Выключен", "Слабый", "Средний", "Сильный"])
@@ -196,7 +196,7 @@ class ScopeTab(QWidget):
         if self.state is None:
             return
         prefix = "ch{}_".format(channel)
-        factor = 10 if self.fields[prefix + "probe_ten"][0].currentIndex() else 1
+        factor = 10 ** self.fields[prefix + "probe_ten"][0].currentIndex()
         widget = self.fields[prefix + "scale_index"][0]
         for index, mv in enumerate(self.state["channel_scales_mv"]):
             widget.setItemText(index, "{:g} В".format(mv * factor / 1000))

@@ -45,6 +45,43 @@ static void raw_pairs(void)
     assert(capture_process(&buffer,&view,&frame) && !frame.xy_count);
 }
 
+static void probe_scaling(void)
+{
+    static uint8_t data[640];
+    static DisplayFrame original;
+    CaptureRequest before,after;
+    CaptureBuffer buffer={0};CaptureView view={0};
+    demo_signal_init(&demo);demo.adc_simulation=0;
+    assert(demo_signal_set_option(&demo,DEMO_MENU_DISPLAY,DEMO_DISPLAY_MODE,1));
+    demo_signal_set_trigger_voltage(&demo,.5);
+    capture_request_from_demo(&demo,&before);
+    for(unsigned ch=0;ch<2;++ch)
+        assert(demo_signal_set_option(&demo,ch?DEMO_MENU_CH2:DEMO_MENU_CH1,2,2));
+    demo_signal_set_trigger_voltage(&demo,50);
+    capture_request_from_demo(&demo,&after);
+    assert(fabs(after.trigger_voltage/after.adc_volts_per_code[0]-
+                before.trigger_voltage/before.adc_volts_per_code[0])<1e-9);
+    for(unsigned i=0;i<320;++i)data[2*i]=data[2*i+1]=(uint8_t)(118+i%21);
+    buffer.data=data;buffer.bytes=buffer.capacity=sizeof(data);
+    buffer.sample_rate_hz=200000000;buffer.trigger_sample=CAPTURE_NO_TRIGGER;
+    view.samples=320;view.xy_enabled=1;view.skip_spectrum=1;
+    for(unsigned pass=0;pass<2;++pass){
+        CaptureRequest *request=pass?&after:&before;
+        for(unsigned ch=0;ch<2;++ch){
+            buffer.volts_per_code[ch]=request->adc_volts_per_code[ch];buffer.zero_code[ch]=128;
+            view.zero_y[ch]=request->zero_y[ch];view.pixels_per_volt[ch]=request->pixels_per_volt[ch];
+        }
+        assert(capture_process(&buffer,&view,&frame));
+        if(!pass)original=frame;
+    }
+    assert(frame.xy_count==original.xy_count);
+    for(unsigned ch=0;ch<2;++ch){
+        assert(fabs(frame.rms[ch]-original.rms[ch]*100)<1e-9);
+        assert(fabs(frame.maximum[ch]-frame.minimum[ch]-100*(original.maximum[ch]-original.minimum[ch]))<1e-9);
+        for(unsigned i=0;i<frame.xy_count;++i)assert(frame.xy[ch][i]==original.xy[ch][i]);
+    }
+}
+
 static void transitions(void)
 {
     DemoSettings saved,loaded;
@@ -181,6 +218,6 @@ static void renderer_snapshot(void)
 
 int main(void)
 {
-    raw_pairs();transitions();rendering();calibration_application();renderer_snapshot();
+    raw_pairs();probe_scaling();transitions();rendering();calibration_application();renderer_snapshot();
     puts("XY sample pairing, view transitions, calibration application and projection passed");return 0;
 }

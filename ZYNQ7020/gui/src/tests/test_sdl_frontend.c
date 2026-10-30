@@ -366,6 +366,8 @@ static void test_panel_owned_scale(void)
     assert(demo.scale_index[0] == 5);
     demo_signal_set_option(&demo, DEMO_MENU_CH1, 2, 1);
     assert(demo.probe_ten[0] == 1 && scale_request_count == 2);
+    assert(demo_signal_set_option(&demo,DEMO_MENU_CH1,2,2));
+    assert(demo.probe_ten[0]==2 && scale_request_count==2);
     demo_signal_accept_scale(&demo, 0, 123);
     assert(demo.scale_index[0] == 5);
     demo_signal_set_option(&demo,DEMO_MENU_CH1,0,0);

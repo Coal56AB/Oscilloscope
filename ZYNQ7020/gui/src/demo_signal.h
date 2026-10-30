@@ -50,7 +50,7 @@ typedef struct {
     int zero_y[2];
     int mv_per_div[2];
     int scale_index[2];
-    int probe_ten[2];
+    int probe_ten[2]; /* Legacy field name: indices 0/1/2 mean x1/x10/x100. */
     int enabled[2];
     int time_index;
     double time_us_per_div;
@@ -113,7 +113,7 @@ typedef struct {
     int scale_index[2];
     int channel_position[2];
     int coupling[2];
-    int probe_ten[2];
+    int probe_ten[2]; /* Legacy field name: indices 0/1/2 mean x1/x10/x100. */
     int time_index;
     int record_depth_index;
     double acquisition_rate_hz;

@@ -250,6 +250,7 @@ static void persistence_test(void)
     }
     assert(demo.preset_valid==31);
     demo.time_index=19;demo.channel_position[1]=-75;demo.startup_preset=0;
+    demo.probe_ten[0]=2;demo.probe_ten[1]=1;
     demo.adc_simulation=0;
     demo.screen.grid_brightness=7;
     channel_response_add(&demo.response[0],1000,1);channel_response_add(&demo.response[0],10000,.5);
@@ -261,6 +262,7 @@ static void persistence_test(void)
     settings_session_close(&session,&demo);
     demo_signal_init(&demo);assert(settings_session_open(&session,&demo,path));
     assert(demo.time_index==19 && demo.channel_position[1]==-75);
+    assert(demo.probe_ten[0]==2 && demo.probe_ten[1]==1);
     assert(demo.screen.grid_brightness==7);
     assert(demo.response[0].count==2 && demo.response_enabled[0]);
     for(unsigned slot=0;slot<5;++slot){

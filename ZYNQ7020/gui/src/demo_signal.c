@@ -40,7 +40,7 @@ int demo_signal_scale_mv(int index)
 #define TIME_SCALE_COUNT ((int)(sizeof(time_us) / sizeof(time_us[0])))
 #define DEFAULT_TIME_INDEX 12
 static const char *coupling_names[] = {"DC", "AC"};
-static const char *probe_names[] = {"x1", "x10"};
+static const char *probe_names[] = {"x1", "x10", "x100"};
 static const char *channel_names[] = {"CH1", "CH2"};
 static const char *on_off_names[] = {"OFF", "ON"};
 static const char *cursor_mode_names[] = {"OFF", "TIME", "VERTICAL"};
@@ -157,12 +157,12 @@ static double calibrated_zero(const DemoSignal *demo,unsigned ch)
 static double volts_per_div(const DemoSignal *demo, int channel)
 {
     return demo_signal_scale_mv(demo->scale_index[channel]) *
-           (demo->probe_ten[channel] ? 10.0 : 1.0) / 1000.0;
+           input_probe_multiplier((unsigned)demo->probe_ten[channel]) / 1000.0;
 }
 
 static void format_scale(char *buffer, size_t size, int scale_index, int probe_ten)
 {
-    int mv = demo_signal_scale_mv(scale_index) * (probe_ten ? 10 : 1);
+    int mv = demo_signal_scale_mv(scale_index) * input_probe_multiplier((unsigned)probe_ten);
     if (mv < 1000) snprintf(buffer, size, "%d mV", mv);
     else snprintf(buffer, size, "%d V", mv / 1000);
 }
@@ -1030,7 +1030,7 @@ static int menu_value_count(const DemoSignal *demo)
     if (demo->menu_kind == DEMO_MENU_DISPLAY)
         return item == DEMO_DISPLAY_BRIGHTNESS ? 11 : 2;
     if (demo->menu_kind == DEMO_MENU_CH1 || demo->menu_kind == DEMO_MENU_CH2)
-        return item == 0 || item == 1 || item == 2 ? 2 : item == 3 ? 6 : item==DEMO_CHANNEL_FILTER?4:1;
+        return item == 0 || item == 1 ? 2 : item == 2 ? INPUT_PROBE_COUNT : item == 3 ? 6 : item==DEMO_CHANNEL_FILTER?4:1;
     if (demo->menu_kind == DEMO_MENU_TRIGGER)
         return item == 0 || item == 2 ? 3 : item == 3 ? 4 :
                item == 6 ? SCOPE_PLOT_HEIGHT : 2;
@@ -1195,7 +1195,7 @@ static void refresh_menu(DemoSignal *demo)
         for (i = 0; i < 6; ++i) screen->menu_labels[i] = channel_labels[i];
         screen->menu_values[0] = (channel ? screen->ch2_enabled : screen->ch1_enabled) ? "ON" : "OFF";
         screen->menu_values[1] = coupling_names[demo->coupling[channel]];
-        screen->menu_values[2] = demo->probe_ten[channel] ? "x10" : "x1";
+        screen->menu_values[2] = probe_names[demo->probe_ten[channel]];
         screen->menu_values[3] = demo->ch_scale_text[channel];
         screen->menu_values[DEMO_CHANNEL_FILTER] = filter_names[demo->filter_level[channel]];
         set_menu_options(screen,DEMO_CHANNEL_FILTER,filter_names,4,demo->filter_level[channel]);
@@ -1203,7 +1203,7 @@ static void refresh_menu(DemoSignal *demo)
         set_menu_options(screen, 0, on_off_names, 2,
                          channel ? screen->ch2_enabled : screen->ch1_enabled);
         set_menu_options(screen, 1, coupling_names, 2, demo->coupling[channel]);
-        set_menu_options(screen, 2, probe_names, 2, demo->probe_ten[channel]);
+        set_menu_options(screen, 2, probe_names, INPUT_PROBE_COUNT, demo->probe_ten[channel]);
         screen->menu_stepper[3] = 1;
     } else if (demo->menu_kind == DEMO_MENU_TRIGGER) {
         screen->menu_title = "TRIGGER SETTINGS";
@@ -1446,8 +1446,8 @@ static void update_text(DemoSignal *demo, int regenerate)
         format_scale(demo->ch_scale_text[channel], sizeof(demo->ch_scale_text[channel]),
                      demo->scale_index[channel], demo->probe_ten[channel]);
         snprintf(demo->ch_input_text[channel], sizeof(demo->ch_input_text[channel]),
-                 "%s   x%d", coupling_names[demo->coupling[channel]],
-                 demo->probe_ten[channel] ? 10 : 1);
+                 "%s   x%u", coupling_names[demo->coupling[channel]],
+                 input_probe_multiplier((unsigned)demo->probe_ten[channel]));
         demo->screen.channel_zero_y[channel] = channel_zero(demo, channel);
     }
     if (time_zoom(demo) || demo->waveform_loaded)
@@ -1576,7 +1576,7 @@ double demo_signal_adc_gain(const DemoSignal *demo,unsigned channel)
 {
     if(channel>=2)return 0;
     return input_range_mask_volts_per_code(demo_signal_panel_scale(demo,channel)==CONTROL_SCALE_OFF?
-        0:input_range_relays((unsigned)demo->scale_index[channel]))*(demo->probe_ten[channel]?10:1);
+        0:input_range_relays((unsigned)demo->scale_index[channel]))*input_probe_multiplier((unsigned)demo->probe_ten[channel]);
 }
 
 static void calibration_scale_tick(DemoSignal *demo)
@@ -2138,7 +2138,7 @@ int demo_signal_set_option(DemoSignal *demo, DemoMenu kind, int item, int value)
     int count=0;
     if(!demo||item<0||item>=menu_item_count(kind)||value<0 || menu_disabled(demo,kind,item))return 0;
     if(value<8 && (option_disabled(demo,kind,item)&(1U<<value)))return 0;
-    if((kind==DEMO_MENU_CH1||kind==DEMO_MENU_CH2)&&item<=DEMO_CHANNEL_FILTER)count=item==3?6:item==DEMO_CHANNEL_FILTER?4:2;
+    if((kind==DEMO_MENU_CH1||kind==DEMO_MENU_CH2)&&item<=DEMO_CHANNEL_FILTER)count=item==3?6:item==DEMO_CHANNEL_FILTER?4:item==2?INPUT_PROBE_COUNT:2;
     else if(kind==DEMO_MENU_TRIGGER&&item<4)count=item==0||item==2?3:item==3?4:2;
     else if(kind==DEMO_MENU_TIME&&item==0)count=time_zoom(demo)?demo->time_index+1:TIME_SCALE_COUNT;
     else if(kind==DEMO_MENU_PROCESSING&&item<4)count=item==DEMO_PROCESS_PERSISTENCE?3:item==DEMO_PROCESS_RECORD?CAPTURE_DEPTH_COUNT:2;
@@ -2806,7 +2806,7 @@ void demo_signal_export_wave(const DemoSignal *demo, DemoWaveCapture *wave)
     for (channel = 0; channel < 2; ++channel) {
         wave->zero_y[channel] = demo->screen.channel_zero_y[channel];
         wave->mv_per_div[channel] = demo_signal_scale_mv(demo->scale_index[channel]) *
-                                    (demo->probe_ten[channel] ? 10 : 1);
+                                    input_probe_multiplier((unsigned)demo->probe_ten[channel]);
         wave->scale_index[channel] = demo->scale_index[channel];
         wave->probe_ten[channel] = demo->probe_ten[channel];
         wave->enabled[channel] = channel ? demo->screen.ch2_enabled :
@@ -2840,12 +2840,12 @@ void demo_signal_ui_show_wave(DemoSignal *demo, const char *name,
         demo->loaded_wave.zero_y[channel] = clamp(wave->zero_y[channel], 0,
                                                   SCOPE_PLOT_HEIGHT - 1);
         demo->loaded_wave.scale_index[channel] = clamp(wave->scale_index[channel], 0, 5);
-        demo->loaded_wave.probe_ten[channel] = !!wave->probe_ten[channel];
+        demo->loaded_wave.probe_ten[channel] = clamp(wave->probe_ten[channel], 0, INPUT_PROBE_COUNT-1);
         if (demo->loaded_wave.mv_per_div[channel] <= 0 ||
-            demo->loaded_wave.mv_per_div[channel] > 50000)
+            demo->loaded_wave.mv_per_div[channel] > demo_signal_scale_mv(5)*input_probe_multiplier(INPUT_PROBE_COUNT-1))
             demo->loaded_wave.mv_per_div[channel] =
                 demo_signal_scale_mv(demo->loaded_wave.scale_index[channel]) *
-                (demo->loaded_wave.probe_ten[channel] ? 10 : 1);
+                input_probe_multiplier((unsigned)demo->loaded_wave.probe_ten[channel]);
         demo->scale_index[channel] = demo->loaded_wave.scale_index[channel];
         demo->probe_ten[channel] = demo->loaded_wave.probe_ten[channel];
         demo->channel_position[channel] = demo->loaded_wave.zero_y[channel] -

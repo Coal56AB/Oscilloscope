@@ -73,6 +73,22 @@ class FakeSerial:
 
 
 class GuiTests(unittest.TestCase):
+    def test_probe_x100_scales(self):
+        tab = ScopeTab(Session())
+        state = {key: 0 for key in tab.fields}
+        state.update(version=1, running=1, waiting=0, source="demo", zoom=0,
+                     channel_scales_mv=[100, 200, 500, 1000, 2000, 5000],
+                     time_scales_us=[100])
+        tab.load_state(state, force=True)
+        for channel in (1, 2):
+            prefix = "ch%d_" % channel
+            probe = tab.fields[prefix + "probe_ten"][0]
+            self.assertEqual(probe.count(), 3)
+            probe.setCurrentIndex(2)
+            self.assertEqual(probe.currentText(), "×100")
+            self.assertEqual(tab.fields[prefix + "scale_index"][0].itemText(5), "500 В")
+        tab.timer.stop()
+
     def test_update_keeps_connection_until_finished(self):
         from app_ui import MainWindow
         window = MainWindow()

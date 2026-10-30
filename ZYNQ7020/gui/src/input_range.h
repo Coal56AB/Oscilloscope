@@ -2,6 +2,13 @@
 #define INPUT_RANGE_H
 #include "control_protocol.h"
 #define INPUT_RANGE_STAGE_COUNT 3
+#define INPUT_PROBE_COUNT 3
+/* Stored probe index: 0 = x1, 1 = x10, 2 = x100. */
+static inline unsigned input_probe_multiplier(unsigned index)
+{
+    static const unsigned factors[INPUT_PROBE_COUNT]={1,10,100};
+    return index<INPUT_PROBE_COUNT?factors[index]:1;
+}
 static inline unsigned input_range_stage(unsigned index)
 {
     return index<2?0:index<5?1:2;

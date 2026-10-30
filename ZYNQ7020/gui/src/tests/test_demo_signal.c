@@ -232,6 +232,35 @@ static void test_stopped_time_view(void)
     assert(!memcmp(wave.ch1,demo.ch1,sizeof(wave.ch1)));
 }
 
+static void test_probe_x100(void)
+{
+    static DemoSignal demo;
+    DemoWaveCapture wave, restored;
+    double gain;
+    FILE *file;
+    demo_signal_init(&demo);
+    gain=demo_signal_adc_gain(&demo,0);
+    demo_signal_ui_open_menu(&demo,DEMO_MENU_CH1);
+    assert(demo.screen.menu_option_count[2]==3);
+    demo_signal_ui_menu_tap(&demo,2,0);
+    demo_signal_ui_menu_tap(&demo,2,0);
+    assert(demo.probe_ten[0]==2 && !strcmp(demo.screen.menu_values[2],"x100"));
+    assert(fabs(demo_signal_adc_gain(&demo,0)/gain-100)<1e-9);
+    assert(strstr(demo.screen.ch1_input,"x100"));
+    assert(!demo_signal_set_option(&demo,DEMO_MENU_CH1,2,3));
+    demo_signal_ui_menu_tap(&demo,2,0);
+    assert(demo.probe_ten[0]==0);
+    assert(demo_signal_set_option(&demo,DEMO_MENU_CH1,2,2));
+    assert(demo_signal_set_option(&demo,DEMO_MENU_CH1,3,5));
+    demo_signal_export_wave(&demo,&wave);
+    assert(wave.probe_ten[0]==2 && wave.mv_per_div[0]==demo_signal_scale_mv(5)*100);
+    file=tmpfile();assert(file && wave_file_write(file,&wave));rewind(file);
+    memset(&restored,0,sizeof(restored));assert(wave_file_read(file,&restored));fclose(file);
+    demo_signal_ui_show_wave(&demo,"x100.csv",&restored);
+    assert(demo.probe_ten[0]==2 && demo.loaded_wave.mv_per_div[0]==wave.mv_per_div[0]);
+    assert(!strcmp(demo.screen.ch1_scale,"500 V"));
+}
+
 static void test_time_range_and_csv_scale(void)
 {
     static DemoSignal demo;
@@ -679,6 +708,7 @@ int main(void)
     assert(battery_level_percent(6600)==100);
     for(i=3301;i<4200;++i)assert(battery_level_percent(i)>=battery_level_percent(i-1));
 
+    test_probe_x100();
     test_time_range_and_csv_scale();
     test_zoom_source_detail();
     test_zoom_noise_source_grid();
